@@ -1,0 +1,27 @@
+app-id: com.mooinglemur.axolotl
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: axolotl-apclient
+finish-args:
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+modules:
+  - name: yaml-cpp
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DYAML_BUILD_SHARED_LIBS=ON
+      - -DYAML_CPP_BUILD_TESTS=OFF
+      - -DYAML_CPP_BUILD_TOOLS=OFF
+    sources:
+      - type: git
+        url: https://github.com/jbeder/yaml-cpp.git
+        tag: yaml-cpp-0.8.0
+
+  - name: axolotl-apclient
+    buildsystem: cmake-ninja
+    sources:
+      - type: dir
+        path: .

@@ -106,3 +106,7 @@ else()
         target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
     endif()
 endif()
+
+install(TARGETS axolotl-apclient
+        RUNTIME DESTINATION bin)
+
