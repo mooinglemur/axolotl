@@ -1,0 +1,48 @@
+# Build directory
+build/
+bin/
+lib/
+_deps/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+*.cmake
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.exe
+*.out
+axolotl-apclient
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*~
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# Application specific
+.cache/
+build_error.txt
+compile_commands.json
