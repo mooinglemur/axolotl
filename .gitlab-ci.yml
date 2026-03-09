@@ -5,6 +5,9 @@ stages:
 
 flatpak:
   stage: build
+  tags:
+    - docker
+    - linux
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
   before_script:
