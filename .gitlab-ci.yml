@@ -10,12 +10,13 @@ flatpak:
     - linux
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
+    FLATPAK_BUILDER_NO_USER_CHROOT: "1"
   before_script:
     - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak flatpak-builder elfutils git
     - flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
     - flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
   script:
-    - flatpak-builder --user --disable-rofiles-fuse build-dir com.mooinglemur.axolotl.yml
+    - flatpak-builder --user --disable-rofiles-fuse --force-clean build-dir com.mooinglemur.axolotl.yml
     - flatpak build-export repo build-dir
     - flatpak build-bundle repo axolotl-apclient.flatpak com.mooinglemur.axolotl
   artifacts:
@@ -32,7 +33,7 @@ appimage:
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
   before_script:
-    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev git wget file
+    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev git wget file
     - wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
     - chmod +x linuxdeploy-x86_64.AppImage
   script:
