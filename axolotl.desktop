@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Axolotl Archipelago Text Client
+Exec=axolotl-apclient
+Icon=axolotl
+Type=Application
+Categories=Game;Utility;
+Comment=A modern Archipelago multiworld text client.
+Terminal=false

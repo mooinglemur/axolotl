@@ -23,3 +23,27 @@ flatpak:
     expire_in: 1 week
     paths:
       - axolotl-apclient.flatpak
+
+appimage:
+  stage: build
+  tags:
+    - docker
+    - linux
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  before_script:
+    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev git wget file
+    - wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+    - chmod +x linuxdeploy-x86_64.AppImage
+  script:
+    - mkdir build && cd build
+    - cmake -GNinja -DCMAKE_BUILD_TYPE=Release ..
+    - ninja
+    - DESTDIR=appdir ninja install
+    - cd ..
+    - ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run --appdir build/appdir --executable build/appdir/usr/local/bin/axolotl-apclient --desktop-file axolotl.desktop --icon-file axolotl.png --output appimage
+  artifacts:
+    name: "axolotl-apclient-appimage"
+    expire_in: 1 week
+    paths:
+      - "*.AppImage"
