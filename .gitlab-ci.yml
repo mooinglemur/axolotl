@@ -15,7 +15,9 @@ flatpak:
     - when: manual
   hooks:
     pre_get_sources_script:
-      - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git
+      - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git wget
+      - wget -O /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+      - chmod +x /usr/local/bin/gitlab-runner
   before_script:
     - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak flatpak-builder elfutils build-essential
     - flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
