@@ -3,7 +3,7 @@ image: ubuntu:22.04
 stages:
   - build
 
-flatpak:
+linux-flatpak:
   image: bilelmoussaoui/flatpak-github-actions:freedesktop-23.08
   stage: build
   tags:
@@ -29,7 +29,7 @@ flatpak:
     paths:
       - axolotl-apclient.flatpak
 
-appimage:
+linux-appimage:
   stage: build
   tags:
     - docker
@@ -138,9 +138,15 @@ windows-cross:
       - curl -L -o /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
       - chmod +x /usr/local/bin/gitlab-runner
   before_script:
-    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools zip curl git nlohmann-json3-dev
+    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools zip curl git
     - export ROOT_DIR=$PWD
     - export CMAKE_GENERATOR=Ninja
+    # Build nlohmann_json for mingw
+    - git clone --depth 1 -b v3.11.3 https://github.com/nlohmann/json.git
+    - mkdir json/build && cd json/build
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DJSON_BuildTests=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+    - ninja install
+    - cd $ROOT_DIR
     # Build yaml-cpp for mingw
     - git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
     - mkdir yaml-cpp/build && cd yaml-cpp/build
