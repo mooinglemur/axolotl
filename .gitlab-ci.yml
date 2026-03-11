@@ -87,14 +87,34 @@ windows:
   script:
     - |
       $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;C:\wix;" + $env:PATH
-      mkdir build
+      $env:CHERE_INVOKING = "1"
+      $env:MSYSTEM = "MINGW64"
+
+      function Run-Bash {
+          param([string]$command)
+          c:\msys64\usr\bin\bash -lc $command
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Bash command failed with exit code $LASTEXITCODE: $command"
+              exit $LASTEXITCODE
+          }
+      }
+
+      if (!(Test-Path build)) { mkdir build }
       cd build
-      c:\msys64\usr\bin\bash -lc "cd build && cmake -GNinja -DCMAKE_BUILD_TYPE=Release .."
-      c:\msys64\usr\bin\bash -lc "cd build && ninja"
+
+      echo "Configuring with CMake..."
+      Run-Bash "cmake -GNinja -DCMAKE_BUILD_TYPE=Release .."
+
+      echo "Building..."
+      Run-Bash "ninja"
+
       echo "Generating MSI and ZIP via CPack..."
-      c:\msys64\usr\bin\bash -lc "cd build && cpack -G WIX"
-      c:\msys64\usr\bin\bash -lc "cd build && cpack -G ZIP"
-      mv *.zip ..\axolotl-apclient-windows-portable.zip
+      Run-Bash "cpack -G WIX"
+      Run-Bash "cpack -G ZIP"
+
+      cd ..
+      echo "Organizing artifacts..."
+      Get-ChildItem -Path build -Filter "*.zip" | Move-Item -Destination "axolotl-apclient-windows-portable.zip" -Force
   artifacts:
     name: "axolotl-apclient-windows"
     expire_in: 1 week
