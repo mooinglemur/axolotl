@@ -146,7 +146,7 @@ windows-cross:
     # Build zlib for mingw
     - git clone --depth 1 -b v1.3.1 https://github.com/madler/zlib.git
     - mkdir zlib/build && cd zlib/build
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     - cd $ROOT_DIR
     # Build nlohmann_json for mingw
@@ -164,7 +164,7 @@ windows-cross:
     # Build yaml-cpp for mingw
     - git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
     - mkdir yaml-cpp/build && cd yaml-cpp/build
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     - cd $ROOT_DIR
     # Build glfw for mingw

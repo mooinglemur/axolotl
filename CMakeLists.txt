@@ -108,6 +108,10 @@ else()
     endif()
 endif()
 
+if (WIN32)
+    target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE)
+endif()
+
 install(TARGETS axolotl-apclient
         RUNTIME DESTINATION bin)
 
