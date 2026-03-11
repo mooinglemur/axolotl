@@ -7,7 +7,7 @@ flatpak:
   image: bilelmoussaoui/flatpak-github-actions:freedesktop-23.08
   stage: build
   tags:
-    - docker
+    - docker-sandboxed
     - linux
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
