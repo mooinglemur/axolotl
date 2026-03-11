@@ -79,7 +79,7 @@ windows:
       c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
       c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
       echo "Installing build tools and dependencies..."
-      c:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-glfw mingw-w64-x86_64-yaml-cpp mingw-w64-x86_64-nlohmann-json"
+      c:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-glfw mingw-w64-x86_64-yaml-cpp mingw-w64-x86_64-nlohmann-json mingw-w64-x86_64-mbedtls"
       echo "Downloading WiX Toolset..."
       Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip" -OutFile "wix.zip"
       Expand-Archive -Path "wix.zip" -DestinationPath "C:\wix"
@@ -145,6 +145,12 @@ windows-cross:
     - git clone --depth 1 -b v3.11.3 https://github.com/nlohmann/json.git
     - mkdir json/build && cd json/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DJSON_BuildTests=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+    - ninja install
+    - cd $ROOT_DIR
+    # Build mbedtls for mingw
+    - git clone --depth 1 -b v3.5.2 https://github.com/ARMmbed/mbedtls.git
+    - mkdir mbedtls/build && cd mbedtls/build
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     - cd $ROOT_DIR
     # Build yaml-cpp for mingw
