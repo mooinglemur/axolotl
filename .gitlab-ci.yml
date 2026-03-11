@@ -122,4 +122,72 @@ windows:
       - "axolotl-apclient-windows-portable.zip"
       - "build/*.msi"
 
+windows-cross:
+  stage: build
+  tags:
+    - docker
+    - linux
+  image: ubuntu:22.04
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  rules:
+    - when: manual
+  hooks:
+    pre_get_sources_script:
+      - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl
+      - curl -L -o /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+      - chmod +x /usr/local/bin/gitlab-runner
+  before_script:
+    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools zip curl nlohmann-json3-dev
+    # Build yaml-cpp for mingw
+    - git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
+    - mkdir yaml-cpp/build && cd yaml-cpp/build
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=../../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+    - ninja install
+    - cd ../..
+    # Build glfw for mingw
+    - git clone --depth 1 -b 3.3.10 https://github.com/glfw/glfw.git
+    - mkdir glfw/build && cd glfw/build
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=../../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+    - ninja install
+    - cd ../..
+  script:
+    - mkdir build-cross && cd build-cross
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release ..
+    - ninja
+    - echo "Generating MSI via wixl..."
+    - |
+      cat <<EOF > axolotl.wxs
+      <?xml version="1.0" encoding="utf-8"?>
+      <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+        <Product Name="Axolotl AP Text Client" Id="*" UpgradeCode="425C992D-0261-4162-8AFA-57E2BBA737D4" Language="1033" Codepage="1252" Version="0.1.0" Manufacturer="MooingLemur">
+          <Package Id="*" Keywords="Installer" Description="Axolotl Archipelago text client" Manufacturer="MooingLemur" InstallerVersion="100" Languages="1033" Compressed="yes" SummaryCodepage="1252" />
+          <Media Id="1" Cabinet="Sample.cab" EmbedCab="yes" DiskPrompt="CD-ROM #1" />
+          <Property Id="DiskPrompt" Value="Axolotl AP Text Client Installation [1]" />
+          <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFilesFolder" Name="PFiles">
+              <Directory Id="AxolotlDir" Name="AxolotlAPTextClient">
+                <Component Id="MainExecutable" Guid="*">
+                  <File Id="AxolotlEXE" Name="axolotl-apclient.exe" Source="axolotl-apclient.exe" KeyPath="yes" />
+                </Component>
+              </Directory>
+            </Directory>
+          </Directory>
+          <Feature Id="Complete" Level="1">
+            <ComponentRef Id="MainExecutable" />
+          </Feature>
+        </Product>
+      </Wix>
+      EOF
+    - wixl -o axolotl-apclient-cross.msi axolotl.wxs
+    - echo "Creating portable ZIP..."
+    - zip -j ../axolotl-apclient-windows-cross-portable.zip axolotl-apclient.exe
+  artifacts:
+    name: "axolotl-apclient-windows-cross"
+    expire_in: 1 week
+    paths:
+      - "axolotl-apclient-windows-cross-portable.zip"
+      - "build-cross/*.msi"
+
+
 
