@@ -13,8 +13,11 @@ flatpak:
     FLATPAK_BUILDER_NO_USER_CHROOT: "1"
   rules:
     - when: manual
+  hooks:
+    pre_get_sources_script:
+      - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git
   before_script:
-    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak flatpak-builder elfutils git
+    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak flatpak-builder elfutils build-essential
     - flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
     - flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
   script:
@@ -36,6 +39,9 @@ appimage:
     GIT_SUBMODULE_STRATEGY: recursive
   rules:
     - when: manual
+  hooks:
+    pre_get_sources_script:
+      - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git
   before_script:
     - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev git wget file
     - wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
