@@ -16,7 +16,8 @@ flatpak:
     - when: manual
   hooks:
     pre_get_sources_script:
-      - wget -O /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+      - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl
+      - curl -L -o /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
       - chmod +x /usr/local/bin/gitlab-runner
   script:
     - flatpak-builder --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
@@ -57,3 +58,48 @@ appimage:
     expire_in: 1 week
     paths:
       - "*.AppImage"
+
+windows:
+  stage: build
+  tags:
+    - windows
+  image: mcr.microsoft.com/windows/servercore:ltsc2022
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  rules:
+    - when: manual
+  before_script:
+    - |
+      echo "Downloading MSYS2..."
+      Invoke-WebRequest -Uri "https://github.com/msys2/msys2-installer/releases/download/2024-01-13/msys2-base-x86_64-20240113.sfx.exe" -OutFile "msys2-base.exe"
+      echo "Extracting MSYS2..."
+      .\msys2-base.exe -y -oc:\
+      $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;" + $env:PATH
+      echo "Updating MSYS2 packages..."
+      c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
+      c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
+      echo "Installing build tools and dependencies..."
+      c:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-glfw mingw-w64-x86_64-yaml-cpp mingw-w64-x86_64-nlohmann-json"
+      echo "Downloading WiX Toolset..."
+      Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip" -OutFile "wix.zip"
+      Expand-Archive -Path "wix.zip" -DestinationPath "C:\wix"
+      $env:PATH = "C:\wix;" + $env:PATH
+  script:
+    - |
+      $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;C:\wix;" + $env:PATH
+      mkdir build
+      cd build
+      c:\msys64\usr\bin\bash -lc "cd build && cmake -GNinja -DCMAKE_BUILD_TYPE=Release .."
+      c:\msys64\usr\bin\bash -lc "cd build && ninja"
+      echo "Generating MSI and ZIP via CPack..."
+      c:\msys64\usr\bin\bash -lc "cd build && cpack -G WIX"
+      c:\msys64\usr\bin\bash -lc "cd build && cpack -G ZIP"
+      mv *.zip ..\axolotl-apclient-windows-portable.zip
+  artifacts:
+    name: "axolotl-apclient-windows"
+    expire_in: 1 week
+    paths:
+      - "axolotl-apclient-windows-portable.zip"
+      - "build/*.msi"
+
+

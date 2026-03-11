@@ -110,3 +110,18 @@ endif()
 install(TARGETS axolotl-apclient
         RUNTIME DESTINATION bin)
 
+# CPack configuration
+set(CPACK_PACKAGE_NAME "Axolotl AP Text Client")
+set(CPACK_PACKAGE_VENDOR "MooingLemur")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Axolotl Archipelago text client")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "AxolotlAPTextClient")
+
+if(WIN32)
+    set(CPACK_GENERATOR "WIX;ZIP")
+    set(CPACK_WIX_PRODUCT_GUID "425C992D-0261-4162-8AFA-57E2BBA737D4")
+endif()
+
+include(CPack)
+
+
