@@ -11,6 +11,7 @@ cmake_install.cmake
 install_manifest.txt
 Makefile
 *.cmake
+!Toolchain-mingw.cmake
 
 # Compiled files
 *.o

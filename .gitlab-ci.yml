@@ -138,8 +138,9 @@ windows-cross:
       - curl -L -o /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
       - chmod +x /usr/local/bin/gitlab-runner
   before_script:
-    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools zip curl git
+    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools zip curl git nlohmann-json3-dev
     - export ROOT_DIR=$PWD
+    - export CMAKE_GENERATOR=Ninja
     # Build yaml-cpp for mingw
     - git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
     - mkdir yaml-cpp/build && cd yaml-cpp/build
