@@ -87,6 +87,7 @@ windows:
   script:
     - |
       $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;C:\wix;" + $env:PATH
+      $env:MSYS2_PATH_TYPE = "inherit"
       $env:CHERE_INVOKING = "1"
       $env:MSYSTEM = "MINGW64"
 
