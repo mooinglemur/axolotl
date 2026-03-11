@@ -141,8 +141,8 @@ windows-cross:
     - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools zip curl git
     - export ROOT_DIR=$PWD
     - export CMAKE_GENERATOR=Ninja
-    # Patch IXWebSocket for case-insensitive linking on Linux
-    - sed -i 's/Crypt32/crypt32/g' thirdparty/IXWebSocket/CMakeLists.txt
+    # Patch IXWebSocket for case-insensitive linking on Linux and missing bcrypt dependency for mbedtls
+    - sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
     # Build zlib for mingw
     - git clone --depth 1 -b v1.3.1 https://github.com/madler/zlib.git
     - mkdir zlib/build && cd zlib/build

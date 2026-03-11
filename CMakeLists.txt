@@ -109,7 +109,6 @@ else()
 endif()
 
 if (WIN32)
-    target_link_libraries(axolotl-apclient PRIVATE bcrypt)
     target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE)
 endif()
 
