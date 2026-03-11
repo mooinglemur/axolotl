@@ -94,7 +94,7 @@ windows:
           param([string]$command)
           c:\msys64\usr\bin\bash -lc $command
           if ($LASTEXITCODE -ne 0) {
-              Write-Error "Bash command failed with exit code $LASTEXITCODE: $command"
+              Write-Error "Bash command failed with exit code ${LASTEXITCODE}: $command"
               exit $LASTEXITCODE
           }
       }
