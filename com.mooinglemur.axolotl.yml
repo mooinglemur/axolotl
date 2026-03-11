@@ -29,6 +29,18 @@ modules:
         url: https://github.com/nlohmann/json.git
         tag: v3.11.2
 
+  - name: glfw
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_SHARED_LIBS=ON
+      - -DGLFW_BUILD_EXAMPLES=OFF
+      - -DGLFW_BUILD_TESTS=OFF
+      - -DGLFW_BUILD_DOCS=OFF
+    sources:
+      - type: git
+        url: https://github.com/glfw/glfw.git
+        tag: 3.3.10
+
   - name: axolotl-apclient
     buildsystem: cmake-ninja
     sources:

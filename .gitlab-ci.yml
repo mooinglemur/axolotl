@@ -4,7 +4,6 @@ stages:
   - build
 
 flatpak:
-  image: bilelmoussaoui/flatpak-github-actions:freedesktop-23.08
   stage: build
   tags:
     - docker-sandboxed
@@ -14,6 +13,10 @@ flatpak:
     FLATPAK_BUILDER_NO_USER_CHROOT: "1"
   rules:
     - when: manual
+  before_script:
+    - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak flatpak-builder elfutils git
+    - flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    - flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
   script:
     - flatpak-builder --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
     - flatpak build-export repo build-dir
