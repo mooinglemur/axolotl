@@ -47,6 +47,8 @@ set(IMGUI_SOURCES
 
 if (APPLE)
     list(APPEND IMGUI_SOURCES ${IMGUI_DIR}/backends/imgui_impl_metal.mm)
+elseif (WIN32)
+    list(APPEND IMGUI_SOURCES ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp)
 else()
     list(APPEND IMGUI_SOURCES ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp)
 endif()
@@ -115,6 +117,7 @@ endif()
 
 if (WIN32)
     target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE)
+    target_link_libraries(axolotl-apclient PRIVATE d3d11 dxgi d3dcompiler)
 endif()
 
 install(TARGETS axolotl-apclient

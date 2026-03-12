@@ -14,6 +14,10 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 #include <backends/imgui_impl_metal.h>
+#elif defined(_WIN32)
+#include <backends/imgui_impl_dx11.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #else
 #include <backends/imgui_impl_opengl3.h>
 #endif
@@ -35,11 +39,18 @@ Application::~Application() {
 
 #ifdef __APPLE__
   ImGui_ImplMetal_Shutdown();
+#elif defined(_WIN32)
+  ImGui_ImplDX11_Shutdown();
 #else
   ImGui_ImplOpenGL3_Shutdown();
 #endif
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
+
+#ifdef _WIN32
+  CleanupDeviceD3D();
+#endif
+
   if (window_) {
     glfwDestroyWindow(window_);
   }
@@ -57,6 +68,14 @@ bool Application::Initialize() {
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#elif defined(_WIN32)
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+#else
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#endif
 
   window_ =
       glfwCreateWindow(1280, 720, "Axolotl - Archipelago Client", NULL, NULL);
@@ -67,48 +86,18 @@ bool Application::Initialize() {
               << description << std::endl;
     return false;
   }
-  glsl_version_ = "#version 150";
-#else
-  struct GLVersion {
-    int major;
-    int minor;
-    int profile;
-    const char *glsl;
-  };
-  std::vector<GLVersion> versions = {
-      {3, 3, GLFW_OPENGL_CORE_PROFILE, "#version 130"},
-      {3, 0, 0, "#version 130"},
-      {2, 1, 0, "#version 120"}};
 
-  for (const auto &v : versions) {
-    glfwDefaultWindowHints();
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, v.major);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, v.minor);
-    if (v.major > 3 || (v.major == 3 && v.minor >= 2)) {
-      glfwWindowHint(GLFW_OPENGL_PROFILE, v.profile);
-    }
-
-    window_ =
-        glfwCreateWindow(1280, 720, "Axolotl - Archipelago Client", NULL, NULL);
-    if (window_) {
-      glsl_version_ = v.glsl;
-      break;
-    }
-  }
-
-  if (!window_) {
-    const char *description;
-    int code = glfwGetError(&description);
-    std::cerr << "Failed to create OpenGL context (Tried 3.3, 3.0, 2.1). Last "
-                 "Error "
-              << code << ": " << description << std::endl;
-    return false;
-  }
-#endif
-
+#ifdef __APPLE__
   glfwMakeContextCurrent(window_);
   glfwSwapInterval(1);
+  glsl_version_ = "#version 150";
+#elif defined(_WIN32)
+  // No GL context for Windows
+#else
+  glfwMakeContextCurrent(window_);
+  glfwSwapInterval(1);
+  glsl_version_ = "#version 130";
+#endif
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -126,12 +115,19 @@ bool Application::Initialize() {
 
   ImGui::StyleColorsDark();
 
-  ImGui_ImplGlfw_InitForOpenGL(window_, true);
 #ifdef __APPLE__
-  device_ = MTLCreateSystemDefaultDevice();
-  commandQueue_ = [device_ newCommandQueue];
+  ImGui_ImplGlfw_InitForOther(window_, true);
   ImGui_ImplMetal_Init(device_);
+#elif defined(_WIN32)
+  ImGui_ImplGlfw_InitForOther(window_, true);
+  if (!CreateDeviceD3D(glfwGetWin32Window(window_))) {
+    std::cerr << "Failed to initialize DirectX 11 (Hardware and WARP failed)."
+              << std::endl;
+    return false;
+  }
+  ImGui_ImplDX11_Init(pd3dDevice_, pd3dDeviceContext_);
 #else
+  ImGui_ImplGlfw_InitForOpenGL(window_, true);
   ImGui_ImplOpenGL3_Init(glsl_version_.c_str());
 #endif
 
@@ -256,6 +252,8 @@ void Application::Run() {
     id<MTLRenderCommandEncoder> renderEncoder =
         [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
     ImGui_ImplMetal_NewFrame(renderPassDescriptor);
+#elif defined(_WIN32)
+    ImGui_ImplDX11_NewFrame();
 #else
     ImGui_ImplOpenGL3_NewFrame();
 #endif
@@ -378,11 +376,25 @@ void Application::Run() {
 
     ImGui::Render();
 #ifdef __APPLE__
-    ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer,
-                                   renderEncoder);
-    [renderEncoder endEncoding];
-    [commandBuffer presentDrawable:view.currentDrawable];
+    id<MTLCommandBuffer> commandBuffer = [commandQueue_ commandBuffer];
+    MTLRenderPassDescriptor *renderPassDescriptor =
+        [view currentRenderPassDescriptor];
+    if (renderPassDescriptor != nil) {
+      id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer
+          renderCommandEncoderWithDescriptor:renderPassDescriptor];
+      ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer,
+                                     renderEncoder);
+      [renderEncoder endEncoding];
+      [commandBuffer presentDrawable:view.currentDrawable];
+    }
     [commandBuffer commit];
+#elif defined(_WIN32)
+    const float clear_color_with_alpha[4] = {0.1f, 0.1f, 0.12f, 1.0f};
+    pd3dDeviceContext_->OMSetRenderTargets(1, &mainRenderTargetView_, nullptr);
+    pd3dDeviceContext_->ClearRenderTargetView(mainRenderTargetView_,
+                                              clear_color_with_alpha);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    pSwapChain_->Present(1, 0); // Present with vsync
 #else
     int display_w, display_h;
     glfwGetFramebufferSize(window_, &display_w, &display_h);
@@ -390,17 +402,20 @@ void Application::Run() {
     glClearColor(0.1f, 0.1f, 0.12f, 1.00f);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(window_);
 #endif
 
     ImGuiIO &io = ImGui::GetIO();
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+#ifndef _WIN32
       GLFWwindow *backup_current_context = glfwGetCurrentContext();
+#endif
       ImGui::UpdatePlatformWindows();
       ImGui::RenderPlatformWindowsDefault();
+#ifndef _WIN32
       glfwMakeContextCurrent(backup_current_context);
+#endif
     }
-
-    glfwSwapBuffers(window_);
   }
 
   // Workaround for Wayland segmentation fault on exit:
@@ -418,3 +433,88 @@ void Application::RenderUI() {
     window->Render(custom_font_, preview_font_);
   }
 }
+
+#ifdef _WIN32
+bool Application::CreateDeviceD3D(HWND hWnd) {
+  // Setup swap chain
+  DXGI_SWAP_CHAIN_DESC sd;
+  ZeroMemory(&sd, sizeof(sd));
+  sd.BufferCount = 2;
+  sd.BufferDesc.Width = 0;
+  sd.BufferDesc.Height = 0;
+  sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  sd.BufferDesc.RefreshRate.Numerator = 60;
+  sd.BufferDesc.RefreshRate.Denominator = 1;
+  sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+  sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+  sd.OutputWindow = hWnd;
+  sd.SampleDesc.Count = 1;
+  sd.SampleDesc.Quality = 0;
+  sd.Windowed = TRUE;
+  sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+  UINT createDeviceFlags = 0;
+  D3D_FEATURE_LEVEL featureLevel;
+  const D3D_FEATURE_LEVEL featureLevelArray[2] = {
+      D3D_FEATURE_LEVEL_11_0,
+      D3D_FEATURE_LEVEL_10_0,
+  };
+
+  // Try Hardware and then fallback to WARP (Software)
+  D3D_DRIVER_TYPE driverTypes[] = {
+      D3D_DRIVER_TYPE_HARDWARE,
+      D3D_DRIVER_TYPE_WARP,
+  };
+
+  HRESULT res = E_FAIL;
+  for (auto driverType : driverTypes) {
+    res = D3D11CreateDeviceAndSwapChain(
+        nullptr, driverType, nullptr, createDeviceFlags, featureLevelArray, 2,
+        D3D11_SDK_VERSION, &sd, &pSwapChain_, &pd3dDevice_, &featureLevel,
+        &pd3dDeviceContext_);
+    if (SUCCEEDED(res)) {
+      if (driverType == D3D_DRIVER_TYPE_WARP) {
+        std::cout << "DirectX 11: Using Software WARP Driver." << std::endl;
+      }
+      break;
+    }
+  }
+
+  if (res != S_OK)
+    return false;
+
+  CreateRenderTarget();
+  return true;
+}
+
+void Application::CleanupDeviceD3D() {
+  CleanupRenderTarget();
+  if (pSwapChain_) {
+    pSwapChain_->Release();
+    pSwapChain_ = nullptr;
+  }
+  if (pd3dDeviceContext_) {
+    pd3dDeviceContext_->Release();
+    pd3dDeviceContext_ = nullptr;
+  }
+  if (pd3dDevice_) {
+    pd3dDevice_->Release();
+    pd3dDevice_ = nullptr;
+  }
+}
+
+void Application::CreateRenderTarget() {
+  ID3D11Texture2D *pBackBuffer;
+  pSwapChain_->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+  pd3dDevice_->CreateRenderTargetView(pBackBuffer, nullptr,
+                                      &mainRenderTargetView_);
+  pBackBuffer->Release();
+}
+
+void Application::CleanupRenderTarget() {
+  if (mainRenderTargetView_) {
+    mainRenderTargetView_->Release();
+    mainRenderTargetView_ = nullptr;
+  }
+}
+#endif

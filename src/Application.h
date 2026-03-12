@@ -8,6 +8,9 @@
 #if defined(__APPLE__) && defined(__OBJC__)
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
+#elif defined(_WIN32)
+#include <d3d11.h>
+#include <dxgi1_2.h>
 #endif
 
 struct GLFWwindow;
@@ -52,6 +55,15 @@ private:
   void *commandQueue_ = nullptr;
   void *renderPassDescriptor_ = nullptr;
   void *layer_ = nullptr;
+#elif defined(_WIN32)
+  ID3D11Device *pd3dDevice_ = nullptr;
+  ID3D11DeviceContext *pd3dDeviceContext_ = nullptr;
+  IDXGISwapChain *pSwapChain_ = nullptr;
+  ID3D11RenderTargetView *mainRenderTargetView_ = nullptr;
+  bool CreateDeviceD3D(HWND hWnd);
+  void CleanupDeviceD3D();
+  void CreateRenderTarget();
+  void CleanupRenderTarget();
 #endif
 
   std::string glsl_version_;
