@@ -149,6 +149,8 @@ windows-cross:
     - mkdir zlib/build && cd zlib/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
+    # -- Remove the dll and dll.a files so that the static library is used
+    - rm -f /usr/x86_64-w64-mingw32/lib/libzlib.dll.a /usr/x86_64-w64-mingw32/bin/libzlib.dll
     - cd $ROOT_DIR
     # Build nlohmann_json for mingw
     - git clone --depth 1 -b v3.11.3 https://github.com/nlohmann/json.git

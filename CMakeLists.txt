@@ -8,6 +8,7 @@ set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 
 if (MINGW)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static" CACHE STRING "Linker flags for executables" FORCE)
+    set(ZLIB_USE_STATIC_LIBS ON)
 endif()
 
 # Find system libraries
@@ -16,7 +17,7 @@ find_package(Threads REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-if (LINUX)
+if (UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
 endif()
