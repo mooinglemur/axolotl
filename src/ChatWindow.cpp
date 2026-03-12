@@ -63,8 +63,6 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *) {
     if (state == ArchipelagoNetwork::State::Disconnected) {
       if (ImGui::Button("Connect")) {
         if (on_connect_) {
-          // Save settings on connect
-          Config::Save({server_url_, slot_name_, password_});
           on_connect_(server_url_, slot_name_, password_);
         }
       }

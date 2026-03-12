@@ -106,5 +106,10 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::EndMap;
 
   std::ofstream fout(path);
+  if (!fout.is_open()) {
+    std::cerr << "Error: Could not open config file for writing: " << path
+              << std::endl;
+    return;
+  }
   fout << out.c_str();
 }

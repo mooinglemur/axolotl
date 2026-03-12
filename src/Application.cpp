@@ -154,52 +154,53 @@ bool Application::Initialize() {
 
   ReloadFonts();
 
-  // Initial windows
-  auto chat = std::make_unique<ChatWindow>(
+  // Create all windows at startup
+  AddWindow(std::make_unique<ChatWindow>(
       ap_network_.GetChatHistory(),
       [this](const std::string &msg) { ap_network_.SendChat(msg); },
       [this]() { return ap_network_.GetState(); },
       [this](const std::string &u, const std::string &s, const std::string &p) {
+        current_config_.server_url = u;
+        current_config_.slot_name = s;
+        current_config_.password = p;
+        Config::Save(current_config_);
         ap_network_.Connect(u, s, p);
       },
       [this]() { ap_network_.Disconnect(); },
       [this]() -> const std::map<int, std::string> & {
         return ap_network_.GetPlayerNames();
-      });
-  if (current_config_.show_windows.count(chat->GetName())) {
-    chat->SetOpen(current_config_.show_windows[chat->GetName()]);
-  }
-  AddWindow(std::move(chat));
+      }));
 
-  if (current_config_.show_windows["Settings"]) {
-    AddWindow(std::make_unique<SettingsWindow>(
-        current_config_,
-        [this](const ConnectionSettings &s) {
-          pending_config_ = s;
-          Config::Save(s);
-          settings_changed_pending_ = true;
-        },
-        [this](const std::string &p) { SetPreviewFont(p); }));
-  }
-  if (current_config_.show_windows["Received Items"]) {
-    AddWindow(std::make_unique<ReceivedItemsWindow>(
-        ap_network_.GetReceivedItemsHistory()));
-  }
-  if (current_config_.show_windows["Full Feed"]) {
-    AddWindow(std::make_unique<ItemFeedWindow>(
-        ap_network_.GetItemHistory(),
-        [this]() { return ap_network_.GetGlobalSlot(); }, false, "Full Feed"));
-  }
-  if (current_config_.show_windows["My Feed"]) {
-    AddWindow(std::make_unique<ItemFeedWindow>(
-        ap_network_.GetItemHistory(),
-        [this]() { return ap_network_.GetGlobalSlot(); }, true, "My Feed"));
-  }
-  if (current_config_.show_windows["Hints"]) {
-    AddWindow(std::make_unique<HintWindow>(
-        ap_network_.GetHints(), ap_network_.GetPlayerNames(),
-        ap_network_.GetItemNames(), ap_network_.GetLocationNames(),
-        [this]() { return ap_network_.GetGlobalSlot(); }));
+  AddWindow(std::make_unique<SettingsWindow>(
+      current_config_,
+      [this](const ConnectionSettings &s) {
+        pending_config_ = s;
+        Config::Save(s);
+        settings_changed_pending_ = true;
+      },
+      [this](const std::string &p) { SetPreviewFont(p); }));
+
+  AddWindow(std::make_unique<ReceivedItemsWindow>(
+      ap_network_.GetReceivedItemsHistory()));
+
+  AddWindow(std::make_unique<ItemFeedWindow>(
+      ap_network_.GetItemHistory(),
+      [this]() { return ap_network_.GetGlobalSlot(); }, false, "Full Feed"));
+
+  AddWindow(std::make_unique<ItemFeedWindow>(
+      ap_network_.GetItemHistory(),
+      [this]() { return ap_network_.GetGlobalSlot(); }, true, "My Feed"));
+
+  AddWindow(std::make_unique<HintWindow>(
+      ap_network_.GetHints(), ap_network_.GetPlayerNames(),
+      ap_network_.GetItemNames(), ap_network_.GetLocationNames(),
+      [this]() { return ap_network_.GetGlobalSlot(); }));
+
+  // Load visibility from config
+  for (auto &window : windows_) {
+    if (current_config_.show_windows.count(window->GetName())) {
+      window->SetOpen(current_config_.show_windows[window->GetName()]);
+    }
   }
 
   return true;
@@ -301,91 +302,10 @@ void Application::Run() {
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Windows")) {
-        if (ImGui::MenuItem("Chat")) {
-          bool found = false;
-          for (auto &window : windows_) {
-            if (dynamic_cast<ChatWindow *>(window.get())) {
-              window->SetOpen(true);
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            AddWindow(std::make_unique<ChatWindow>(
-                ap_network_.GetChatHistory(),
-                [this](const std::string &msg) { ap_network_.SendChat(msg); },
-                [this]() { return ap_network_.GetState(); },
-                [this](const std::string &u, const std::string &s,
-                       const std::string &p) { ap_network_.Connect(u, s, p); },
-                [this]() { ap_network_.Disconnect(); },
-                [this]() -> const std::map<int, std::string> & {
-                  return ap_network_.GetPlayerNames();
-                }));
-          }
-        }
-        if (ImGui::MenuItem("Received Items")) {
-          bool found = false;
-          for (auto &window : windows_) {
-            if (dynamic_cast<ReceivedItemsWindow *>(window.get())) {
-              window->SetOpen(true);
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            AddWindow(std::make_unique<ReceivedItemsWindow>(
-                ap_network_.GetReceivedItemsHistory()));
-          }
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Full Feed")) {
-          bool found = false;
-          for (auto &window : windows_) {
-            auto feed = dynamic_cast<ItemFeedWindow *>(window.get());
-            if (feed && feed->GetName() == "Full Feed") {
-              window->SetOpen(true);
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            AddWindow(std::make_unique<ItemFeedWindow>(
-                ap_network_.GetItemHistory(),
-                [this]() { return ap_network_.GetGlobalSlot(); }, false,
-                "Full Feed"));
-          }
-        }
-        if (ImGui::MenuItem("My Feed")) {
-          bool found = false;
-          for (auto &window : windows_) {
-            auto feed = dynamic_cast<ItemFeedWindow *>(window.get());
-            if (feed && feed->GetName() == "My Feed") {
-              window->SetOpen(true);
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            AddWindow(std::make_unique<ItemFeedWindow>(
-                ap_network_.GetItemHistory(),
-                [this]() { return ap_network_.GetGlobalSlot(); }, true,
-                "My Feed"));
-          }
-        }
-        if (ImGui::MenuItem("Hints")) {
-          bool found = false;
-          for (auto &window : windows_) {
-            if (dynamic_cast<HintWindow *>(window.get())) {
-              window->SetOpen(true);
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            AddWindow(std::make_unique<HintWindow>(
-                ap_network_.GetHints(), ap_network_.GetPlayerNames(),
-                ap_network_.GetItemNames(), ap_network_.GetLocationNames(),
-                [this]() { return ap_network_.GetGlobalSlot(); }));
+        for (auto &window : windows_) {
+          bool is_open = window->GetOpen();
+          if (ImGui::MenuItem(window->GetName().c_str(), nullptr, &is_open)) {
+            window->SetOpen(is_open);
           }
         }
         ImGui::EndMenu();
