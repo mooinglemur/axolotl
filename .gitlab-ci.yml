@@ -1,6 +1,6 @@
 workflow:
   rules:
-    - if: $CI_SERVER_HOST == "git2.mooinglemur.com"
+    - if: $CI_SERVER_HOST == "git.mooinglemur.com"
 
 image: ubuntu:22.04
 
