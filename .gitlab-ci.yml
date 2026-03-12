@@ -17,6 +17,7 @@ linux-flatpak:
     GIT_SUBMODULE_STRATEGY: recursive
     FLATPAK_BUILDER_NO_USER_CHROOT: "1"
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
   hooks:
     pre_get_sources_script:
@@ -41,6 +42,7 @@ linux-appimage:
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
   hooks:
     pre_get_sources_script:
@@ -71,6 +73,7 @@ windows:
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
   before_script:
     - |
@@ -138,6 +141,7 @@ windows-cross:
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
   hooks:
     pre_get_sources_script:
