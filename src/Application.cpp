@@ -4,6 +4,7 @@
 #include "ItemFeedWindow.h"
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
+#include <iostream>
 
 #include <GLFW/glfw3.h>
 #include <backends/imgui_impl_glfw.h>
@@ -46,8 +47,10 @@ Application::~Application() {
 }
 
 bool Application::Initialize() {
-  if (!glfwInit())
+  if (!glfwInit()) {
+    std::cerr << "Failed to initialize GLFW." << std::endl;
     return false;
+  }
 
 #ifdef __APPLE__
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -63,8 +66,13 @@ bool Application::Initialize() {
 
   window_ =
       glfwCreateWindow(1280, 720, "Axolotl - Archipelago Client", NULL, NULL);
-  if (!window_)
+  if (!window_) {
+    const char *description;
+    int code = glfwGetError(&description);
+    std::cerr << "Failed to create GLFW window. Error " << code << ": "
+              << description << std::endl;
     return false;
+  }
 
   glfwMakeContextCurrent(window_);
   glfwSwapInterval(1);
