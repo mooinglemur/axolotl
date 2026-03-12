@@ -205,7 +205,7 @@ windows-cross:
                   </File>
                 </Component>
                 <Component Id="LicenseFile" Guid="*">
-                  <File Id="LicenseTXT" Name="LICENSE" Source="../LICENSE" />
+                  <File Id="LicenseTXT" Name="LICENSE.txt" Source="../LICENSE.txt" />
                 </Component>
               </Directory>
             </Directory>
