@@ -86,7 +86,7 @@ if (APPLE)
     set_source_files_properties(src/Application.cpp PROPERTIES LANGUAGE OBJCXX)
 endif()
 
-add_executable(axolotl-apclient ${SRC_FILES})
+add_executable(axolotl-apclient WIN32 ${SRC_FILES})
 target_include_directories(axolotl-apclient PRIVATE src)
 
 if (APPLE)

@@ -126,6 +126,17 @@ bool Application::Initialize() {
     return false;
   }
   ImGui_ImplDX11_Init(pd3dDevice_, pd3dDeviceContext_);
+
+  glfwSetWindowUserPointer(window_, this);
+  glfwSetWindowSizeCallback(
+      window_, [](GLFWwindow *window, int width, int height) {
+        auto app = static_cast<Application *>(glfwGetWindowUserPointer(window));
+        if (app->pSwapChain_) {
+          app->CleanupRenderTarget();
+          app->pSwapChain_->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, 0);
+          app->CreateRenderTarget();
+        }
+      });
 #else
   ImGui_ImplGlfw_InitForOpenGL(window_, true);
   ImGui_ImplOpenGL3_Init(glsl_version_.c_str());
