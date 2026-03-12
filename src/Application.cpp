@@ -57,12 +57,6 @@ bool Application::Initialize() {
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-#else
-  glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-#endif
 
   window_ =
       glfwCreateWindow(1280, 720, "Axolotl - Archipelago Client", NULL, NULL);
@@ -73,6 +67,45 @@ bool Application::Initialize() {
               << description << std::endl;
     return false;
   }
+  glsl_version_ = "#version 150";
+#else
+  struct GLVersion {
+    int major;
+    int minor;
+    int profile;
+    const char *glsl;
+  };
+  std::vector<GLVersion> versions = {
+      {3, 3, GLFW_OPENGL_CORE_PROFILE, "#version 130"},
+      {3, 0, 0, "#version 130"},
+      {2, 1, 0, "#version 120"}};
+
+  for (const auto &v : versions) {
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, v.major);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, v.minor);
+    if (v.major > 3 || (v.major == 3 && v.minor >= 2)) {
+      glfwWindowHint(GLFW_OPENGL_PROFILE, v.profile);
+    }
+
+    window_ =
+        glfwCreateWindow(1280, 720, "Axolotl - Archipelago Client", NULL, NULL);
+    if (window_) {
+      glsl_version_ = v.glsl;
+      break;
+    }
+  }
+
+  if (!window_) {
+    const char *description;
+    int code = glfwGetError(&description);
+    std::cerr << "Failed to create OpenGL context (Tried 3.3, 3.0, 2.1). Last "
+                 "Error "
+              << code << ": " << description << std::endl;
+    return false;
+  }
+#endif
 
   glfwMakeContextCurrent(window_);
   glfwSwapInterval(1);
@@ -99,7 +132,7 @@ bool Application::Initialize() {
   commandQueue_ = [device_ newCommandQueue];
   ImGui_ImplMetal_Init(device_);
 #else
-  ImGui_ImplOpenGL3_Init("#version 130");
+  ImGui_ImplOpenGL3_Init(glsl_version_.c_str());
 #endif
 
   ReloadFonts();

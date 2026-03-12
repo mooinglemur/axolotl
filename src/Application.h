@@ -54,6 +54,7 @@ private:
   void *layer_ = nullptr;
 #endif
 
+  std::string glsl_version_;
   std::string imgui_ini_path_;
   ArchipelagoNetwork ap_network_;
   std::vector<std::unique_ptr<Window>> windows_;
