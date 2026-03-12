@@ -21,6 +21,9 @@
 #else
 #include <backends/imgui_impl_opengl3.h>
 #endif
+#ifdef _WIN32
+#include <ixwebsocket/IXNetSystem.h>
+#endif
 #include <imgui.h>
 
 Application::Application()
@@ -34,6 +37,9 @@ Application::~Application() {
   }
   Config::Save(current_config_);
 
+#ifdef _WIN32
+  ix::uninitNetSystem();
+#endif
   ap_network_.Disconnect();
   windows_.clear();
 
@@ -62,6 +68,10 @@ bool Application::Initialize() {
     std::cerr << "Failed to initialize GLFW." << std::endl;
     return false;
   }
+
+#ifdef _WIN32
+  ix::initNetSystem();
+#endif
 
 #ifdef __APPLE__
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
