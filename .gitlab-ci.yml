@@ -1,3 +1,7 @@
+workflow:
+  rules:
+    - if: $CI_SERVER_HOST == "git2.mooinglemur.com"
+
 image: ubuntu:22.04
 
 stages:
