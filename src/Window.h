@@ -62,7 +62,8 @@ public:
   virtual ~Window() = default;
 
   virtual void Render(ImFont *custom_font = nullptr,
-                      ImFont *preview_font = nullptr) = 0;
+                      ImFont *preview_font = nullptr,
+                      ImFont *preview_fallback_font = nullptr) = 0;
 
   const std::string &GetName() const { return name_; }
   bool &GetOpen() { return is_open_; }

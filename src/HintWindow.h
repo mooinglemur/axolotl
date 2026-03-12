@@ -14,8 +14,8 @@ public:
              std::function<int()> get_global_slot,
              const std::string &name = "Hints");
 
-  void Render(ImFont *custom_font = nullptr,
-              ImFont *preview_font = nullptr) override;
+  void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
+              ImFont *preview_fallback_font = nullptr) override;
 
 private:
   const std::vector<Hint> &hints_;

@@ -11,7 +11,8 @@ HintWindow::HintWindow(const std::vector<Hint> &hints,
       item_names_(item_names), location_names_(location_names),
       get_global_slot_(get_global_slot) {}
 
-void HintWindow::Render(ImFont *custom_font, ImFont *) {
+void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
+                        ImFont *preview_fallback_font) {
   if (!is_open_)
     return;
 
@@ -22,8 +23,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *) {
 
     ImGui::Separator();
 
-    if (custom_font)
-      ImGui::PushFont(custom_font);
+    ImGui::Separator();
 
     static ImGuiTableFlags flags =
         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -41,6 +41,8 @@ void HintWindow::Render(ImFont *custom_font, ImFont *) {
       ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed,
                               80.0f);
       ImGui::TableHeadersRow();
+      if (custom_font)
+        ImGui::PushFont(custom_font);
 
       std::string l_filter = filter_text_;
       std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
@@ -217,11 +219,10 @@ void HintWindow::Render(ImFont *custom_font, ImFont *) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(status_color), "%s",
                            status.c_str());
       }
+      if (custom_font)
+        ImGui::PopFont();
       ImGui::EndTable();
     }
-
-    if (custom_font)
-      ImGui::PopFont();
   }
   ImGui::End();
 }

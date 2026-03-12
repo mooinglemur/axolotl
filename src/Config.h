@@ -10,8 +10,10 @@ struct ConnectionSettings {
 
   // UI Preferences
   float ui_scale = 1.0f;
+  float content_scale = 1.0f;
   bool use_hidpi = true;
   std::string font_path = "";
+  std::string fallback_font_path = "";
   int max_history_size = 0;
   std::map<std::string, bool> show_windows;
 };

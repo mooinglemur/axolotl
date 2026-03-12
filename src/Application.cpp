@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "ChatWindow.h"
+#include "FontScanner.h"
 #include "HintWindow.h"
 #include "ItemFeedWindow.h"
 #include "ReceivedItemsWindow.h"
@@ -178,10 +179,12 @@ bool Application::Initialize() {
         Config::Save(s);
         settings_changed_pending_ = true;
       },
-      [this](const std::string &p) { SetPreviewFont(p); }));
+      [this](const std::string &p) { SetPreviewFont(p); },
+      [this](const std::string &p) { SetPreviewFallbackFont(p); }));
 
-  AddWindow(std::make_unique<ReceivedItemsWindow>(
-      ap_network_.GetReceivedItemsHistory()));
+  auto received = std::make_unique<ReceivedItemsWindow>(
+      ap_network_.GetReceivedItemsHistory());
+  AddWindow(std::move(received));
 
   AddWindow(std::make_unique<ItemFeedWindow>(
       ap_network_.GetItemHistory(),
@@ -210,41 +213,125 @@ void Application::ReloadFonts() {
   ImGuiIO &io = ImGui::GetIO();
   io.Fonts->Clear();
 
-  // Load default font
-  io.Fonts->AddFontDefault();
+  // Set global UI scale
+  io.FontGlobalScale =
+      current_config_.ui_scale > 0 ? current_config_.ui_scale : 1.0f;
 
-  // Load custom UI font if set
-  if (!current_config_.font_path.empty()) {
-    float size =
-        16.0f *
-        (current_config_.ui_scale > 0 ? current_config_.ui_scale : 1.0f);
-    custom_font_ =
-        io.Fonts->AddFontFromFileTTF(current_config_.font_path.c_str(), size);
-  } else {
-    custom_font_ = nullptr;
+  // The content font atlas size should be absolute, so we divide by GlobalScale
+  // to prevent double-scaling
+  float content_base_size =
+      16.0f *
+      (current_config_.content_scale > 0 ? current_config_.content_scale
+                                         : 1.0f) /
+      io.FontGlobalScale;
+
+  // 0. Load System UI Font (Always first, becomes default)
+  // Note: AddFontDefault doesn't scale well via cfg, so we rely on
+  // FontGlobalScale
+  ui_font_ = io.Fonts->AddFontDefault();
+  io.FontDefault = ui_font_;
+
+  // 1. Load Content Font
+  static const ImWchar emoji_ranges[] = {
+      0x2000,  0x3300, // General Punctuation to Enclosed CJK Letters and Months
+      0x1F000, 0x1F9FF, // Pictographs, Emoticons, symbols etc.
+      0,
+  };
+
+  const ImWchar *content_font_ranges = io.Fonts->GetGlyphRangesCyrillic();
+  bool content_font_loaded = false;
+  if (!current_config_.font_path.empty() &&
+      FontScanner::IsValidFontFile(current_config_.font_path)) {
+    content_font_ = io.Fonts->AddFontFromFileTTF(
+        current_config_.font_path.c_str(), content_base_size, nullptr,
+        content_font_ranges);
+    if (content_font_)
+      content_font_loaded = true;
   }
 
-  // Load preview font if set
-  if (!preview_font_path_.empty()) {
-    float size =
-        16.0f *
-        (current_config_.ui_scale > 0 ? current_config_.ui_scale : 1.0f);
-    preview_font_ =
-        io.Fonts->AddFontFromFileTTF(preview_font_path_.c_str(), size);
+  if (!content_font_loaded) {
+    // If no custom font, we use default but at content_base_size
+    // This allows the content area to scale independently even with default
+    // font. We adjust for io.FontGlobalScale to avoid double-scaling.
+    ImFontConfig content_cfg;
+    content_cfg.SizePixels = content_base_size;
+    content_font_ = io.Fonts->AddFontDefault(&content_cfg);
+    content_font_loaded = true;
+  }
+
+  // 2. Merge Fallback/CJK Font if specified
+  if (content_font_loaded && content_font_ != ui_font_ &&
+      !current_config_.fallback_font_path.empty() &&
+      FontScanner::IsValidFontFile(current_config_.fallback_font_path)) {
+    ImFontConfig merge_cfg;
+    merge_cfg.MergeMode = true;
+    merge_cfg.OversampleH = 3;
+    merge_cfg.OversampleV = 1;
+
+    // Use Chinese Full + Japanese + Korean + Thai + etc ranges
+    const ImWchar *cjk_ranges = io.Fonts->GetGlyphRangesChineseFull();
+    io.Fonts->AddFontFromFileTTF(current_config_.fallback_font_path.c_str(),
+                                 content_base_size, &merge_cfg, cjk_ranges);
+
+    const ImWchar *jp_ranges = io.Fonts->GetGlyphRangesJapanese();
+    io.Fonts->AddFontFromFileTTF(current_config_.fallback_font_path.c_str(),
+                                 content_base_size, &merge_cfg, jp_ranges);
+
+    const ImWchar *kr_ranges = io.Fonts->GetGlyphRangesKorean();
+    io.Fonts->AddFontFromFileTTF(current_config_.fallback_font_path.c_str(),
+                                 content_base_size, &merge_cfg, kr_ranges);
+
+    io.Fonts->AddFontFromFileTTF(current_config_.fallback_font_path.c_str(),
+                                 content_base_size, &merge_cfg, emoji_ranges);
+  }
+
+  // 3. Load Preview Font (Separate Atlas Entry)
+  if (!preview_font_path_.empty() &&
+      FontScanner::IsValidFontFile(preview_font_path_)) {
+    preview_font_ = io.Fonts->AddFontFromFileTTF(preview_font_path_.c_str(),
+                                                 content_base_size, nullptr,
+                                                 content_font_ranges);
   } else {
     preview_font_ = nullptr;
   }
 
+  // 4. Load Preview Fallback Font (Separate Atlas Entry)
+  if (!preview_fallback_font_path_.empty() &&
+      FontScanner::IsValidFontFile(preview_fallback_font_path_)) {
+    preview_fallback_font_ = io.Fonts->AddFontFromFileTTF(
+        preview_fallback_font_path_.c_str(), content_base_size, nullptr,
+        io.Fonts->GetGlyphRangesChineseFull());
+
+    ImFontConfig merge_cfg;
+    merge_cfg.MergeMode = true;
+    io.Fonts->AddFontFromFileTTF(preview_fallback_font_path_.c_str(),
+                                 content_base_size, &merge_cfg, emoji_ranges);
+  } else {
+    preview_fallback_font_ = nullptr;
+  }
+
   io.Fonts->Build();
-#ifdef __APPLE__
-  // Metal font atlas update logic would go here if needed per frame
+
+  // Recreate GPU textures for live reload
+#if defined(__APPLE__) && defined(__OBJC__)
+  ImGui_ImplMetal_DestroyDeviceObjects();
+  ImGui_ImplMetal_CreateDeviceObjects(device_);
+#elif defined(_WIN32)
+  ImGui_ImplDX11_InvalidateDeviceObjects();
+  ImGui_ImplDX11_CreateDeviceObjects();
 #else
-  // Texture update is handled by modern backends
+  ImGui_ImplOpenGL3_DestroyDeviceObjects();
+  ImGui_ImplOpenGL3_CreateDeviceObjects();
 #endif
 }
 
 void Application::SetPreviewFont(const std::string &path) {
   preview_font_path_ = path;
+  fonts_reload_pending_ = true;
+}
+
+void Application::SetPreviewFallbackFont(const std::string &path) {
+  preview_fallback_font_path_ = path;
   fonts_reload_pending_ = true;
 }
 
@@ -287,14 +374,12 @@ void Application::Run() {
     if (ImGui::BeginMainMenuBar()) {
       if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Settings")) {
-          AddWindow(std::make_unique<SettingsWindow>(
-              current_config_,
-              [this](const ConnectionSettings &s) {
-                pending_config_ = s;
-                Config::Save(s);
-                settings_changed_pending_ = true;
-              },
-              [this](const std::string &p) { SetPreviewFont(p); }));
+          for (auto &window : windows_) {
+            if (window->GetName() == "Settings") {
+              window->SetOpen(true);
+              break;
+            }
+          }
         }
         if (ImGui::MenuItem("Exit")) {
           glfwSetWindowShouldClose(window_, 1);
@@ -371,7 +456,7 @@ void Application::AddWindow(std::unique_ptr<Window> window) {
 
 void Application::RenderUI() {
   for (auto &window : windows_) {
-    window->Render(custom_font_, preview_font_);
+    window->Render(content_font_, preview_font_, preview_fallback_font_);
   }
 }
 

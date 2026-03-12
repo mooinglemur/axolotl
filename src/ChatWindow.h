@@ -16,8 +16,8 @@ public:
       std::function<void()> on_disconnect,
       std::function<const std::map<int, std::string> &()> get_player_names,
       const std::string &name = "Chat");
-  void Render(ImFont *custom_font = nullptr,
-              ImFont *preview_font = nullptr) override;
+  void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
+              ImFont *preview_fallback_font = nullptr) override;
 
 private:
   char server_url_[256] = "archipelago.gg:0";

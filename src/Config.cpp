@@ -65,10 +65,15 @@ ConnectionSettings Config::Load() {
       settings.password = config["password"].as<std::string>();
     if (config["ui_scale"])
       settings.ui_scale = config["ui_scale"].as<float>();
+    if (config["content_scale"])
+      settings.content_scale = config["content_scale"].as<float>();
     if (config["use_hidpi"])
       settings.use_hidpi = config["use_hidpi"].as<bool>();
     if (config["font_path"])
       settings.font_path = config["font_path"].as<std::string>();
+    if (config["fallback_font_path"])
+      settings.fallback_font_path =
+          config["fallback_font_path"].as<std::string>();
     if (config["max_history_size"])
       settings.max_history_size = config["max_history_size"].as<int>();
     if (config["show_windows"]) {
@@ -92,8 +97,11 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::Key << "slot_name" << YAML::Value << settings.slot_name;
   out << YAML::Key << "password" << YAML::Value << settings.password;
   out << YAML::Key << "ui_scale" << YAML::Value << settings.ui_scale;
+  out << YAML::Key << "content_scale" << YAML::Value << settings.content_scale;
   out << YAML::Key << "use_hidpi" << YAML::Value << settings.use_hidpi;
   out << YAML::Key << "font_path" << YAML::Value << settings.font_path;
+  out << YAML::Key << "fallback_font_path" << YAML::Value
+      << settings.fallback_font_path;
   out << YAML::Key << "max_history_size" << YAML::Value
       << settings.max_history_size;
 

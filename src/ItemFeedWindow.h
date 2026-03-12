@@ -11,8 +11,8 @@ public:
                  std::function<int()> get_global_slot,
                  bool personal_only = false,
                  const std::string &name = "Item Feed");
-  void Render(ImFont *custom_font = nullptr,
-              ImFont *preview_font = nullptr) override;
+  void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
+              ImFont *preview_fallback_font = nullptr) override;
 
 private:
   int selection_anchor_ = -1;

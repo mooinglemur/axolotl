@@ -54,6 +54,7 @@ else()
 endif()
 
 add_library(imgui STATIC ${IMGUI_SOURCES})
+target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
 
 target_include_directories(imgui PUBLIC 
     ${IMGUI_DIR}

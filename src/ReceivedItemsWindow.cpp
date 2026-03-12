@@ -7,7 +7,8 @@ ReceivedItemsWindow::ReceivedItemsWindow(
     const std::vector<RichMessage> &history, const std::string &name)
     : Window(name), history_(history) {}
 
-void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *) {
+void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
+                                 ImFont *preview_fallback_font) {
   if (!is_open_)
     return;
 
@@ -24,8 +25,7 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *) {
 
     ImGui::Separator();
 
-    if (custom_font)
-      ImGui::PushFont(custom_font);
+    ImGui::Separator();
 
     bool show_date = false;
     if (!filter_text_.empty()) {
@@ -58,6 +58,8 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *) {
     }
 
     if (ImGui::BeginChild("ReceivedScrollingRegion")) {
+      if (custom_font)
+        ImGui::PushFont(custom_font);
       for (int i = 0; i < (int)history_.size(); ++i) {
         const auto &rm = history_[i];
         std::string full_text;
@@ -187,10 +189,10 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *) {
 
       if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         ImGui::SetScrollHereY(1.0f);
+      if (custom_font)
+        ImGui::PopFont();
     }
     ImGui::EndChild();
-    if (custom_font)
-      ImGui::PopFont();
   }
   ImGui::End();
 }

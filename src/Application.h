@@ -23,10 +23,12 @@ public:
   bool Initialize();
   void Run();
   void ReloadFonts();
-  void ApplyUIScale();
-  ImFont *GetCustomFont() const { return custom_font_; }
+  ImFont *GetUIFont() const { return ui_font_; }
+  ImFont *GetContentFont() const { return content_font_; }
   ImFont *GetPreviewFont() const { return preview_font_; }
+  ImFont *GetPreviewFallbackFont() const { return preview_fallback_font_; }
   void SetPreviewFont(const std::string &font_path);
+  void SetPreviewFallbackFont(const std::string &font_path);
 
   void AddWindow(std::unique_ptr<Window> window);
   ArchipelagoNetwork &GetNetwork() { return ap_network_; }
@@ -42,9 +44,12 @@ private:
   std::atomic<bool> settings_changed_pending_{false};
   std::atomic<bool> fonts_reload_pending_{false};
   std::atomic<bool> is_initialized_{false};
-  ImFont *custom_font_ = nullptr;
+  ImFont *ui_font_ = nullptr;
+  ImFont *content_font_ = nullptr;
   ImFont *preview_font_ = nullptr;
+  ImFont *preview_fallback_font_ = nullptr;
   std::string preview_font_path_;
+  std::string preview_fallback_font_path_;
 #if defined(__APPLE__) && defined(__OBJC__)
   id<MTLDevice> device_ = nil;
   id<MTLCommandQueue> commandQueue_ = nil;

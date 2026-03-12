@@ -1,6 +1,10 @@
 #include "FontScanner.h"
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#include <imstb_truetype.h>
 
 #ifdef __linux__
 #include <fontconfig/fontconfig.h>
@@ -24,7 +28,7 @@ std::vector<FontInfo> FontScanner::GetAvailableFonts() {
       std::string ext = std::filesystem::path(filename).extension().string();
       std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-      if (ext == ".ttf" || ext == ".otf" || ext == ".ttc") {
+      if (ext == ".ttf" || ext == ".otf") {
         fonts.push_back({(char *)family, filename});
       }
     }
@@ -97,4 +101,34 @@ std::string FontScanner::FindFontPath(const std::string &font_name) {
     }
   }
   return "";
+}
+bool FontScanner::IsValidFontFile(const std::filesystem::path &path) {
+  if (!std::filesystem::is_regular_file(path))
+    return false;
+
+  // Basic sanity check: fonts are usually > 1KB
+  uintmax_t size = std::filesystem::file_size(path);
+  if (size < 1024)
+    return false;
+
+  std::ifstream file(path, std::ios::binary);
+  if (!file)
+    return false;
+
+  // Read the whole file for deep validation
+  // While slightly slow, it's the only way to be 100% sure stb_truetype won't
+  // crash later
+  std::vector<unsigned char> buffer((std::istreambuf_iterator<char>(file)),
+                                    std::istreambuf_iterator<char>());
+
+  if (buffer.empty())
+    return false;
+
+  stbtt_fontinfo font;
+  // stbtt_InitFont returns 1 on success, 0 on failure
+  if (stbtt_InitFont(&font, buffer.data(), 0)) {
+    return true;
+  }
+
+  return false;
 }

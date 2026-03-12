@@ -27,7 +27,8 @@ ChatWindow::ChatWindow(
   strncpy(password_, settings.password.c_str(), sizeof(password_) - 1);
 }
 
-void ChatWindow::Render(ImFont *custom_font, ImFont *) {
+void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
+                        ImFont *preview_fallback_font) {
   if (!is_open_)
     return;
 
@@ -80,8 +81,7 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *) {
 
     ImGui::Separator();
 
-    if (custom_font)
-      ImGui::PushFont(custom_font);
+    ImGui::Separator();
 
     // History
     const float footer_height_to_reserve =
@@ -89,6 +89,8 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *) {
     if (ImGui::BeginChild(
             "ScrollingRegion", ImVec2(0, -footer_height_to_reserve),
             ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar)) {
+      if (custom_font)
+        ImGui::PushFont(custom_font);
       for (int i = 0; i < (int)history_.size(); ++i) {
         const auto &rm = history_[i];
         ImGui::PushID(i);
@@ -190,6 +192,8 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *) {
 
       if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         ImGui::SetScrollHereY(1.0f);
+      if (custom_font)
+        ImGui::PopFont();
     }
     ImGui::EndChild();
 
@@ -254,8 +258,6 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *) {
       }
       ImGui::SetKeyboardFocusHere(-1); // Re-focus on enter
     }
-    if (custom_font)
-      ImGui::PopFont();
   }
   ImGui::End();
 }
