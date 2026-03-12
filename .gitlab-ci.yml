@@ -70,6 +70,7 @@ windows:
     - when: manual
   before_script:
     - |
+      $ErrorActionPreference = "Stop"
       echo "Downloading MSYS2..."
       Invoke-WebRequest -Uri "https://github.com/msys2/msys2-installer/releases/download/2024-01-13/msys2-base-x86_64-20240113.sfx.exe" -OutFile "msys2-base.exe"
       echo "Extracting MSYS2..."
@@ -86,6 +87,7 @@ windows:
       $env:PATH = "C:\wix;" + $env:PATH
   script:
     - |
+      $ErrorActionPreference = "Stop"
       $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;C:\wix;" + $env:PATH
       $env:MSYS2_PATH_TYPE = "inherit"
       $env:CHERE_INVOKING = "1"
