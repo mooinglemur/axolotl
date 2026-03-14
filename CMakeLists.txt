@@ -29,6 +29,15 @@ if (NOT glfw3_FOUND)
     pkg_check_modules(GLFW3 REQUIRED glfw3)
 endif()
 
+# TLS Backend options
+option(USE_MBED_TLS "Use mbedtls for TLS" OFF)
+option(USE_OPEN_SSL "Use OpenSSL for TLS" ON)
+
+if (USE_MBED_TLS)
+    set(USE_OPEN_SSL OFF CACHE BOOL "" FORCE)
+    find_package(MbedTLS REQUIRED)
+endif()
+
 # IXWebSocket submodule
 set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
 set(USE_TLS ON CACHE BOOL "" FORCE)
@@ -112,6 +121,9 @@ else()
             ${FONTCONFIG_LIBRARIES}
             ixwebsocket
         )
+        if (USE_MBED_TLS)
+            target_link_libraries(axolotl-apclient PRIVATE ${MBEDTLS_LIBRARIES})
+        endif()
         target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
     endif()
 endif()

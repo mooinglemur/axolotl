@@ -1,4 +1,5 @@
 #include "Config.h"
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -46,6 +47,36 @@ std::filesystem::path Config::GetConfigPath() {
 
 std::filesystem::path Config::GetImguiIniPath() {
   return GetConfigDir() / "imgui.ini";
+}
+
+std::filesystem::path Config::GetBundleDir() {
+  // Respect APPDIR if set (standard for AppImage)
+  const char *appdir = getenv("APPDIR");
+  if (appdir) {
+    return std::filesystem::path(appdir) / "usr" / "local" / "share" /
+           "axolotl";
+  }
+
+#ifdef _WIN32
+  // Fallback to executable directory on Windows
+  wchar_t buffer[MAX_PATH];
+  GetModuleFileNameW(NULL, buffer, MAX_PATH);
+  return std::filesystem::path(buffer).parent_path();
+#else
+  // Fallback to /proc/self/exe on Linux
+  std::error_code ec;
+  auto exe_path = std::filesystem::read_symlink("/proc/self/exe", ec);
+  if (!ec) {
+    // Binary is in bin, share is in ../share/axolotl
+    return exe_path.parent_path().parent_path() / "share" / "axolotl";
+  }
+#endif
+
+  return std::filesystem::current_path();
+}
+
+std::filesystem::path Config::GetCaBundlePath() {
+  return GetBundleDir() / "cacert.pem";
 }
 
 ConnectionSettings Config::Load() {

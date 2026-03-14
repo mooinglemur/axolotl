@@ -23,6 +23,8 @@ public:
   static std::filesystem::path GetConfigDir();
   static std::filesystem::path GetConfigPath();
   static std::filesystem::path GetImguiIniPath();
+  static std::filesystem::path GetBundleDir();
+  static std::filesystem::path GetCaBundlePath();
   static ConnectionSettings Load();
   static void Save(const ConnectionSettings &settings);
 };

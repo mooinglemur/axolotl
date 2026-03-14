@@ -48,14 +48,17 @@ linux-appimage:
     pre_get_sources_script:
       - apt update && DEBIAN_FRONTEND=noninteractive apt install -y git
   before_script:
-    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev git wget file
+    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev git wget file
     - wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
     - chmod +x linuxdeploy-x86_64.AppImage
+    - wget https://curl.se/ca/cacert.pem
   script:
     - mkdir build && cd build
-    - cmake -GNinja -DCMAKE_BUILD_TYPE=Release ..
+    - cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
     - ninja
     - DESTDIR=appdir ninja install
+    - mkdir -p appdir/usr/local/share/axolotl
+    - cp ../cacert.pem appdir/usr/local/share/axolotl/
     - cd ..
     - export EXCLUDE_LIBS="libssl.so.3;libcrypto.so.3;libssl.so.1.1;libcrypto.so.1.1"
     - ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run --appdir build/appdir --executable build/appdir/usr/local/bin/axolotl-apclient --desktop-file axolotl.desktop --icon-file axolotl.png --output appimage

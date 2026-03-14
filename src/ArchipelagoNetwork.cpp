@@ -1,4 +1,5 @@
 #include "ArchipelagoNetwork.h"
+#include "Config.h"
 #include <algorithm>
 #include <chrono>
 
@@ -655,6 +656,15 @@ void ArchipelagoNetwork::Connect(const std::string &url,
   webSocket_.setUrl(full_url);
   webSocket_.enableAutomaticReconnection();
   webSocket_.enablePerMessageDeflate();
+
+  // Configure TLS if we have a bundled CA
+  auto ca_path = Config::GetCaBundlePath();
+  if (std::filesystem::exists(ca_path)) {
+    ix::SocketTLSOptions tls_options;
+    tls_options.caFile = ca_path.string();
+    webSocket_.setTLSOptions(tls_options);
+  }
+
   webSocket_.start();
   user_wants_connection_ = true;
 }
