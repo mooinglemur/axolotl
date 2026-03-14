@@ -116,7 +116,7 @@ windows:
       cd build
 
       echo "Configuring with CMake..."
-      Run-Bash "cmake -GNinja -DCMAKE_BUILD_TYPE=Release .."
+      Run-Bash "cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF .."
 
       echo "Building..."
       Run-Bash "ninja"
@@ -191,7 +191,7 @@ windows-cross:
     - cd $ROOT_DIR
   script:
     - mkdir build-cross && cd build-cross
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
     - ninja
     - echo "Generating MSI via wixl..."
     - |
