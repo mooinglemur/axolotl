@@ -71,7 +71,7 @@ endif()
 add_library(imgui STATIC ${IMGUI_SOURCES})
 target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
 
-target_include_directories(imgui PUBLIC 
+target_include_directories(imgui PUBLIC
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
 )
@@ -80,6 +80,7 @@ if (APPLE)
     find_library(METAL_LIBRARY Metal)
     find_library(QUARTZ_LIBRARY QuartzCore)
     find_library(FOUNDATION_LIBRARY Foundation)
+    find_library(APPKIT_LIBRARY AppKit)
 
     if (glfw3_FOUND)
         target_link_libraries(imgui PRIVATE glfw ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY})
@@ -111,9 +112,9 @@ if (APPLE)
         target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
     endif()
     if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui glfw Threads::Threads nlohmann_json::nlohmann_json ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY})
+        target_link_libraries(axolotl-apclient PRIVATE imgui glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
     else()
-        target_link_libraries(axolotl-apclient PRIVATE imgui ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY})
+        target_link_libraries(axolotl-apclient PRIVATE imgui ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
         target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
     endif()
 else()

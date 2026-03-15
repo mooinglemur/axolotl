@@ -361,6 +361,11 @@ void Application::SetPreviewFallbackFont(const std::string &path) {
 
 void Application::Run() {
   while (!glfwWindowShouldClose(window_)) {
+#ifdef __APPLE__
+    id<CAMetalDrawable> drawable = nil;
+    id<MTLCommandBuffer> commandBuffer = nil;
+    MTLRenderPassDescriptor *renderPassDescriptor = nil;
+#endif
     glfwPollEvents();
 
     if (fonts_reload_pending_) {
@@ -379,14 +384,13 @@ void Application::Run() {
 
     // Start ImGui frame
 #ifdef __APPLE__
-    id<CAMetalDrawable> drawable = [layer_ nextDrawable];
+    drawable = [layer_ nextDrawable];
     if (drawable == nil) {
       glfwPollEvents();
       continue;
     }
-    id<MTLCommandBuffer> commandBuffer = [commandQueue_ commandBuffer];
-    MTLRenderPassDescriptor *renderPassDescriptor =
-        [MTLRenderPassDescriptor renderPassDescriptor];
+    commandBuffer = [commandQueue_ commandBuffer];
+    renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
     renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
     renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
     renderPassDescriptor.colorAttachments[0].clearColor =
