@@ -44,6 +44,9 @@ modules:
 
   - name: axolotl-apclient
     buildsystem: cmake-ninja
+    post-install:
+      - install -Dm644 com.mooinglemur.axolotl.desktop /app/share/applications/com.mooinglemur.axolotl.desktop
+      - install -Dm644 com.mooinglemur.axolotl.png /app/share/icons/hicolor/128x128/apps/com.mooinglemur.axolotl.png
     sources:
       - type: dir
         path: .

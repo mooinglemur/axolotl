@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Axolotl Archipelago Text Client
 Exec=axolotl-apclient
-Icon=axolotl
+Icon=com.mooinglemur.axolotl
 Type=Application
 Categories=Game;Utility;
 Comment=A modern Archipelago multiworld text client.

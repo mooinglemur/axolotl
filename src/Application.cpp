@@ -76,15 +76,6 @@ Application::~Application() {
 
 static void glfw_error_callback(int error, const char *description) {
   std::cerr << "GLFW Error " << error << ": " << description << std::endl;
-  std::cerr << "Environment Variables:" << std::endl;
-  std::cerr << "  DISPLAY=" << (getenv("DISPLAY") ? getenv("DISPLAY") : "NULL")
-            << std::endl;
-  std::cerr << "  WAYLAND_DISPLAY="
-            << (getenv("WAYLAND_DISPLAY") ? getenv("WAYLAND_DISPLAY") : "NULL")
-            << std::endl;
-  std::cerr << "  XDG_RUNTIME_DIR="
-            << (getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "NULL")
-            << std::endl;
 }
 
 bool Application::Initialize() {
