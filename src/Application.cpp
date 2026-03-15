@@ -28,9 +28,11 @@
 #include <ixwebsocket/IXNetSystem.h>
 #endif
 #include <imgui.h>
+#include <imgui_internal.h>
 
 Application::Application()
     : current_config_(Config::Load()), pending_config_(current_config_) {
+  is_first_launch_ = !std::filesystem::exists(Config::GetConfigPath());
   ap_network_.on_history_updated = [this]() {};
 }
 
@@ -229,6 +231,15 @@ bool Application::Initialize() {
       ap_network_.GetItemNames(), ap_network_.GetLocationNames(),
       [this]() { return ap_network_.GetGlobalSlot(); }));
 
+  if (is_first_launch_) {
+    current_config_.show_windows["Chat"] = true;
+    current_config_.show_windows["Hints"] = true;
+    current_config_.show_windows["Full Feed"] = true;
+    current_config_.show_windows["My Feed"] = false;
+    current_config_.show_windows["Received Items"] = false;
+    current_config_.show_windows["Settings"] = false;
+  }
+
   // Load visibility from config
   for (auto &window : windows_) {
     if (current_config_.show_windows.count(window->GetName())) {
@@ -410,7 +421,30 @@ void Application::Run() {
 #endif
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    ImGui::DockSpaceOverViewport();
+    ImGuiID dockspace_id = ImGui::DockSpaceOverViewport();
+
+    if (is_first_launch_) {
+      is_first_launch_ = false;
+
+      ImGui::DockBuilderRemoveNode(dockspace_id);
+      ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+      ImGui::DockBuilderSetNodeSize(dockspace_id,
+                                    ImGui::GetMainViewport()->Size);
+
+      ImGuiID dock_id_top, dock_id_bottom;
+      ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Up, 0.5f, &dock_id_top,
+                                  &dock_id_bottom);
+
+      ImGuiID dock_id_top_left, dock_id_top_right;
+      ImGui::DockBuilderSplitNode(dock_id_top, ImGuiDir_Left, 0.5f,
+                                  &dock_id_top_left, &dock_id_top_right);
+
+      ImGui::DockBuilderDockWindow("Chat", dock_id_top_left);
+      ImGui::DockBuilderDockWindow("Hints", dock_id_top_right);
+      ImGui::DockBuilderDockWindow("Full Feed", dock_id_bottom);
+
+      ImGui::DockBuilderFinish(dockspace_id);
+    }
 
     // Main Menu
     if (ImGui::BeginMainMenuBar()) {

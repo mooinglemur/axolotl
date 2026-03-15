@@ -44,6 +44,7 @@ private:
   std::atomic<bool> settings_changed_pending_{false};
   std::atomic<bool> fonts_reload_pending_{false};
   std::atomic<bool> is_initialized_{false};
+  bool is_first_launch_ = false;
   ImFont *ui_font_ = nullptr;
   ImFont *content_font_ = nullptr;
   ImFont *preview_font_ = nullptr;

@@ -108,6 +108,7 @@ endif()
 
 add_executable(axolotl-apclient WIN32 ${SRC_FILES})
 target_include_directories(axolotl-apclient PRIVATE src)
+target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32)
 
 if (APPLE)
     if (USE_MBED_TLS)
