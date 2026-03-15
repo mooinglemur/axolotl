@@ -71,7 +71,7 @@ jobs:
       - name: Create AppImage
         run: |
           export EXCLUDE_LIBS="libssl.so.3;libcrypto.so.3;libssl.so.1.1;libcrypto.so.1.1"
-          ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run --appdir build/appdir --executable build/appdir/usr/local/bin/axolotl-apclient --desktop-file axolotl.desktop --icon-file axolotl.png --output appimage
+          ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run --appdir build/appdir --executable build/appdir/usr/local/bin/axolotl-apclient --desktop-file com.mooinglemur.axolotl.desktop --icon-file com.mooinglemur.axolotl.png --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
