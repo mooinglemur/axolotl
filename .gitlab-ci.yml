@@ -55,6 +55,13 @@ linux-appimage:
   script:
     - mkdir build && cd build
     - cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
+    - cd ..
+    - sed -i '/#include <string.h>/a #include <mbedtls/version.h>\n#if MBEDTLS_VERSION_MAJOR >= 3\n#include <psa/crypto.h>\n#endif' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i 's/if (MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0)/#if MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0\n        if (MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0)/g' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i '/psa_crypto_init();/a #endif' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i '/mbedtls_psa_crypto_free();/a #endif' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i 's/#ifdef IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3/#if MBEDTLS_VERSION_MAJOR >= 3/g' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - cd build
     - ninja
     - DESTDIR=appdir ninja install
     - mkdir -p appdir/usr/local/share/axolotl
@@ -117,6 +124,13 @@ windows:
 
       echo "Configuring with CMake..."
       Run-Bash "cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF .."
+
+      echo "Patching IXWebSocket..."
+      Run-Bash "sed -i '/#include <string.h>/a #include <mbedtls/version.h>\n#if MBEDTLS_VERSION_MAJOR >= 3\n#include <psa/crypto.h>\n#endif' ../thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
+      Run-Bash "sed -i 's/if (MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0)/#if MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0\n        if (MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0)/g' ../thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
+      Run-Bash "sed -i '/psa_crypto_init();/a #endif' ../thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
+      Run-Bash "sed -i '/mbedtls_psa_crypto_free();/a #endif' ../thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
+      Run-Bash "sed -i 's/#ifdef IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3/#if MBEDTLS_VERSION_MAJOR >= 3/g' ../thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
 
       echo "Building..."
       Run-Bash "ninja"
@@ -192,6 +206,14 @@ windows-cross:
   script:
     - mkdir build-cross && cd build-cross
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
+    - cd ..
+    - sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
+    - sed -i '/#include <string.h>/a #include <mbedtls/version.h>\n#if MBEDTLS_VERSION_MAJOR >= 3\n#include <psa/crypto.h>\n#endif' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i 's/if (MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0)/#if MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0\n        if (MBEDTLS_VERSION_MAJOR >= 3 \&\& MBEDTLS_VERSION_MINOR >= 6 \&\& MBEDTLS_VERSION_PATCH >= 0)/g' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i '/psa_crypto_init();/a #endif' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i '/mbedtls_psa_crypto_free();/a #endif' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - sed -i 's/#ifdef IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3/#if MBEDTLS_VERSION_MAJOR >= 3/g' thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp
+    - cd build-cross
     - ninja
     - echo "Generating MSI via wixl..."
     - |
