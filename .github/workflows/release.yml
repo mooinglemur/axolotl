@@ -45,23 +45,42 @@ jobs:
             mv native_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-nightly.exe
           fi
 
+      - name: Get Date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
       - name: Create GH Release
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
-          tag: nightly
-          name: Nightly Build
+          tag: nightly-${{ steps.date.outputs.date }}
+          name: Nightly Build - ${{ steps.date.outputs.date }}
           body: |
             Automated development builds of the Axolotl Archipelago Text Client.
 
             **Direct Downloads**:
-            - [Linux AppImage](https://github.com/${{ github.repository }}/releases/download/nightly/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage)
-            - [Linux Flatpak](https://github.com/${{ github.repository }}/releases/download/nightly/com.mooinglemur.axolotl-nightly.flatpak)
-            - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/nightly/AxolotlAPTextClient-macOS-nightly.dmg)
-            - [Windows MSI](https://github.com/${{ github.repository }}/releases/download/nightly/AxolotlAPTextClient-Windows-nightly.msi)
-            - [Windows EXE (Portable)](https://github.com/${{ github.repository }}/releases/download/nightly/AxolotlAPTextClient-Windows-nightly.exe)
+            - [Linux AppImage](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage)
+            - [Linux Flatpak](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/com.mooinglemur.axolotl-nightly.flatpak)
+            - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-macOS-nightly.dmg)
+            - [Windows MSI](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-nightly.msi)
+            - [Windows EXE (Portable)](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-nightly.exe)
           artifacts: release_assets/*
           prerelease: true
           replacesArtifacts: true
           omitBodyDuringUpdate: false
           omitNameDuringUpdate: false
+
+      - name: Cleanup Old Nightly Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Keep last 14 nightly releases
+          RELEASES=$(gh release list --limit 100 --json tagName,title --jq '.[] | select(.title | contains("Nightly Build -")) | .tagName' | sort -r)
+          COUNT=0
+          for tag in $RELEASES; do
+            COUNT=$((COUNT+1))
+            if [ $COUNT -gt 14 ]; then
+              echo "Deleting old nightly release: $tag"
+              gh release delete "$tag" --yes --cleanup-tag
+            fi
+          done
