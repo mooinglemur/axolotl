@@ -150,6 +150,15 @@ jobs:
           EOF
           python3 mbed_patch.py
 
+      - name: Cleanup MSYS2 Libraries
+        shell: msys2 {0}
+        run: |
+          # Force static linking by removing dynamic library remnants from MSYS2
+          rm -f /mingw64/lib/libglfw3.dll.a /mingw64/bin/glfw3.dll
+          rm -f /mingw64/lib/libmbed*.dll.a /mingw64/bin/libmbed*.dll
+          rm -f /mingw64/lib/libz.dll.a /mingw64/bin/zlib1.dll
+          rm -f /mingw64/lib/libyaml-cpp.dll.a
+
       - name: Build
         shell: msys2 {0}
         run: |
