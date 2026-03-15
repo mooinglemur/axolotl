@@ -184,7 +184,7 @@ windows-cross:
       - curl -L -o /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
       - chmod +x /usr/local/bin/gitlab-runner
   before_script:
-    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools wixl zip curl git
+    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools wixl zip curl git python3
     - export ROOT_DIR=$PWD
     - export CMAKE_GENERATOR=Ninja
     # Patch IXWebSocket for case-insensitive linking on Linux and missing bcrypt dependency for mbedtls
