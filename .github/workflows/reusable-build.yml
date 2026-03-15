@@ -162,11 +162,8 @@ jobs:
       - name: Build
         shell: msys2 {0}
         run: |
-          mkdir build && cd build
-          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF \
-            -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
-            -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
-            -DZLIB_USE_STATIC_LIBS=ON ..
+          mkdir -p build && cd build
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" -DZLIB_USE_STATIC_LIBS=ON ..
           ninja
 
       - name: Package
