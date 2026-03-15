@@ -112,23 +112,23 @@ if (APPLE)
         target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
     endif()
     if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+        target_link_libraries(axolotl-apclient PRIVATE imgui glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
     else()
-        target_link_libraries(axolotl-apclient PRIVATE imgui ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+        target_link_libraries(axolotl-apclient PRIVATE imgui ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
         target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
     endif()
 else()
     if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui glfw OpenGL::GL Threads::Threads nlohmann_json::nlohmann_json yaml-cpp ${FONTCONFIG_LIBRARIES} ixwebsocket)
+        target_link_libraries(axolotl-apclient PRIVATE imgui glfw OpenGL::GL Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${FONTCONFIG_LIBRARIES} ixwebsocket)
         target_include_directories(axolotl-apclient PRIVATE ${FONTCONFIG_INCLUDE_DIRS})
     else()
         target_link_libraries(axolotl-apclient PRIVATE
             imgui 
-            ${GLFW3_LIBRARIES} 
-            OpenGL::GL 
+            ${GLFW3_LIBRARIES}
+            OpenGL::GL
             Threads::Threads
             nlohmann_json::nlohmann_json
-            yaml-cpp
+            yaml-cpp::yaml-cpp
             ${FONTCONFIG_LIBRARIES}
             ixwebsocket
         )
