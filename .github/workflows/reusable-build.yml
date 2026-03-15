@@ -168,7 +168,7 @@ jobs:
           cmake --build mbedtls/build --target install
 
           # Build yaml-cpp
-          git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
+          git clone --depth 1 -b yaml-cpp-0.9.0 https://github.com/jbeder/yaml-cpp.git
           cmake -S yaml-cpp -B yaml-cpp/build -GNinja -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
           cmake --build yaml-cpp/build --target install
 
@@ -251,7 +251,7 @@ jobs:
           sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
           sudo ninja install
           # Build yaml-cpp for mingw
-          git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
+          git clone --depth 1 -b yaml-cpp-0.9.0 https://github.com/jbeder/yaml-cpp.git
           mkdir yaml-cpp/build && cd yaml-cpp/build
           sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
           sudo ninja install
