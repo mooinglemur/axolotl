@@ -5,6 +5,7 @@ sdk: org.freedesktop.Sdk
 command: axolotl-apclient
 finish-args:
   - --share=network
+  - --share=ipc
   - --socket=fallback-x11
   - --socket=wayland
   - --device=dri
