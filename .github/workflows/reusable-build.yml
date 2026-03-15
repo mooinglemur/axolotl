@@ -1,11 +1,7 @@
-name: Build
+name: Reusable Build
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+  workflow_call:
 
 jobs:
   linux-flatpak:
@@ -105,13 +101,14 @@ jobs:
       - name: Package
         run: |
           cd build
-          zip -j ../axolotl-apclient-macos.zip axolotl-apclient
+          cpack -G DragNDrop
+          mv *.dmg ../
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: axolotl-apclient-macos
-          path: axolotl-apclient-macos.zip
+          path: "*.dmg"
 
   windows-native:
     runs-on: windows-latest

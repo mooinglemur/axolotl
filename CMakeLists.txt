@@ -152,7 +152,7 @@ install(TARGETS axolotl-apclient
         RUNTIME DESTINATION bin)
 
 # CPack configuration
-set(CPACK_PACKAGE_NAME "Axolotl AP Text Client")
+set(CPACK_PACKAGE_NAME "AxolotlAPTextClient")
 set(CPACK_PACKAGE_VENDOR "MooingLemur")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Axolotl Archipelago text client")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
@@ -162,7 +162,10 @@ if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt")
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt")
 endif()
 
-if(WIN32)
+if (APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_PACKAGE_FILE_NAME "AxolotlAPTextClient-macOS")
+elseif(WIN32)
     set(CPACK_GENERATOR "WIX;ZIP")
     set(CPACK_WIX_PRODUCT_GUID "*")
     set(CPACK_PACKAGE_EXECUTABLES "axolotl-apclient" "Axolotl AP Text Client")
