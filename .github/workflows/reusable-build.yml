@@ -126,12 +126,12 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-glfw
-            mingw-w64-x86_64-yaml-cpp
             mingw-w64-x86_64-nlohmann-json
-            mingw-w64-x86_64-mbedtls
-            mingw-w64-x86_64-zlib
             mingw-w64-x86_64-python
+            git
+            curl
+            zip
+            unzip
 
       - name: Patch IXWebSocket
         shell: msys2 {0}
@@ -150,19 +150,48 @@ jobs:
           EOF
           python3 mbed_patch.py
 
+      - name: Pre-build Dependencies
+        shell: msys2 {0}
+        run: |
+          export ROOT_DIR=$PWD
+          mkdir -p deps/include deps/lib deps/bin
+          export CMAKE_PREFIX_PATH=$ROOT_DIR/deps
+
+          # Build zlib
+          git clone --depth 1 -b v1.3.1 https://github.com/madler/zlib.git
+          cmake -S zlib -B zlib/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
+          cmake --build zlib/build --target install
+
+          # Build mbedtls
+          git clone --depth 1 -b v3.5.2 https://github.com/ARMmbed/mbedtls.git
+          cmake -S mbedtls -B mbedtls/build -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
+          cmake --build mbedtls/build --target install
+
+          # Build yaml-cpp
+          git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
+          cmake -S yaml-cpp -B yaml-cpp/build -GNinja -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
+          cmake --build yaml-cpp/build --target install
+
+          # Build glfw
+          git clone --depth 1 -b 3.3.10 https://github.com/glfw/glfw.git
+          cmake -S glfw -B glfw/build -GNinja -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
+          cmake --build glfw/build --target install
+
       - name: Windows Native Build (with Static Enforcement)
         shell: msys2 {0}
         run: |
           export PATH="/mingw64/bin:/usr/bin:$PATH"
+          export CMAKE_PREFIX_PATH="$PWD/deps"
           echo "Debug: which cmake: $(which cmake)"
           echo "Debug: which ninja: $(which ninja)"
 
-          # Force static linking by removing import library remnants from MSYS2
-          # We avoid deleting bin/*.dll because some (like zlib1.dll) are often in use by the shell
-          rm -f /mingw64/lib/libglfw3.dll.a /mingw64/lib/libmbed*.dll.a /mingw64/lib/libz.dll.a /mingw64/lib/libyaml-cpp.dll.a
-
-          # Build with explicit static enforcement flags (ONE LINE to avoid shell issues)
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" -DZLIB_USE_STATIC_LIBS=ON
+          # Build with explicit static enforcement flags and point to our custom deps
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
+            -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
+            -DZLIB_USE_STATIC_LIBS=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/deps"
           cmake --build build --config Release
 
       - name: Package
