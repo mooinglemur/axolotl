@@ -40,19 +40,22 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     ImGui::BeginDisabled(!is_disconnected);
 
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.18f);
+    ImGui::SetNextItemWidth(
+        std::max(210.0f, ImGui::GetContentRegionAvail().x * 0.18f));
     ImGui::InputText("##Server", server_url_, sizeof(server_url_));
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Server URL");
 
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.2f);
+    ImGui::SetNextItemWidth(
+        std::max(175.0f, ImGui::GetContentRegionAvail().x * 0.2f));
     ImGui::InputText("##Slot", slot_name_, sizeof(slot_name_));
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Slot Name");
 
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.2f);
+    ImGui::SetNextItemWidth(
+        std::max(130.0f, ImGui::GetContentRegionAvail().x * 0.2f));
     ImGui::InputText("##Password", password_, sizeof(password_),
                      ImGuiInputTextFlags_Password);
     if (ImGui::IsItemHovered())
@@ -202,8 +205,10 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
     // Input
     ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue |
                                       ImGuiInputTextFlags_CallbackHistory |
-                                      ImGuiInputTextFlags_CallbackAlways |
-                                      ImGuiInputTextFlags_CallbackCompletion;
+                                      ImGuiInputTextFlags_CallbackAlways;
+    if (ac_active_) {
+      input_flags |= ImGuiInputTextFlags_CallbackCompletion;
+    }
 
     // Autocomplete popup
     if (ac_active_ && !ac_matches_.empty()) {
@@ -242,8 +247,32 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
       ImGui::End();
     }
 
-    if (ImGui::InputText("##Input", input_buf_, sizeof(input_buf_), input_flags,
-                         &ChatWindow::TextEditCallbackStub, (void *)this)) {
+    ImGui::Text(">");
+    ImGui::SameLine();
+
+    float button_width =
+        ImGui::CalcTextSize("Send").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float input_width =
+        ImGui::GetContentRegionAvail().x - button_width - spacing;
+
+    if (focus_input_) {
+      ImGui::SetKeyboardFocusHere(0);
+      focus_input_ = false;
+    }
+
+    ImGui::PushItemWidth(input_width);
+    bool send =
+        ImGui::InputText("##Input", input_buf_, sizeof(input_buf_), input_flags,
+                         &ChatWindow::TextEditCallbackStub, (void *)this);
+    ImGui::PopItemWidth();
+
+    ImGui::SameLine();
+    if (ImGui::Button("Send")) {
+      send = true;
+    }
+
+    if (send) {
       if (input_buf_[0] != '\0') {
         std::string msg(input_buf_);
         if (on_send_chat_) {
@@ -256,7 +285,7 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
         ac_active_ = false;
         input_buf_[0] = '\0'; // Clear input
       }
-      ImGui::SetKeyboardFocusHere(-1); // Re-focus on enter
+      focus_input_ = true;
     }
   }
   ImGui::End();

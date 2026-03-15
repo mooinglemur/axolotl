@@ -77,6 +77,11 @@ Application::~Application() {
 }
 
 static void glfw_error_callback(int error, const char *description) {
+  // Silently handle Wayland window position error
+  if (error == 65548 && description &&
+      std::string(description).find("Wayland") != std::string::npos) {
+    return;
+  }
   std::cerr << "GLFW Error " << error << ": " << description << std::endl;
 }
 

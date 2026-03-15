@@ -19,9 +19,11 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
     strncpy(filter_buf, filter_text_.c_str(), sizeof(filter_buf));
     filter_buf[sizeof(filter_buf) - 1] = '\0';
 
+    ImGui::PushItemWidth(-1.0f);
     if (ImGui::InputText("##Filter", filter_buf, sizeof(filter_buf))) {
       filter_text_ = filter_buf;
     }
+    ImGui::PopItemWidth();
 
     ImGui::Separator();
 

@@ -115,7 +115,9 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
     }
 
     ImGui::Text("Content Font");
-    ImGui::InputText("Filter##Font", font_search_, sizeof(font_search_));
+    ImGui::PushItemWidth(-1.0f);
+    ImGui::InputText("##FilterFont", font_search_, sizeof(font_search_));
+    ImGui::PopItemWidth();
 
     if (ImGui::BeginChild("FontList", ImVec2(0, 150), true)) {
       for (const auto &font : available_fonts_) {
@@ -182,8 +184,10 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Clear fallback font");
     }
-    ImGui::InputText("Filter##FallbackFont", fallback_font_search_,
+    ImGui::PushItemWidth(-1.0f);
+    ImGui::InputText("##FilterFallbackFont", fallback_font_search_,
                      sizeof(fallback_font_search_));
+    ImGui::PopItemWidth();
 
     if (ImGui::BeginChild("FallbackFontList", ImVec2(0, 150), true)) {
       for (const auto &font : available_fonts_) {

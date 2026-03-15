@@ -19,7 +19,9 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
+    ImGui::PushItemWidth(-1.0f);
     ImGui::InputText("##Filter", filter_text_, sizeof(filter_text_));
+    ImGui::PopItemWidth();
 
     ImGui::Separator();
 

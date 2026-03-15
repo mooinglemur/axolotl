@@ -45,6 +45,7 @@ private:
 
   int selection_anchor_ = -1;
   int selection_active_ = -1;
+  bool focus_input_ = false;
   const std::vector<RichMessage> &history_;
   std::function<void(const std::string &)> on_send_chat_;
 
