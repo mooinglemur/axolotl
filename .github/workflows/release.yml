@@ -19,30 +19,32 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
 
       - name: Rename and Prepare Assets
         run: |
           sudo apt-get install -y unzip
           mkdir -p release_assets
           # Move and rename assets for clarity and include 'nightly' in filenames
-          # Use find to be robust against varying generated names
-          find artifacts -name "Axolotl*.AppImage" -exec cp {} release_assets/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage \; || true
-          find artifacts -name "*.flatpak" -exec cp {} release_assets/com.mooinglemur.axolotl-nightly.flatpak \; || true
-          find artifacts -name "*.dmg" -exec cp {} release_assets/AxolotlAPTextClient-macOS-nightly.dmg \; || true
 
-          # For Windows
-          # MSIs
-          find artifacts -name "*.msi" -exec cp {} release_assets/AxolotlAPTextClient-Windows-nightly.msi \; || true
+          # Linux
+          find artifacts/axolotl-apclient-appimage -name "Axolotl*.AppImage" -exec cp {} release_assets/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage \; || true
+          find artifacts/axolotl-apclient-flatpak -name "*.flatpak" -exec cp {} release_assets/com.mooinglemur.axolotl-nightly.flatpak \; || true
 
-          # Portable EXE
-          # We prefer the one from windows-cross as it's definitely a single static binary
-          if [ -f artifacts/axolotl-apclient-windows-cross-portable.zip ]; then
-            unzip artifacts/axolotl-apclient-windows-cross-portable.zip -d cross_temp
-            mv cross_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-nightly.exe
-          elif [ -f artifacts/axolotl-apclient-windows-portable.zip ]; then
-            unzip artifacts/axolotl-apclient-windows-portable.zip -d native_temp
-            mv native_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-nightly.exe
+          # macOS
+          find artifacts/axolotl-apclient-macos -name "*.dmg" -exec cp {} release_assets/AxolotlAPTextClient-macOS-nightly.dmg \; || true
+
+          # Windows Native (Dynamic/MSVC-like)
+          find artifacts/axolotl-apclient-windows -name "*.msi" -exec cp {} release_assets/AxolotlAPTextClient-Windows-Native-nightly.msi \; || true
+          if [ -f artifacts/axolotl-apclient-windows/axolotl-apclient-windows-portable.zip ]; then
+            unzip artifacts/axolotl-apclient-windows/axolotl-apclient-windows-portable.zip -d native_temp
+            mv native_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-Native-nightly.exe
+          fi
+
+          # Windows Cross (Targeted Static)
+          find artifacts/axolotl-apclient-windows-cross -name "*.msi" -exec cp {} release_assets/AxolotlAPTextClient-Windows-Static-nightly.msi \; || true
+          if [ -f artifacts/axolotl-apclient-windows-cross/axolotl-apclient-windows-cross-portable.zip ]; then
+            unzip artifacts/axolotl-apclient-windows-cross/axolotl-apclient-windows-cross-portable.zip -d cross_temp
+            mv cross_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-Static-nightly.exe
           fi
 
       - name: Get Date
@@ -59,11 +61,20 @@ jobs:
             Automated development builds of the Axolotl Archipelago Text Client.
 
             **Direct Downloads**:
+            **Linux**:
             - [Linux AppImage](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage)
             - [Linux Flatpak](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/com.mooinglemur.axolotl-nightly.flatpak)
+
+            **macOS**:
             - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-macOS-nightly.dmg)
-            - [Windows MSI](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-nightly.msi)
-            - [Windows EXE (Portable)](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-nightly.exe)
+
+            **Windows (Native Builds)**:
+            - [MSI Installer](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-Native-nightly.msi)
+            - [Portable EXE](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-Native-nightly.exe)
+
+            **Windows (Cross-Compiled)**:
+            - [MSI Installer](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-Static-nightly.msi)
+            - [Portable EXE](https://github.com/${{ github.repository }}/releases/download/nightly-${{ steps.date.outputs.date }}/AxolotlAPTextClient-Windows-Static-nightly.exe)
           artifacts: release_assets/*
           prerelease: true
           replacesArtifacts: true
