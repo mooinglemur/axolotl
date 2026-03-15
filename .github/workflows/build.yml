@@ -93,6 +93,8 @@ jobs:
       - name: Install Dependencies
         run: |
           brew install cmake ninja glfw yaml-cpp nlohmann-json mbedtls
+          echo "CPATH=/opt/homebrew/include" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/opt/homebrew/lib" >> $GITHUB_ENV
 
       - name: Patch and Build
         run: |
