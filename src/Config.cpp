@@ -1,8 +1,10 @@
 #include "Config.h"
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <random>
 #include <yaml-cpp/yaml.h>
 
 #ifdef _WIN32
@@ -107,6 +109,14 @@ ConnectionSettings Config::Load() {
           config["fallback_font_path"].as<std::string>();
     if (config["max_history_size"])
       settings.max_history_size = config["max_history_size"].as<int>();
+    if (config["window_width"])
+      settings.window_width = config["window_width"].as<int>();
+    if (config["window_height"])
+      settings.window_height = config["window_height"].as<int>();
+    if (config["window_x"])
+      settings.window_x = config["window_x"].as<int>();
+    if (config["window_y"])
+      settings.window_y = config["window_y"].as<int>();
     if (config["show_windows"]) {
       for (const auto &kv : config["show_windows"]) {
         settings.show_windows[kv.first.as<std::string>()] =
@@ -135,6 +145,10 @@ void Config::Save(const ConnectionSettings &settings) {
       << settings.fallback_font_path;
   out << YAML::Key << "max_history_size" << YAML::Value
       << settings.max_history_size;
+  out << YAML::Key << "window_width" << YAML::Value << settings.window_width;
+  out << YAML::Key << "window_height" << YAML::Value << settings.window_height;
+  out << YAML::Key << "window_x" << YAML::Value << settings.window_x;
+  out << YAML::Key << "window_y" << YAML::Value << settings.window_y;
 
   out << YAML::Key << "show_windows" << YAML::Value << YAML::BeginMap;
   for (const auto &kv : settings.show_windows) {
@@ -144,11 +158,25 @@ void Config::Save(const ConnectionSettings &settings) {
 
   out << YAML::EndMap;
 
-  std::ofstream fout(path);
+  auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+  std::mt19937_64 gen(now);
+  std::uniform_int_distribution<uint64_t> dist;
+  std::string tmp_name = "config.yaml.tmp." + std::to_string(dist(gen));
+  auto tmp_path = path.parent_path() / tmp_name;
+
+  std::ofstream fout(tmp_path);
   if (!fout.is_open()) {
-    std::cerr << "Error: Could not open config file for writing: " << path
+    std::cerr << "Error: Could not open config file for writing: " << tmp_path
               << std::endl;
     return;
   }
   fout << out.c_str();
+  fout.close();
+
+  std::error_code ec;
+  std::filesystem::rename(tmp_path, path, ec);
+  if (ec) {
+    std::cerr << "Error: Could not rename config file: " << ec.message()
+              << std::endl;
+  }
 }

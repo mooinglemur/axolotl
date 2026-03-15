@@ -36,6 +36,14 @@ Application::~Application() {
   for (const auto &window : windows_) {
     current_config_.show_windows[window->GetName()] = window->GetOpen();
   }
+
+  if (window_) {
+    glfwGetWindowSize(window_, &current_config_.window_width,
+                      &current_config_.window_height);
+    glfwGetWindowPos(window_, &current_config_.window_x,
+                     &current_config_.window_y);
+  }
+
   Config::Save(current_config_);
 
 #ifdef _WIN32
@@ -88,14 +96,20 @@ bool Application::Initialize() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
-  window_ =
-      glfwCreateWindow(1280, 720, "Axolotl - Archipelago Client", NULL, NULL);
+  window_ = glfwCreateWindow(current_config_.window_width,
+                             current_config_.window_height,
+                             "Axolotl - Archipelago Client", NULL, NULL);
   if (!window_) {
     const char *description;
     int code = glfwGetError(&description);
     std::cerr << "Failed to create GLFW window. Error " << code << ": "
               << description << std::endl;
     return false;
+  }
+
+  if (current_config_.window_x != -1 && current_config_.window_y != -1) {
+    glfwSetWindowPos(window_, current_config_.window_x,
+                     current_config_.window_y);
   }
 
 #ifdef __APPLE__
@@ -122,7 +136,6 @@ bool Application::Initialize() {
 
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-  io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
   ImGui::StyleColorsDark();
 
@@ -430,18 +443,6 @@ void Application::Run() {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(window_);
 #endif
-
-    ImGuiIO &io = ImGui::GetIO();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-#ifndef _WIN32
-      GLFWwindow *backup_current_context = glfwGetCurrentContext();
-#endif
-      ImGui::UpdatePlatformWindows();
-      ImGui::RenderPlatformWindowsDefault();
-#ifndef _WIN32
-      glfwMakeContextCurrent(backup_current_context);
-#endif
-    }
   }
 
   // Workaround for Wayland segmentation fault on exit:
