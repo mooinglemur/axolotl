@@ -18,4 +18,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 # Enforce static linkage for all runtimes (embedded libgcc, libstdc++, winpthreads)
-set(CMAKE_EXE_LINKER_FLAGS "-static" CACHE STRING "Linker flags for executables" FORCE)
+set(CMAKE_EXE_LINKER_FLAGS "-static -static-libgcc -static-libstdc++" CACHE STRING "Linker flags for executables" FORCE)
+
+# Force searching for static libraries only
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")

@@ -75,7 +75,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Keep last 14 nightly releases
-          RELEASES=$(gh release list --limit 100 --json tagName,title --jq '.[] | select(.title | contains("Nightly Build -")) | .tagName' | sort -r)
+          RELEASES=$(gh release list --limit 100 --json tagName,name --jq '.[] | select(.name | contains("Nightly Build -")) | .tagName' | sort -r)
           COUNT=0
           for tag in $RELEASES; do
             COUNT=$((COUNT+1))

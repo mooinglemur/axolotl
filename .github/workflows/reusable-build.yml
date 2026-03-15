@@ -213,10 +213,6 @@ jobs:
           mkdir mbedtls/build && cd mbedtls/build
           sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
           sudo ninja install
-          # -- Remove any accidentally generated dll files to force static linking
-          sudo rm -f /usr/x86_64-w64-mingw32/bin/libmbed*.dll /usr/x86_64-w64-mingw32/lib/libmbed*.dll.a
-          cd $ROOT_DIR
-
           # Build yaml-cpp for mingw
           git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
           mkdir yaml-cpp/build && cd yaml-cpp/build
@@ -229,9 +225,11 @@ jobs:
           mkdir glfw/build && cd glfw/build
           sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
           sudo ninja install
-          # -- Remove any accidentally generated dll files to force static linking
-          sudo rm -f /usr/x86_64-w64-mingw32/lib/libglfw3.dll.a /usr/x86_64-w64-mingw32/bin/glfw3.dll
           cd $ROOT_DIR
+
+          # -- AGGRESSIVE CLEANUP: Remove ANY and ALL dll and import library remnants to force absolute static linking
+          sudo find /usr/x86_64-w64-mingw32 -name "*.dll" -delete
+          sudo find /usr/x86_64-w64-mingw32 -name "*.dll.a" -delete
 
       - name: Patch and Build
         run: |
