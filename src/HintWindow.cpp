@@ -6,10 +6,11 @@ HintWindow::HintWindow(const std::vector<Hint> &hints,
                        const std::map<int64_t, std::string> &item_names,
                        const std::map<int64_t, std::string> &location_names,
                        std::function<int()> get_global_slot,
+                       const ConnectionSettings &settings,
                        const std::string &name)
     : Window(name), hints_(hints), player_names_(player_names),
       item_names_(item_names), location_names_(location_names),
-      get_global_slot_(get_global_slot) {}
+      get_global_slot_(get_global_slot), settings_(settings) {}
 
 void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                         ImFont *preview_fallback_font) {

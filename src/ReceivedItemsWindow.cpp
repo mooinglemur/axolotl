@@ -4,8 +4,9 @@
 #include <imgui.h>
 
 ReceivedItemsWindow::ReceivedItemsWindow(
-    const std::vector<RichMessage> &history, const std::string &name)
-    : Window(name), history_(history) {}
+    const std::vector<RichMessage> &history, const ConnectionSettings &settings,
+    const std::string &name)
+    : Window(name), history_(history), settings_(settings) {}
 
 void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
                                  ImFont *preview_fallback_font) {
@@ -95,10 +96,11 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
           std::tm *tm_ptr = std::localtime(&t);
           char time_buf[32];
           if (show_date) {
-            std::strftime(time_buf, sizeof(time_buf), "[%Y-%m-%d %H:%M:%S]",
-                          tm_ptr);
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_long.c_str(), tm_ptr);
           } else {
-            std::strftime(time_buf, sizeof(time_buf), "[%H:%M:%S]", tm_ptr);
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_short.c_str(), tm_ptr);
           }
 
           RenderRichMessageWrapped(time_buf, rm.parts);
@@ -163,10 +165,13 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
               std::tm *mtm = std::localtime(&mt);
               char mt_buf[32];
               if (show_date) {
-                std::strftime(mt_buf, sizeof(mt_buf), "[%Y-%m-%d %H:%M:%S] ",
+                std::strftime(mt_buf, sizeof(mt_buf),
+                              (settings_.timestamp_format_long + " ").c_str(),
                               mtm);
               } else {
-                std::strftime(mt_buf, sizeof(mt_buf), "[%H:%M:%S] ", mtm);
+                std::strftime(mt_buf, sizeof(mt_buf),
+                              (settings_.timestamp_format_short + " ").c_str(),
+                              mtm);
               }
               export_text += mt_buf;
               for (const auto &p : m.parts)

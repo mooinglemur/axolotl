@@ -15,6 +15,8 @@ struct ConnectionSettings {
   std::string font_path = "";
   std::string fallback_font_path = "";
   int max_history_size = 0;
+  std::string timestamp_format_long = "[%Y-%m-%d %H:%M:%S]";
+  std::string timestamp_format_short = "[%H:%M:%S]";
   int window_width = 1280;
   int window_height = 720;
   int window_x = -1; // -1 means center on monitor

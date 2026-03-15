@@ -14,14 +14,13 @@ ChatWindow::ChatWindow(
         on_connect,
     std::function<void()> on_disconnect,
     std::function<const std::map<int, std::string> &()> get_player_names,
-    const std::string &name)
-    : Window(name), history_(history), on_send_chat_(on_send_chat),
-      get_state_(get_state), on_connect_(on_connect),
-      on_disconnect_(on_disconnect), get_player_names_(get_player_names) {
+    const ConnectionSettings &settings, const std::string &name)
+    : Window(name), get_state_(get_state), on_connect_(on_connect),
+      on_disconnect_(on_disconnect), get_player_names_(get_player_names),
+      settings_(settings), history_(history), on_send_chat_(on_send_chat) {
   input_text_.reserve(256);
 
   // Load initial settings
-  auto settings = Config::Load();
   strncpy(server_url_, settings.server_url.c_str(), sizeof(server_url_) - 1);
   strncpy(slot_name_, settings.slot_name.c_str(), sizeof(slot_name_) - 1);
   strncpy(password_, settings.password.c_str(), sizeof(password_) - 1);
@@ -89,8 +88,28 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
     // History
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+    // Day-change detection
+    int current_yday = -1;
+    int current_year = -1;
+    {
+      std::time_t now = std::time(nullptr);
+      std::tm *now_tm = std::localtime(&now);
+      current_yday = now_tm->tm_yday;
+      current_year = now_tm->tm_year;
+    }
+
+    bool show_date = false;
+    for (const auto &rm : history_) {
+      std::time_t t = (std::time_t)rm.timestamp;
+      std::tm *rm_tm = std::localtime(&t);
+      if (rm_tm->tm_yday != current_yday || rm_tm->tm_year != current_year) {
+        show_date = true;
+        break;
+      }
+    }
+
     if (ImGui::BeginChild(
-            "ScrollingRegion", ImVec2(0, -footer_height_to_reserve),
+            "ChatScrollingRegion", ImVec2(0, -footer_height_to_reserve),
             ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar)) {
       if (custom_font)
         ImGui::PushFont(custom_font);
@@ -107,8 +126,14 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
         // Timestamp
         std::time_t t = (std::time_t)rm.timestamp;
         std::tm *tm_ptr = std::localtime(&t);
-        char time_buf[16];
-        std::strftime(time_buf, sizeof(time_buf), "[%H:%M:%S]", tm_ptr);
+        char time_buf[64];
+        if (show_date) {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_long.c_str(), tm_ptr);
+        } else {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_short.c_str(), tm_ptr);
+        }
 
         RenderRichMessageWrapped(time_buf, rm.parts);
 
@@ -169,8 +194,16 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
               const auto &m = history_[sel];
               std::time_t mt = (std::time_t)m.timestamp;
               std::tm *mtm = std::localtime(&mt);
-              char mt_buf[16];
-              std::strftime(mt_buf, sizeof(mt_buf), "[%H:%M:%S] ", mtm);
+              char mt_buf[64];
+              if (show_date) {
+                std::strftime(mt_buf, sizeof(mt_buf),
+                              (settings_.timestamp_format_long + " ").c_str(),
+                              mtm);
+              } else {
+                std::strftime(mt_buf, sizeof(mt_buf),
+                              (settings_.timestamp_format_short + " ").c_str(),
+                              mtm);
+              }
               full_text += mt_buf;
               for (const auto &p : m.parts)
                 full_text += p.text;

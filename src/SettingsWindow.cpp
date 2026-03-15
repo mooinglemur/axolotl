@@ -1,5 +1,8 @@
 #include "SettingsWindow.h"
-#include <algorithm>
+#include "Config.h"
+#include "FontScanner.h"
+#include "Platform.h"
+#include <ctime>
 #include <imgui.h>
 
 SettingsWindow::SettingsWindow(
@@ -95,6 +98,62 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Maximum number of lines to retain in the Item feed (0 "
                         "= Unlimited).");
+
+    // ImGui::Spacing();
+    ImGui::Dummy(ImVec2(0.0f, 20.0f));
+
+    ImGui::Text("Timestamp Formats: see ");
+    ImGui::SameLine(0, 0);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+    ImGui::Text("https://strftime.org/");
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+      if (ImGui::IsItemClicked()) {
+        Platform::OpenURL("https://strftime.org/");
+      }
+      ImGui::SetTooltip("Open strftime.org in your browser");
+    }
+    ImGui::Separator();
+
+    auto render_timestamp_input = [&](const char *label, std::string &format,
+                                      const char *default_val) {
+      ImGui::Text("%s", label);
+      char buf[128];
+      strncpy(buf, format.c_str(), sizeof(buf));
+      if (ImGui::InputText((std::string("##") + label).c_str(), buf,
+                           sizeof(buf))) {
+        format = buf;
+      }
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (on_save_)
+          on_save_(settings_);
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Format string for strftime.\nDefault: %s",
+                          default_val);
+
+      // Live Preview
+      std::time_t now = std::time(nullptr);
+      std::tm *now_tm = std::localtime(&now);
+      char preview[128];
+      if (std::strftime(preview, sizeof(preview), format.c_str(), now_tm) > 0) {
+        ImGui::TextDisabled("Preview: %s", preview);
+      } else {
+        ImGui::TextColored(ImVec4(1, 0, 0, 1), "Invalid Format");
+      }
+      ImGui::Spacing();
+    };
+
+    render_timestamp_input("Timestamp Long", settings_.timestamp_format_long,
+                           "[%Y-%m-%d %H:%M:%S]");
+    render_timestamp_input("Timestamp Short", settings_.timestamp_format_short,
+                           "[%H:%M:%S]");
+
+    ImGui::Dummy(ImVec2(0.0f, 20.0f));
+
+    ImGui::Text("Display Fonts");
+    ImGui::Separator();
 
     ImGui::Text("Current Font: %s", settings_.font_path.empty()
                                         ? "Default"
@@ -235,6 +294,7 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
                                                     : custom_font);
 
     ImGui::Spacing();
+    ImGui::Dummy(ImVec2(0.0f, 20.0f));
     ImGui::Separator();
 
     if (ImGui::Button("Save and Apply")) {
@@ -247,6 +307,36 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) {
       is_open_ = false;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Reset to Defaults")) {
+      ImGui::OpenPopup("Reset to Defaults?");
+    }
+
+    if (ImGui::BeginPopupModal("Reset to Defaults?", NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+      ImGui::Text(
+          "All settings will be restored to their default values.\nThis "
+          "cannot be undone.\n\n");
+      ImGui::Separator();
+
+      if (ImGui::Button("Yes", ImVec2(120, 0))) {
+        settings_ = ConnectionSettings();
+        if (on_preview_) {
+          on_preview_("");
+        }
+        if (on_fallback_preview_) {
+          on_fallback_preview_("");
+        }
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SetItemDefaultFocus();
+      ImGui::SameLine();
+      if (ImGui::Button("No", ImVec2(120, 0))) {
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
     }
   }
   ImGui::End();

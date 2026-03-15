@@ -207,7 +207,8 @@ bool Application::Initialize() {
       [this]() { ap_network_.Disconnect(); },
       [this]() -> const std::map<int, std::string> & {
         return ap_network_.GetPlayerNames();
-      }));
+      },
+      current_config_));
 
   AddWindow(std::make_unique<SettingsWindow>(
       current_config_,
@@ -220,21 +221,23 @@ bool Application::Initialize() {
       [this](const std::string &p) { SetPreviewFallbackFont(p); }));
 
   auto received = std::make_unique<ReceivedItemsWindow>(
-      ap_network_.GetReceivedItemsHistory());
+      ap_network_.GetReceivedItemsHistory(), current_config_);
   AddWindow(std::move(received));
 
   AddWindow(std::make_unique<ItemFeedWindow>(
       ap_network_.GetItemHistory(),
-      [this]() { return ap_network_.GetGlobalSlot(); }, false, "Full Feed"));
+      [this]() { return ap_network_.GetGlobalSlot(); }, current_config_, false,
+      "Full Feed"));
 
   AddWindow(std::make_unique<ItemFeedWindow>(
       ap_network_.GetItemHistory(),
-      [this]() { return ap_network_.GetGlobalSlot(); }, true, "My Feed"));
+      [this]() { return ap_network_.GetGlobalSlot(); }, current_config_, true,
+      "Personal Feed"));
 
   AddWindow(std::make_unique<HintWindow>(
       ap_network_.GetHints(), ap_network_.GetPlayerNames(),
       ap_network_.GetItemNames(), ap_network_.GetLocationNames(),
-      [this]() { return ap_network_.GetGlobalSlot(); }));
+      [this]() { return ap_network_.GetGlobalSlot(); }, current_config_));
 
   if (is_first_launch_) {
     current_config_.show_windows["Chat"] = true;

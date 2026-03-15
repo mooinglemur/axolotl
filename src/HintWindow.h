@@ -1,7 +1,9 @@
 #pragma once
 #include "ArchipelagoNetwork.h"
+#include "Config.h"
 #include "Window.h"
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,7 @@ public:
              const std::map<int64_t, std::string> &item_names,
              const std::map<int64_t, std::string> &location_names,
              std::function<int()> get_global_slot,
+             const ConnectionSettings &settings,
              const std::string &name = "Hints");
 
   void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
@@ -23,6 +26,7 @@ private:
   const std::map<int64_t, std::string> &item_names_;
   const std::map<int64_t, std::string> &location_names_;
   std::function<int()> get_global_slot_;
+  const ConnectionSettings &settings_;
   std::vector<int> sorted_indices_;
   char filter_text_[256] = "";
 };

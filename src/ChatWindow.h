@@ -1,6 +1,8 @@
 #include "ArchipelagoNetwork.h"
+#include "Config.h"
 #include "Window.h"
 #include <functional>
+#include <map> // Added for std::map
 #include <string>
 #include <vector>
 
@@ -15,11 +17,12 @@ public:
           on_connect,
       std::function<void()> on_disconnect,
       std::function<const std::map<int, std::string> &()> get_player_names,
-      const std::string &name = "Chat");
+      const ConnectionSettings &settings, const std::string &name = "Chat");
   void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
               ImFont *preview_fallback_font = nullptr) override;
 
 private:
+  const ConnectionSettings &settings_;
   char server_url_[256] = "archipelago.gg:0";
   char slot_name_[64] = "Player1";
   char password_[64] = "";
