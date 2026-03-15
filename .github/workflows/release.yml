@@ -26,9 +26,10 @@ jobs:
           sudo apt-get install -y unzip
           mkdir -p release_assets
           # Move and rename assets for clarity and include 'nightly' in filenames
-          mv artifacts/*.AppImage release_assets/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage || true
-          mv artifacts/*.flatpak release_assets/com.mooinglemur.axolotl-nightly.flatpak || true
-          mv artifacts/*.dmg release_assets/AxolotlAPTextClient-macOS-nightly.dmg || true
+          # Use find to be robust against varying generated names
+          find artifacts -name "*.AppImage" -exec cp {} release_assets/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage \; || true
+          find artifacts -name "*.flatpak" -exec cp {} release_assets/com.mooinglemur.axolotl-nightly.flatpak \; || true
+          find artifacts -name "*.dmg" -exec cp {} release_assets/AxolotlAPTextClient-macOS-nightly.dmg \; || true
 
           # For Windows
           # MSIs
@@ -44,10 +45,11 @@ jobs:
             mv native_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-nightly.exe
           fi
 
-      - name: GH Release
-        uses: softprops/action-gh-release@v2
+      - name: Create GH Release
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: nightly
+          allowUpdates: true
+          tag: nightly
           name: Nightly Build
           body: |
             Automated development builds of the Axolotl Archipelago Text Client.
@@ -58,6 +60,8 @@ jobs:
             - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/nightly/AxolotlAPTextClient-macOS-nightly.dmg)
             - [Windows MSI](https://github.com/${{ github.repository }}/releases/download/nightly/AxolotlAPTextClient-Windows-nightly.msi)
             - [Windows EXE (Portable)](https://github.com/${{ github.repository }}/releases/download/nightly/AxolotlAPTextClient-Windows-nightly.exe)
-          files: release_assets/*
+          artifacts: release_assets/*
           prerelease: true
-          make_latest: false
+          replacesArtifacts: true
+          omitBodyDuringUpdate: false
+          omitNameDuringUpdate: false
