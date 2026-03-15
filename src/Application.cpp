@@ -73,7 +73,12 @@ Application::~Application() {
   glfwTerminate();
 }
 
+static void glfw_error_callback(int error, const char *description) {
+  std::cerr << "GLFW Error " << error << ": " << description << std::endl;
+}
+
 bool Application::Initialize() {
+  glfwSetErrorCallback(glfw_error_callback);
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW." << std::endl;
     return false;
