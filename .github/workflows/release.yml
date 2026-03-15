@@ -27,7 +27,7 @@ jobs:
           mkdir -p release_assets
           # Move and rename assets for clarity and include 'nightly' in filenames
           # Use find to be robust against varying generated names
-          find artifacts -name "*.AppImage" -exec cp {} release_assets/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage \; || true
+          find artifacts -name "Axolotl*.AppImage" -exec cp {} release_assets/AxolotlAPTextClient-Linux-x86_64-nightly.AppImage \; || true
           find artifacts -name "*.flatpak" -exec cp {} release_assets/com.mooinglemur.axolotl-nightly.flatpak \; || true
           find artifacts -name "*.dmg" -exec cp {} release_assets/AxolotlAPTextClient-macOS-nightly.dmg \; || true
 

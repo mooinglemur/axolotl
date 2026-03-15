@@ -77,7 +77,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: axolotl-apclient-appimage
-          path: "*.AppImage"
+          path: Axolotl*.AppImage
 
   macos-native:
     runs-on: macos-15
