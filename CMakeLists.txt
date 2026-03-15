@@ -145,6 +145,7 @@ else()
 endif()
 
 if (WIN32)
+    message(STATUS "Configuring Windows-specific dependencies...")
     target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE)
     target_link_libraries(axolotl-apclient PRIVATE d3d11 dxgi d3dcompiler bcrypt)
 endif()

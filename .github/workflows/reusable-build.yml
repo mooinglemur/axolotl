@@ -149,6 +149,8 @@ jobs:
               f.write(content)
           EOF
           python3 mbed_patch.py
+          # Patch IXWebSocket for missing bcrypt dependency for mbedtls
+          sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
 
       - name: Pre-build Dependencies
         shell: msys2 {0}
