@@ -92,29 +92,14 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          brew install cmake ninja glfw yaml-cpp nlohmann-json mbedtls
+          brew install cmake ninja glfw yaml-cpp nlohmann-json
           echo "CPATH=/opt/homebrew/include" >> $GITHUB_ENV
           echo "LIBRARY_PATH=/opt/homebrew/lib" >> $GITHUB_ENV
 
       - name: Patch and Build
         run: |
           mkdir build && cd build
-          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
-          cd ..
-          cat <<'EOF' > mbed_patch.py
-          import sys
-          file_path = "thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
-          with open(file_path, 'r') as f:
-              content = f.read()
-          content = content.replace('#include <string.h>', '#include <string.h>\n#include <mbedtls/version.h>\n#if MBEDTLS_VERSION_MAJOR >= 3\n#include <psa/crypto.h>\n#endif')
-          content = content.replace('psa_crypto_init();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            psa_crypto_init();\n#endif')
-          content = content.replace('mbedtls_psa_crypto_free();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            mbedtls_psa_crypto_free();\n#endif')
-          content = content.replace('#ifdef IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3', '#if MBEDTLS_VERSION_MAJOR >= 3')
-          with open(file_path, 'w') as f:
-              f.write(content)
-          EOF
-          python3 mbed_patch.py
-          cd build
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=OFF -DUSE_OPEN_SSL=OFF ..
           ninja
 
       - name: Package
