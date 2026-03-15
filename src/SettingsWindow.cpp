@@ -145,7 +145,7 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
               }
             } else {
               // Mark as invalid so it shows the warning next frame
-              const_cast<FontInfo &>(font).is_valid = false;
+              const_cast<AxolotlFontInfo &>(font).is_valid = false;
             }
           }
 
@@ -212,7 +212,7 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
               }
             } else {
               // Mark as invalid so it shows the warning next frame
-              const_cast<FontInfo &>(font).is_valid = false;
+              const_cast<AxolotlFontInfo &>(font).is_valid = false;
             }
           }
 

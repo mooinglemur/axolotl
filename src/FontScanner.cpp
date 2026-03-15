@@ -10,8 +10,8 @@
 #include <fontconfig/fontconfig.h>
 #endif
 
-std::vector<FontInfo> FontScanner::GetAvailableFonts() {
-  std::vector<FontInfo> fonts;
+std::vector<AxolotlFontInfo> FontScanner::GetAvailableFonts() {
+  std::vector<AxolotlFontInfo> fonts;
 
 #ifdef __linux__
   FcConfig *config = FcInitLoadConfigAndFonts();
@@ -71,17 +71,19 @@ std::vector<FontInfo> FontScanner::GetAvailableFonts() {
 #endif
 
   // Sort fonts by name
-  std::sort(
-      fonts.begin(), fonts.end(),
-      [](const FontInfo &a, const FontInfo &b) { return a.name < b.name; });
+  std::sort(fonts.begin(), fonts.end(),
+            [](const AxolotlFontInfo &a, const AxolotlFontInfo &b) {
+              return a.name < b.name;
+            });
 
   // Remove duplicates (fontconfig can return multiple styles for the same
   // family)
-  fonts.erase(std::unique(fonts.begin(), fonts.end(),
-                          [](const FontInfo &a, const FontInfo &b) {
-                            return a.name == b.name;
-                          }),
-              fonts.end());
+  fonts.erase(
+      std::unique(fonts.begin(), fonts.end(),
+                  [](const AxolotlFontInfo &a, const AxolotlFontInfo &b) {
+                    return a.name == b.name;
+                  }),
+      fonts.end());
 
   return fonts;
 }

@@ -11,6 +11,7 @@
 #include <backends/imgui_impl_glfw.h>
 #if defined(__APPLE__) && defined(__OBJC__)
 #define GLFW_EXPOSE_NATIVE_COCOA
+#import <AppKit/AppKit.h>
 #include <GLFW/glfw3native.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
@@ -86,7 +87,7 @@ bool Application::Initialize() {
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #elif defined(_WIN32)
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 #else
@@ -140,6 +141,16 @@ bool Application::Initialize() {
   ImGui::StyleColorsDark();
 
 #ifdef __APPLE__
+  device_ = MTLCreateSystemDefaultDevice();
+  commandQueue_ = [device_ newCommandQueue];
+
+  NSWindow *nswin = glfwGetCocoaWindow(window_);
+  layer_ = [CAMetalLayer layer];
+  layer_.device = device_;
+  layer_.pixelFormat = MTLPixelFormatBGRA8Unorm;
+  nswin.contentView.layer = layer_;
+  nswin.contentView.wantsLayer = YES;
+
   ImGui_ImplGlfw_InitForOther(window_, true);
   ImGui_ImplMetal_Init(device_);
 #elif defined(_WIN32)
@@ -368,11 +379,19 @@ void Application::Run() {
 
     // Start ImGui frame
 #ifdef __APPLE__
+    id<CAMetalDrawable> drawable = [layer_ nextDrawable];
+    if (drawable == nil) {
+      glfwPollEvents();
+      continue;
+    }
     id<MTLCommandBuffer> commandBuffer = [commandQueue_ commandBuffer];
     MTLRenderPassDescriptor *renderPassDescriptor =
-        [view currentRenderPassDescriptor];
-    id<MTLRenderCommandEncoder> renderEncoder =
-        [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        [MTLRenderPassDescriptor renderPassDescriptor];
+    renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+    renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+    renderPassDescriptor.colorAttachments[0].clearColor =
+        MTLClearColorMake(0.1f, 0.1f, 0.12f, 1.0f);
+    renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
     ImGui_ImplMetal_NewFrame(renderPassDescriptor);
 #elif defined(_WIN32)
     ImGui_ImplDX11_NewFrame();
@@ -415,16 +434,13 @@ void Application::Run() {
 
     ImGui::Render();
 #ifdef __APPLE__
-    id<MTLCommandBuffer> commandBuffer = [commandQueue_ commandBuffer];
-    MTLRenderPassDescriptor *renderPassDescriptor =
-        [view currentRenderPassDescriptor];
     if (renderPassDescriptor != nil) {
       id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer
           renderCommandEncoderWithDescriptor:renderPassDescriptor];
       ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer,
                                      renderEncoder);
       [renderEncoder endEncoding];
-      [commandBuffer presentDrawable:view.currentDrawable];
+      [commandBuffer presentDrawable:drawable];
     }
     [commandBuffer commit];
 #elif defined(_WIN32)

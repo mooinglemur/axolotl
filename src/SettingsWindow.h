@@ -26,7 +26,7 @@ private:
   std::function<void(const ConnectionSettings &)> on_save_;
   std::function<void(const std::string &)> on_preview_;
   std::function<void(const std::string &)> on_fallback_preview_;
-  std::vector<FontInfo> available_fonts_;
+  std::vector<AxolotlFontInfo> available_fonts_;
   char font_search_[128] = "";
   char fallback_font_search_[128] = "";
 };
