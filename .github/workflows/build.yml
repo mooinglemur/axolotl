@@ -1,0 +1,280 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  linux-flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-23.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
+          flatpak build-export repo build-dir
+          flatpak build-bundle repo axolotl-apclient.flatpak com.mooinglemur.axolotl
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: axolotl-apclient-flatpak
+          path: axolotl-apclient.flatpak
+
+  linux-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev git wget file python3
+
+      - name: Download Tools
+        run: |
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          wget https://curl.se/ca/cacert.pem
+
+      - name: Patch and Build
+        run: |
+          mkdir build && cd build
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
+          cd ..
+          cat <<'EOF' > mbed_patch.py
+          import sys
+          file_path = "thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
+          with open(file_path, 'r') as f:
+              content = f.read()
+          content = content.replace('#include <string.h>', '#include <string.h>\n#include <mbedtls/version.h>\n#if MBEDTLS_VERSION_MAJOR >= 3\n#include <psa/crypto.h>\n#endif')
+          content = content.replace('psa_crypto_init();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            psa_crypto_init();\n#endif')
+          content = content.replace('mbedtls_psa_crypto_free();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            mbedtls_psa_crypto_free();\n#endif')
+          content = content.replace('#ifdef IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3', '#if MBEDTLS_VERSION_MAJOR >= 3')
+          with open(file_path, 'w') as f:
+              f.write(content)
+          EOF
+          python3 mbed_patch.py
+          cd build
+          ninja
+          DESTDIR=appdir ninja install
+          mkdir -p appdir/usr/local/share/axolotl
+          cp ../cacert.pem appdir/usr/local/share/axolotl/
+
+      - name: Create AppImage
+        run: |
+          export EXCLUDE_LIBS="libssl.so.3;libcrypto.so.3;libssl.so.1.1;libcrypto.so.1.1"
+          ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run --appdir build/appdir --executable build/appdir/usr/local/bin/axolotl-apclient --desktop-file axolotl.desktop --icon-file axolotl.png --output appimage
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: axolotl-apclient-appimage
+          path: "*.AppImage"
+
+  windows-native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-glfw
+            mingw-w64-x86_64-yaml-cpp
+            mingw-w64-x86_64-nlohmann-json
+            mingw-w64-x86_64-mbedtls
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-python
+
+      - name: Patch IXWebSocket
+        shell: msys2 {0}
+        run: |
+          cat <<'EOF' > mbed_patch.py
+          import os
+          file_path = "thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
+          with open(file_path, 'r') as f:
+              content = f.read()
+          content = content.replace('#include <string.h>', '#include <string.h>\n#include <mbedtls/version.h>\n#if MBEDTLS_VERSION_MAJOR >= 3\n#include <psa/crypto.h>\n#endif')
+          content = content.replace('psa_crypto_init();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            psa_crypto_init();\n#endif')
+          content = content.replace('mbedtls_psa_crypto_free();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            mbedtls_psa_crypto_free();\n#endif')
+          content = content.replace('#ifdef IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3', '#if MBEDTLS_VERSION_MAJOR >= 3')
+          with open(file_path, 'w') as f:
+              f.write(content)
+          EOF
+          python3 mbed_patch.py
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          mkdir build && cd build
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
+          ninja
+
+      - name: Package
+        shell: msys2 {0}
+        run: |
+          cd build
+          cpack -G WIX
+          cpack -G ZIP
+          mv *.zip ../axolotl-apclient-windows-portable.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: axolotl-apclient-windows
+          path: |
+            axolotl-apclient-windows-portable.zip
+            build/*.msi
+
+  windows-cross:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools wixl zip curl git python3
+
+      - name: Pre-build Dependencies
+        run: |
+          export ROOT_DIR=$PWD
+          export CMAKE_GENERATOR=Ninja
+          # Patch IXWebSocket for case-insensitive linking on Linux and missing bcrypt dependency for mbedtls
+          sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
+          
+          # Build zlib for mingw
+          git clone --depth 1 -b v1.3.1 https://github.com/madler/zlib.git
+          mkdir zlib/build && cd zlib/build
+          sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo ninja install
+          # -- Remove the dll and dll.a files so that the static library is used
+          sudo rm -f /usr/x86_64-w64-mingw32/lib/libzlib.dll.a /usr/x86_64-w64-mingw32/bin/libzlib.dll
+          cd $ROOT_DIR
+          
+          # Build nlohmann_json for mingw
+          git clone --depth 1 -b v3.11.3 https://github.com/nlohmann/json.git
+          mkdir json/build && cd json/build
+          sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DJSON_BuildTests=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo ninja install
+          cd $ROOT_DIR
+          
+          # Build mbedtls for mingw
+          git clone --depth 1 -b v3.5.2 https://github.com/ARMmbed/mbedtls.git
+          mkdir mbedtls/build && cd mbedtls/build
+          sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo ninja install
+          cd $ROOT_DIR
+          
+          # Build yaml-cpp for mingw
+          git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
+          mkdir yaml-cpp/build && cd yaml-cpp/build
+          sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo ninja install
+          cd $ROOT_DIR
+          
+          # Build glfw for mingw
+          git clone --depth 1 -b 3.3.10 https://github.com/glfw/glfw.git
+          mkdir glfw/build && cd glfw/build
+          sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo ninja install
+          cd $ROOT_DIR
+
+      - name: Patch and Build
+        run: |
+          mkdir build-cross && cd build-cross
+          cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
+          cd ..
+          sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
+          cat <<'EOF' > mbed_patch.py
+          import sys
+          file_path = "thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
+          with open(file_path, 'r') as f:
+              content = f.read()
+          content = content.replace('#include <string.h>', '#include <string.h>\n#include <mbedtls/version.h>\n#if MBEDTLS_VERSION_MAJOR >= 3\n#include <psa/crypto.h>\n#endif')
+          content = content.replace('psa_crypto_init();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            psa_crypto_init();\n#endif')
+          content = content.replace('mbedtls_psa_crypto_free();', '#if MBEDTLS_VERSION_MAJOR >= 3\n            mbedtls_psa_crypto_free();\n#endif')
+          content = content.replace('#ifdef IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3', '#if MBEDTLS_VERSION_MAJOR >= 3')
+          with open(file_path, 'w') as f:
+              f.write(content)
+          EOF
+          python3 mbed_patch.py
+          cd build-cross
+          ninja
+
+      - name: Generate Installer
+        run: |
+          cd build-cross
+          cat <<EOF > axolotl.wxs
+          <?xml version="1.0" encoding="utf-8"?>
+          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+            <Product Name="Axolotl AP Text Client" Id="*" UpgradeCode="425C992D-0261-4162-8AFA-57E2BBA737D4" Language="1033" Codepage="1252" Version="0.1.0" Manufacturer="MooingLemur">
+              <Package Id="*" Keywords="Installer" Description="Axolotl Archipelago text client" Manufacturer="MooingLemur" InstallerVersion="100" Languages="1033" Compressed="yes" SummaryCodepage="1252" />
+              <Media Id="1" Cabinet="Sample.cab" EmbedCab="yes" DiskPrompt="CD-ROM #1" />
+              <Property Id="DiskPrompt" Value="Axolotl AP Text Client Installation [1]" />
+
+              <Directory Id="TARGETDIR" Name="SourceDir">
+                <Directory Id="ProgramFilesFolder" Name="PFiles">
+                  <Directory Id="AxolotlDir" Name="AxolotlAPTextClient">
+                    <Component Id="MainExecutable" Guid="*">
+                      <File Id="AxolotlEXE" Name="axolotl-apclient.exe" Source="axolotl-apclient.exe" KeyPath="yes">
+                        <Shortcut Id="startmenuAxolotl" Directory="ProgramMenuDir" Name="Axolotl AP Text Client" WorkingDirectory="INSTALLDIR" Icon="AxolotlIcon.exe" IconIndex="0" Advertise="yes" />
+                      </File>
+                    </Component>
+                    <Component Id="LicenseFile" Guid="*">
+                      <File Id="LicenseTXT" Name="LICENSE.txt" Source="../LICENSE.txt" />
+                    </Component>
+                  </Directory>
+                </Directory>
+                <Directory Id="ProgramMenuFolder" Name="Programs">
+                  <Directory Id="ProgramMenuDir" Name="Axolotl AP Text Client">
+                    <Component Id="ProgramMenuDir" Guid="*">
+                      <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
+                      <RegistryValue Root="HKCU" Key="Software\MooingLemur\AxolotlAPTextClient" Type="string" Value="" KeyPath="yes" />
+                    </Component>
+                  </Directory>
+                </Directory>
+              </Directory>
+
+              <Icon Id="AxolotlIcon.exe" SourceFile="axolotl-apclient.exe" />
+
+              <Feature Id="Complete" Level="1">
+                <ComponentRef Id="MainExecutable" />
+                <ComponentRef Id="LicenseFile" />
+                <ComponentRef Id="ProgramMenuDir" />
+              </Feature>
+            </Product>
+          </Wix>
+          EOF
+          wixl -o axolotl-apclient-cross.msi axolotl.wxs
+          zip -j ../axolotl-apclient-windows-cross-portable.zip axolotl-apclient.exe
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: axolotl-apclient-windows-cross
+          path: |
+            axolotl-apclient-windows-cross-portable.zip
+            build-cross/*.msi
