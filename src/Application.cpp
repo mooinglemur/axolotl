@@ -243,7 +243,7 @@ bool Application::Initialize() {
     current_config_.show_windows["Chat"] = true;
     current_config_.show_windows["Hints"] = true;
     current_config_.show_windows["Full Feed"] = true;
-    current_config_.show_windows["My Feed"] = false;
+    current_config_.show_windows["Personal Feed"] = false;
     current_config_.show_windows["Received Items"] = false;
     current_config_.show_windows["Settings"] = false;
   }
