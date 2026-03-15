@@ -37,7 +37,7 @@ jobs:
           find artifacts/axolotl-apclient-windows -name "*.msi" -exec cp {} release_assets/AxolotlAPTextClient-Windows-Native-nightly.msi \; || true
           if [ -f artifacts/axolotl-apclient-windows/axolotl-apclient-windows-portable.zip ]; then
             unzip artifacts/axolotl-apclient-windows/axolotl-apclient-windows-portable.zip -d native_temp
-            mv native_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-Native-nightly.exe
+            find native_temp -name axolotl-apclient.exe -exec cp {} release_assets/AxolotlAPTextClient-Windows-Native-nightly.exe \; || true
           fi
 
           # Windows Cross (Targeted Static)
@@ -56,6 +56,7 @@ jobs:
         with:
           allowUpdates: true
           tag: nightly-${{ steps.date.outputs.date }}
+          commit: main
           name: Nightly Build - ${{ steps.date.outputs.date }}
           body: |
             Automated development builds of the Axolotl Archipelago Text Client.
