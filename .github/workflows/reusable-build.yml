@@ -157,8 +157,9 @@ jobs:
           echo "Debug: which cmake: $(which cmake)"
           echo "Debug: which ninja: $(which ninja)"
 
-          # Force static linking by removing dynamic library remnants from MSYS2 using cmake -E
-          cmake -E rm -f /mingw64/lib/libglfw3.dll.a /mingw64/bin/glfw3.dll /mingw64/lib/libmbed*.dll.a /mingw64/bin/libmbed*.dll /mingw64/lib/libz.dll.a /mingw64/bin/zlib1.dll /mingw64/lib/libyaml-cpp.dll.a
+          # Force static linking by removing import library remnants from MSYS2
+          # We avoid deleting bin/*.dll because some (like zlib1.dll) are often in use by the shell
+          rm -f /mingw64/lib/libglfw3.dll.a /mingw64/lib/libmbed*.dll.a /mingw64/lib/libz.dll.a /mingw64/lib/libyaml-cpp.dll.a
 
           # Build with explicit static enforcement flags (ONE LINE to avoid shell issues)
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" -DZLIB_USE_STATIC_LIBS=ON
