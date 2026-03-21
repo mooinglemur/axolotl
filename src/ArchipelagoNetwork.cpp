@@ -53,15 +53,20 @@ void ArchipelagoNetwork::HandleMessage(const ix::WebSocketMessagePtr &msg) {
                              GetCurrentTimestamp()});
     }
   } else if (msg->type == ix::WebSocketMessageType::Open) {
+    connection_error_time_ = -1.0;
     std::lock_guard<std::mutex> status_lock(status_mutex_);
     status_messages_.push({"WebSocket connected to " + webSocket_.getUrl(),
                            GetCurrentTimestamp()});
   } else if (msg->type == ix::WebSocketMessageType::Close) {
+    if (connection_error_time_ <= 0)
+      connection_error_time_ = GetCurrentTimestamp();
     std::lock_guard<std::mutex> status_lock(status_mutex_);
     status_messages_.push({"WebSocket disconnected from " + webSocket_.getUrl(),
                            GetCurrentTimestamp()});
     is_connected_ = false;
   } else if (msg->type == ix::WebSocketMessageType::Error) {
+    if (connection_error_time_ <= 0)
+      connection_error_time_ = GetCurrentTimestamp();
     {
       std::lock_guard<std::mutex> status_lock(status_mutex_);
       status_messages_.push({"WebSocket error: " + msg->errorInfo.reason +
@@ -103,6 +108,22 @@ void ArchipelagoNetwork::Update() {
     webSocket_.stop();
     webSocket_.setUrl(pending_url_);
     webSocket_.start();
+  }
+
+  // Handle reconnection timeout (5 minutes)
+  if (user_wants_connection_ && !is_connected_ && connection_error_time_ > 0) {
+    if (GetCurrentTimestamp() - connection_error_time_ > 300.0) {
+      Disconnect();
+      RichMessage rm;
+      rm.timestamp = GetCurrentTimestamp();
+      rm.parts.push_back({"[System] Reconnection attempts timed out after 5 "
+                          "minutes. Please reconnect manually.",
+                          0xFF0000FF}); // Red
+      CheckDayChange(chat_history_, rm.timestamp, last_chat_day_);
+      chat_history_.push_back(rm);
+      if (on_history_updated)
+        on_history_updated();
+    }
   }
 
   // Handle status messages
@@ -148,6 +169,7 @@ void ArchipelagoNetwork::Update() {
       SendConnect();
     } else if (cmd == "Connected") {
       is_connected_ = true;
+      connection_error_time_ = -1.0;
       local_slot_ = packet["slot"].get<int>();
       team_ = packet.contains("team") ? packet["team"].get<int>() : 0;
 
@@ -246,6 +268,8 @@ void ArchipelagoNetwork::Update() {
       ResolvePendingItems();
       history_changed = true;
     } else if (cmd == "ConnectionRefused") {
+      if (connection_error_time_ <= 0)
+        connection_error_time_ = GetCurrentTimestamp();
       RichMessage rm;
       rm.timestamp = msg_time;
       rm.parts.push_back({"Connection refused: " + packet.dump(),
@@ -753,6 +777,7 @@ void ArchipelagoNetwork::Connect(const std::string &url,
   original_url_ = url;
   slot_ = slot;
   password_ = password;
+  connection_error_time_ = -1.0;
   tried_wss_ = false;
   tried_ws_ = false;
   pending_fallback_ = false;

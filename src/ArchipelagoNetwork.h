@@ -110,6 +110,7 @@ private:
   bool clear_item_history_pending_ = false;
   std::string last_requested_url_;
   std::string last_requested_slot_;
+  double connection_error_time_ = -1.0;
 
   struct QueuedPacket {
     nlohmann::json packet;
