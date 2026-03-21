@@ -106,9 +106,33 @@ if (APPLE)
     set_source_files_properties(src/Application.cpp PROPERTIES LANGUAGE OBJCXX)
 endif()
 
+# Get git hash
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RESULT_VARIABLE GIT_RESULT
+    OUTPUT_VARIABLE GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if (NOT GIT_RESULT EQUAL 0)
+    set(GIT_HASH "nogit")
+else()
+    # Check if repo is dirty
+    execute_process(
+        COMMAND git status --porcelain
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_STATUS
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if (NOT "${GIT_STATUS}" STREQUAL "")
+        set(GIT_HASH "${GIT_HASH}+")
+    endif()
+endif()
+
 add_executable(axolotl-apclient WIN32 ${SRC_FILES})
 target_include_directories(axolotl-apclient PRIVATE src)
-target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32)
+target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32 GIT_HASH="${GIT_HASH}")
 
 if (APPLE)
     if (USE_MBED_TLS)

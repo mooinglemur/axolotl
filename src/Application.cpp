@@ -3,8 +3,10 @@
 #include "FontScanner.h"
 #include "HintWindow.h"
 #include "ItemFeedWindow.h"
+#include "Platform.h"
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
+#include "version.h"
 #include <cstdlib>
 #include <iostream>
 
@@ -83,6 +85,19 @@ static void glfw_error_callback(int error, const char *description) {
     return;
   }
   std::cerr << "GLFW Error " << error << ": " << description << std::endl;
+}
+
+static void RenderLink(const char *label, const char *url) {
+  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+  ImGui::Text("%s", label);
+  ImGui::PopStyleColor();
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (ImGui::IsItemClicked()) {
+      Platform::OpenURL(url);
+    }
+    ImGui::SetTooltip("Open %s in your browser", url);
+  }
 }
 
 bool Application::Initialize() {
@@ -480,7 +495,93 @@ void Application::Run() {
         }
         ImGui::EndMenu();
       }
+      if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About Axolotl")) {
+          show_about_ = true;
+        }
+        ImGui::EndMenu();
+      }
       ImGui::EndMainMenuBar();
+    }
+
+    if (show_about_) {
+      ImGui::OpenPopup("About Axolotl");
+    }
+
+    if (ImGui::BeginPopupModal("About Axolotl", &show_about_,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+      ImGui::Text("Axolotl Archipelago Text Client");
+      ImGui::Separator();
+      ImGui::Text("Version: %s", AXOLOTL_VERSION_STRING);
+#ifdef GIT_HASH
+      ImGui::Text("Git Hash: %s", GIT_HASH);
+#else
+      ImGui::Text("Git Hash: unknown");
+#endif
+      ImGui::Text("(c) 2026 MooingLemur");
+      ImGui::Separator();
+
+      ImGui::Text("Axolotl is licensed under the ");
+      ImGui::SameLine(0, 0);
+      RenderLink(
+          "MIT License",
+          "https://github.com/MooingLemur/axolotl/blob/main/LICENSE.txt");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(".");
+
+      ImGui::Text("Third-party libraries used:");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("Dear ImGui (");
+      ImGui::SameLine(0, 0);
+      RenderLink("MIT",
+                 "https://github.com/ocornut/imgui/blob/master/LICENSE.txt");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("nlohmann/json (");
+      ImGui::SameLine(0, 0);
+      RenderLink("MIT",
+                 "https://github.com/nlohmann/json/blob/develop/LICENSE.MIT");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("yaml-cpp (");
+      ImGui::SameLine(0, 0);
+      RenderLink("MIT",
+                 "https://github.com/jbeder/yaml-cpp/blob/master/LICENSE");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("IXWebSocket (");
+      ImGui::SameLine(0, 0);
+      RenderLink(
+          "BSD 3-Clause",
+          "https://github.com/machinezone/IXWebSocket/blob/master/LICENSE.txt");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("GLFW (");
+      ImGui::SameLine(0, 0);
+      RenderLink("Zlib", "https://github.com/glfw/glfw/blob/master/LICENSE.md");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Separator();
+      if (ImGui::Button("Close", ImVec2(120, 0))) {
+        show_about_ = false;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
     }
 
     RenderUI();

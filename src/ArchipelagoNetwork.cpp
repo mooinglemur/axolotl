@@ -1,5 +1,6 @@
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
+#include "version.h"
 #include <algorithm>
 #include <chrono>
 
@@ -723,12 +724,16 @@ void ArchipelagoNetwork::SendGetHints() {
 
 void ArchipelagoNetwork::SendConnect() {
   json packet = json::array();
+  std::string uuid = "axolotl-client";
+#ifdef GIT_HASH
+  uuid += "-" + std::string(GIT_HASH);
+#endif
   packet.push_back(
       {{"cmd", "Connect"},
        {"password", password_},
        {"game", ""},
        {"name", slot_},
-       {"uuid", "axolotl-client"},
+       {"uuid", uuid},
        {"version",
         {{"class", "Version"}, {"major", 0}, {"minor", 5}, {"build", 1}}},
        {"items_handling", 7},
@@ -761,6 +766,13 @@ void ArchipelagoNetwork::Connect(const std::string &url,
   webSocket_.setUrl(full_url);
   webSocket_.enableAutomaticReconnection();
   webSocket_.enablePerMessageDeflate();
+
+  std::string user_agent = "AxolotlAPTextClient/";
+  user_agent += AXOLOTL_VERSION_STRING;
+#ifdef GIT_HASH
+  user_agent += " (git " + std::string(GIT_HASH) + ")";
+#endif
+  webSocket_.setExtraHeaders({{"User-Agent", user_agent}});
 
   // Configure TLS if we have a bundled CA
   auto ca_path = Config::GetCaBundlePath();
