@@ -19,6 +19,13 @@ static int64_t get_as_id(const json &j, int64_t default_val = -1) {
   return default_val;
 }
 
+static double GetCurrentTimestamp() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+             .count() /
+         1000000.0;
+}
+
 ArchipelagoNetwork::ArchipelagoNetwork() {
   webSocket_.setOnMessageCallback(
       [this](const ix::WebSocketMessagePtr &msg) { HandleMessage(msg); });
@@ -36,25 +43,29 @@ void ArchipelagoNetwork::HandleMessage(const ix::WebSocketMessagePtr &msg) {
       auto j = json::parse(msg->str);
       if (j.is_array()) {
         for (auto &packet : j) {
-          message_queue_.push(packet);
+          message_queue_.push({packet, GetCurrentTimestamp()});
         }
       }
     } catch (const std::exception &e) {
       std::lock_guard<std::mutex> status_lock(status_mutex_);
-      status_messages_.push("JSON parse error: " + std::string(e.what()));
+      status_messages_.push({"JSON parse error: " + std::string(e.what()),
+                             GetCurrentTimestamp()});
     }
   } else if (msg->type == ix::WebSocketMessageType::Open) {
     std::lock_guard<std::mutex> status_lock(status_mutex_);
-    status_messages_.push("WebSocket connected to " + webSocket_.getUrl());
+    status_messages_.push({"WebSocket connected to " + webSocket_.getUrl(),
+                           GetCurrentTimestamp()});
   } else if (msg->type == ix::WebSocketMessageType::Close) {
     std::lock_guard<std::mutex> status_lock(status_mutex_);
-    status_messages_.push("WebSocket disconnected from " + webSocket_.getUrl());
+    status_messages_.push({"WebSocket disconnected from " + webSocket_.getUrl(),
+                           GetCurrentTimestamp()});
     is_connected_ = false;
   } else if (msg->type == ix::WebSocketMessageType::Error) {
     {
       std::lock_guard<std::mutex> status_lock(status_mutex_);
-      status_messages_.push("WebSocket error: " + msg->errorInfo.reason +
-                            " (URL: " + webSocket_.getUrl() + ")");
+      status_messages_.push({"WebSocket error: " + msg->errorInfo.reason +
+                                 " (URL: " + webSocket_.getUrl() + ")",
+                             GetCurrentTimestamp()});
     }
 
     // Only fallback if it's likely an SSL/TLS error
@@ -84,7 +95,8 @@ void ArchipelagoNetwork::Update() {
   if (pending_fallback_) {
     {
       std::lock_guard<std::mutex> status_lock(status_mutex_);
-      status_messages_.push("Executing deferred fallback to " + pending_url_);
+      status_messages_.push({"Executing deferred fallback to " + pending_url_,
+                             GetCurrentTimestamp()});
     }
     pending_fallback_ = false;
     webSocket_.stop();
@@ -93,27 +105,26 @@ void ArchipelagoNetwork::Update() {
   }
 
   // Handle status messages
-  std::queue<std::string> local_status;
+  std::queue<QueuedStatus> local_status;
   {
     std::lock_guard<std::mutex> status_lock(status_mutex_);
     std::swap(local_status, status_messages_);
   }
-  double current_time = std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count() /
-                        1000000.0;
 
   while (!local_status.empty()) {
-    RichMessage rm;
-    rm.timestamp = current_time;
-    rm.parts.push_back({"[System] " + local_status.front(),
-                        0xFFAAAAAA}); // Gray Opaque (AABBGGRR)
-    CheckDayChange(chat_history_, current_time, last_chat_day_);
-    chat_history_.push_back(rm);
+    auto q_status = local_status.front();
     local_status.pop();
+    double msg_time = q_status.timestamp;
+
+    RichMessage rm;
+    rm.timestamp = msg_time;
+    rm.parts.push_back(
+        {"[System] " + q_status.message, 0xFFAAAAAA}); // Gray Opaque (AABBGGRR)
+    CheckDayChange(chat_history_, msg_time, last_chat_day_);
+    chat_history_.push_back(rm);
   }
 
-  std::queue<json> local_queue;
+  std::queue<QueuedPacket> local_queue;
   {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     std::swap(local_queue, message_queue_);
@@ -126,8 +137,10 @@ void ArchipelagoNetwork::Update() {
   }
 
   while (!local_queue.empty()) {
-    json packet = local_queue.front();
+    auto q_packet = local_queue.front();
     local_queue.pop();
+    json &packet = q_packet.packet;
+    double msg_time = q_packet.timestamp;
 
     std::string cmd = packet["cmd"];
     if (cmd == "RoomInfo") {
@@ -188,12 +201,12 @@ void ArchipelagoNetwork::Update() {
       SendGetHints();
 
       RichMessage rm;
-      rm.timestamp = current_time;
+      rm.timestamp = msg_time;
       rm.parts.push_back({"Connected as " + slot_ + " (Slot " +
                               std::to_string(local_slot_) + ", Team " +
                               std::to_string(team_) + ")",
                           0xFF00FF00}); // Green Opaque (AABBGGRR)
-      CheckDayChange(chat_history_, current_time, last_chat_day_);
+      CheckDayChange(chat_history_, msg_time, last_chat_day_);
       chat_history_.push_back(rm);
       history_changed = true;
     } else if (cmd == "DataPackage") {
@@ -225,22 +238,23 @@ void ArchipelagoNetwork::Update() {
         size_t total_items = 0;
         for (auto const &[game, items] : item_names_)
           total_items += items.size();
-        status_messages_.push("Received Data Package (" +
-                              std::to_string(total_items) + " items)");
+        status_messages_.push({"Received Data Package (" +
+                                   std::to_string(total_items) + " items)",
+                               msg_time});
       }
       ResolvePendingItems();
       history_changed = true;
     } else if (cmd == "ConnectionRefused") {
       RichMessage rm;
-      rm.timestamp = current_time;
+      rm.timestamp = msg_time;
       rm.parts.push_back({"Connection refused: " + packet.dump(),
                           0xFF0000FF}); // Red Opaque (AABBGGRR)
-      CheckDayChange(chat_history_, current_time, last_chat_day_);
+      CheckDayChange(chat_history_, msg_time, last_chat_day_);
       chat_history_.push_back(rm);
       history_changed = true;
     } else if (cmd == "PrintJSON") {
       RichMessage rm;
-      rm.timestamp = current_time;
+      rm.timestamp = msg_time;
       bool is_item_event = false;
       if (packet.contains("type")) {
         std::string type = packet["type"];
@@ -374,10 +388,10 @@ void ArchipelagoNetwork::Update() {
             }
           }
         }
-        CheckDayChange(item_history_, current_time, last_item_day_);
+        CheckDayChange(item_history_, msg_time, last_item_day_);
         item_history_.push_back(rm);
       } else {
-        CheckDayChange(chat_history_, current_time, last_chat_day_);
+        CheckDayChange(chat_history_, msg_time, last_chat_day_);
         chat_history_.push_back(rm);
       }
       history_changed = true;
@@ -394,7 +408,7 @@ void ArchipelagoNetwork::Update() {
         std::string name = ResolveItemName(iid, local_slot_);
 
         RichMessage rm;
-        rm.timestamp = current_time;
+        rm.timestamp = msg_time;
         uint32_t color = 0xFFFFFF00; // Junk/Cyan default Opaque (AABBGGRR)
         if (flags & 0x01)
           color = 0xFFFF5FAF; // Purple
@@ -409,8 +423,7 @@ void ArchipelagoNetwork::Update() {
         } else {
           rm.parts.push_back({name, color});
         }
-        CheckDayChange(received_items_history_, current_time,
-                       last_received_day_);
+        CheckDayChange(received_items_history_, msg_time, last_received_day_);
         received_items_history_.push_back(rm);
       }
       history_changed = true;
@@ -478,8 +491,9 @@ void ArchipelagoNetwork::Update() {
       }
       {
         std::lock_guard<std::mutex> status_lock(status_mutex_);
-        status_messages_.push("Retrieved " + std::to_string(hint_count) +
-                              " hints from server storage");
+        status_messages_.push({"Retrieved " + std::to_string(hint_count) +
+                                   " hints from server storage",
+                               msg_time});
       }
       history_changed = true;
     }
@@ -766,7 +780,7 @@ void ArchipelagoNetwork::Disconnect() {
   user_wants_connection_ = false;
   {
     std::lock_guard<std::mutex> lock(status_mutex_);
-    status_messages_.push("Disconnected by user");
+    status_messages_.push({"Disconnected by user", GetCurrentTimestamp()});
   }
 }
 

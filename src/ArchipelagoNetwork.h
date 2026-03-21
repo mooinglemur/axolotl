@@ -111,8 +111,17 @@ private:
   std::string last_requested_url_;
   std::string last_requested_slot_;
 
-  std::queue<nlohmann::json> message_queue_;
-  std::queue<std::string> status_messages_;
+  struct QueuedPacket {
+    nlohmann::json packet;
+    double timestamp;
+  };
+  struct QueuedStatus {
+    std::string message;
+    double timestamp;
+  };
+
+  std::queue<QueuedPacket> message_queue_;
+  std::queue<QueuedStatus> status_messages_;
   std::mutex queue_mutex_;
   std::mutex status_mutex_;
 
