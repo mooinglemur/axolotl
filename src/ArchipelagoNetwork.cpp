@@ -385,7 +385,7 @@ void ArchipelagoNetwork::Update() {
         int64_t iid = get_as_id(item["item"]);
         int flags = item.contains("flags") ? item["flags"].get<int>() : 0;
         int sid = item.contains("player") ? item["player"].get<int>() : -1;
-        std::string name = ResolveItemName(iid, sid);
+        std::string name = ResolveItemName(iid, local_slot_);
 
         RichMessage rm;
         rm.timestamp = current_time;
