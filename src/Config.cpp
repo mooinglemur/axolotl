@@ -100,8 +100,6 @@ ConnectionSettings Config::Load() {
       settings.ui_scale = config["ui_scale"].as<float>();
     if (config["content_scale"])
       settings.content_scale = config["content_scale"].as<float>();
-    if (config["use_hidpi"])
-      settings.use_hidpi = config["use_hidpi"].as<bool>();
     if (config["font_path"])
       settings.font_path = config["font_path"].as<std::string>();
     if (config["fallback_font_path"])
@@ -117,6 +115,9 @@ ConnectionSettings Config::Load() {
       settings.window_x = config["window_x"].as<int>();
     if (config["window_y"])
       settings.window_y = config["window_y"].as<int>();
+    if (config["collapse_received_items"])
+      settings.collapse_received_items =
+          config["collapse_received_items"].as<bool>();
     if (config["show_windows"]) {
       for (const auto &kv : config["show_windows"]) {
         settings.show_windows[kv.first.as<std::string>()] =
@@ -139,7 +140,6 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::Key << "password" << YAML::Value << settings.password;
   out << YAML::Key << "ui_scale" << YAML::Value << settings.ui_scale;
   out << YAML::Key << "content_scale" << YAML::Value << settings.content_scale;
-  out << YAML::Key << "use_hidpi" << YAML::Value << settings.use_hidpi;
   out << YAML::Key << "font_path" << YAML::Value << settings.font_path;
   out << YAML::Key << "fallback_font_path" << YAML::Value
       << settings.fallback_font_path;
@@ -149,6 +149,8 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::Key << "window_height" << YAML::Value << settings.window_height;
   out << YAML::Key << "window_x" << YAML::Value << settings.window_x;
   out << YAML::Key << "window_y" << YAML::Value << settings.window_y;
+  out << YAML::Key << "collapse_received_items" << YAML::Value
+      << settings.collapse_received_items;
 
   out << YAML::Key << "show_windows" << YAML::Value << YAML::BeginMap;
   for (const auto &kv : settings.show_windows) {

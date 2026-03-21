@@ -41,6 +41,7 @@ Application::Application()
 Application::~Application() {
   for (const auto &window : windows_) {
     current_config_.show_windows[window->GetName()] = window->GetOpen();
+    window->SaveState(current_config_);
   }
 
   if (window_) {

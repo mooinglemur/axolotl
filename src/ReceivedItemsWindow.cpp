@@ -7,7 +7,9 @@
 ReceivedItemsWindow::ReceivedItemsWindow(
     const std::vector<RichMessage> &history, const ConnectionSettings &settings,
     const std::string &name)
-    : Window(name), history_(history), settings_(settings) {}
+    : Window(name), history_(history), settings_(settings) {
+  collapse_ = settings_.collapse_received_items;
+}
 
 void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
                                  ImFont *preview_fallback_font) {
@@ -274,4 +276,8 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
     ImGui::EndChild();
   }
   ImGui::End();
+}
+
+void ReceivedItemsWindow::SaveState(ConnectionSettings &settings) {
+  settings.collapse_received_items = collapse_;
 }

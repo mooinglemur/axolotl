@@ -88,10 +88,6 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
         "etc.).",
         false);
 
-    ImGui::Checkbox("Use HiDPI Scaling", &settings_.use_hidpi);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Enable high-resolution coordinate scaling.");
-
     ImGui::InputInt("Max Feed History", &settings_.max_history_size, 100, 1000);
     if (settings_.max_history_size < 0)
       settings_.max_history_size = 0;

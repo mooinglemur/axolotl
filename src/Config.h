@@ -11,7 +11,6 @@ struct ConnectionSettings {
   // UI Preferences
   float ui_scale = 1.0f;
   float content_scale = 1.0f;
-  bool use_hidpi = true;
   std::string font_path = "";
   std::string fallback_font_path = "";
   int max_history_size = 0;
@@ -21,6 +20,7 @@ struct ConnectionSettings {
   int window_height = 720;
   int window_x = -1; // -1 means center on monitor
   int window_y = -1;
+  bool collapse_received_items = true;
   std::map<std::string, bool> show_windows;
 };
 

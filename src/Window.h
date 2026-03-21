@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+struct ConnectionSettings;
+
 inline void RenderRichMessageWrapped(const char *timestamp_str,
                                      const std::vector<MessagePart> &parts) {
   if (timestamp_str && timestamp_str[0] != '\0') {
@@ -64,6 +66,8 @@ public:
   virtual void Render(ImFont *custom_font = nullptr,
                       ImFont *preview_font = nullptr,
                       ImFont *preview_fallback_font = nullptr) = 0;
+
+  virtual void SaveState(ConnectionSettings &settings) {}
 
   const std::string &GetName() const { return name_; }
   bool &GetOpen() { return is_open_; }
