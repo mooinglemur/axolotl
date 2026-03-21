@@ -67,13 +67,21 @@ jobs:
             Most recent commit: [${{ github.event.head_commit.message }}](${{ github.event.head_commit.url }})
 
             **Direct Downloads**:
+
+            **Linux**:
             - [Linux AppImage](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Linux-x86_64-latest.AppImage)
             - [Linux Flatpak](https://github.com/${{ github.repository }}/releases/download/latest/com.mooinglemur.axolotl-latest.flatpak)
+
+            **macOS**:
             - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-macOS-latest.dmg)
-            - [Windows Native (Portable)](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Native-latest.exe)
-            - [Windows Native (MSI)](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Native-latest.msi)
-            - [Windows Static (Portable)](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Static-latest.exe)
-            - [Windows Static (MSI)](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Static-latest.msi)
+
+            **Windows (Native Builds)**:
+            - [MSI Installer](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Native-latest.msi)
+            - [Portable EXE](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Native-latest.exe)
+
+            **Windows (Cross-Compiled)**:
+            - [MSI Installer](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Static-latest.msi)
+            - [Portable EXE](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Static-latest.exe)
           artifacts: release_assets/*
           prerelease: true
           replacesArtifacts: true
