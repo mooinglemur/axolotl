@@ -398,8 +398,7 @@ void ArchipelagoNetwork::Update() {
           color = 0xFF0045FF; // Red
 
         if (name.empty()) {
-          pending_items_.push_back(
-              {iid, (int)get_as_id(item["location"]), sid, flags, true});
+          pending_items_.push_back({iid, sid, local_slot_, flags, true});
           rm.parts.push_back({"Unknown Item " + std::to_string(iid), color});
         } else {
           rm.parts.push_back({name, color});
