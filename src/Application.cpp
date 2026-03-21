@@ -237,6 +237,7 @@ bool Application::Initialize() {
   AddWindow(std::make_unique<HintWindow>(
       ap_network_.GetHints(), ap_network_.GetPlayerNames(),
       ap_network_.GetItemNames(), ap_network_.GetLocationNames(),
+      ap_network_.GetSlotToGame(),
       [this]() { return ap_network_.GetGlobalSlot(); }, current_config_));
 
   if (is_first_launch_) {

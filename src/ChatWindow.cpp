@@ -32,29 +32,41 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
     return;
 
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
-    // Connection Controls (Single Line)
+    // Connection Controls (Wrapping)
     auto state =
         get_state_ ? get_state_() : ArchipelagoNetwork::State::Disconnected;
     bool is_disconnected = (state == ArchipelagoNetwork::State::Disconnected);
 
+    float avail_width = ImGui::GetContentRegionAvail().x;
+    float server_width = std::max(210.0f, avail_width * 0.18f);
+    float slot_width = std::max(175.0f, avail_width * 0.2f);
+    float pw_width = std::max(130.0f, avail_width * 0.15f);
+
     ImGui::BeginDisabled(!is_disconnected);
 
-    ImGui::SetNextItemWidth(
-        std::max(210.0f, ImGui::GetContentRegionAvail().x * 0.18f));
+    ImGui::SetNextItemWidth(server_width);
     ImGui::InputText("##Server", server_url_, sizeof(server_url_));
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Server URL");
 
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(
-        std::max(175.0f, ImGui::GetContentRegionAvail().x * 0.2f));
+    auto MaybeSameLine = [&](float next_width) {
+      float last_x2 = ImGui::GetItemRectMax().x;
+      float spacing = ImGui::GetStyle().ItemSpacing.x;
+      float window_right =
+          ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+      if (last_x2 + spacing + next_width < window_right) {
+        ImGui::SameLine();
+      }
+    };
+
+    MaybeSameLine(slot_width);
+    ImGui::SetNextItemWidth(slot_width);
     ImGui::InputText("##Slot", slot_name_, sizeof(slot_name_));
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Slot Name");
 
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(
-        std::max(130.0f, ImGui::GetContentRegionAvail().x * 0.2f));
+    MaybeSameLine(pw_width);
+    ImGui::SetNextItemWidth(pw_width);
     ImGui::InputText("##Password", password_, sizeof(password_),
                      ImGuiInputTextFlags_Password);
     if (ImGui::IsItemHovered())
@@ -62,7 +74,16 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     ImGui::EndDisabled();
 
-    ImGui::SameLine();
+    const char *btn_text = "Connect";
+    if (state == ArchipelagoNetwork::State::Connecting)
+      btn_text = "Cancel";
+    else if (state == ArchipelagoNetwork::State::Connected)
+      btn_text = "Disconnect";
+
+    float btn_width =
+        ImGui::CalcTextSize(btn_text).x + ImGui::GetStyle().FramePadding.x * 2;
+    MaybeSameLine(btn_width);
+
     if (state == ArchipelagoNetwork::State::Disconnected) {
       if (ImGui::Button("Connect")) {
         if (on_connect_) {

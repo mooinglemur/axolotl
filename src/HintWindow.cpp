@@ -1,16 +1,18 @@
 #include "HintWindow.h"
 #include <algorithm>
 
-HintWindow::HintWindow(const std::vector<Hint> &hints,
-                       const std::map<int, std::string> &player_names,
-                       const std::map<int64_t, std::string> &item_names,
-                       const std::map<int64_t, std::string> &location_names,
-                       std::function<int()> get_global_slot,
-                       const ConnectionSettings &settings,
-                       const std::string &name)
+HintWindow::HintWindow(
+    const std::vector<Hint> &hints,
+    const std::map<int, std::string> &player_names,
+    const std::map<std::string, std::map<int64_t, std::string>> &item_names,
+    const std::map<std::string, std::map<int64_t, std::string>> &location_names,
+    const std::map<int, std::string> &slot_to_game,
+    std::function<int()> get_global_slot, const ConnectionSettings &settings,
+    const std::string &name)
     : Window(name), hints_(hints), player_names_(player_names),
       item_names_(item_names), location_names_(location_names),
-      get_global_slot_(get_global_slot), settings_(settings) {}
+      slot_to_game_(slot_to_game), get_global_slot_(get_global_slot),
+      settings_(settings) {}
 
 void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                         ImFont *preview_fallback_font) {
@@ -76,13 +78,19 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
           int delta = 0;
           if (spec->ColumnIndex == 0) { // Item
-            std::string nA = item_names_.count(hA.item_id)
-                                 ? item_names_.at(hA.item_id)
-                                 : "Unknown";
-            std::string nB = item_names_.count(hB.item_id)
-                                 ? item_names_.at(hB.item_id)
-                                 : "Unknown";
-            delta = nA.compare(nB);
+            auto resolve_item = [&](const Hint &h) {
+              std::string game = "";
+              if (h.receiver_slot != -1 && slot_to_game_.count(h.receiver_slot))
+                game = slot_to_game_.at(h.receiver_slot);
+              if (!game.empty() && item_names_.count(game) &&
+                  item_names_.at(game).count(h.item_id))
+                return item_names_.at(game).at(h.item_id);
+              for (auto const &[gn, items] : item_names_)
+                if (items.count(h.item_id))
+                  return items.at(h.item_id);
+              return std::string("Unknown");
+            };
+            delta = resolve_item(hA).compare(resolve_item(hB));
           } else if (spec->ColumnIndex == 1) { // Receiver
             std::string nA = player_names_.count(hA.receiver_slot)
                                  ? player_names_.at(hA.receiver_slot)
@@ -92,13 +100,19 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                                  : std::to_string(hB.receiver_slot);
             delta = nA.compare(nB);
           } else if (spec->ColumnIndex == 2) { // Location
-            std::string nA = location_names_.count(hA.location_id)
-                                 ? location_names_.at(hA.location_id)
-                                 : "Unknown";
-            std::string nB = location_names_.count(hB.location_id)
-                                 ? location_names_.at(hB.location_id)
-                                 : "Unknown";
-            delta = nA.compare(nB);
+            auto resolve_loc = [&](const Hint &h) {
+              std::string game = "";
+              if (h.finder_slot != -1 && slot_to_game_.count(h.finder_slot))
+                game = slot_to_game_.at(h.finder_slot);
+              if (!game.empty() && location_names_.count(game) &&
+                  location_names_.at(game).count(h.location_id))
+                return location_names_.at(game).at(h.location_id);
+              for (auto const &[gn, locs] : location_names_)
+                if (locs.count(h.location_id))
+                  return locs.at(h.location_id);
+              return std::string("Unknown");
+            };
+            delta = resolve_loc(hA).compare(resolve_loc(hB));
           } else if (spec->ColumnIndex == 3) { // Finder
             std::string nA = player_names_.count(hA.finder_slot)
                                  ? player_names_.at(hA.finder_slot)
@@ -123,18 +137,47 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
       for (int orig_idx : sorted_indices_) {
         const auto &h = hints_[orig_idx];
-        std::string item = item_names_.count(h.item_id)
-                               ? item_names_.at(h.item_id)
-                               : "Unknown Item";
+        std::string item = "Unknown Item";
+        std::string i_game = "";
+        if (h.receiver_slot != -1 && slot_to_game_.count(h.receiver_slot))
+          i_game = slot_to_game_.at(h.receiver_slot);
+        if (!i_game.empty() && item_names_.count(i_game) &&
+            item_names_.at(i_game).count(h.item_id)) {
+          item = item_names_.at(i_game).at(h.item_id);
+        } else {
+          // Fallback to searching all games if specific game not found or item
+          // not in specific game
+          for (auto const &[gn, items] : item_names_) {
+            if (items.count(h.item_id)) {
+              item = items.at(h.item_id);
+              break;
+            }
+          }
+        }
+
         std::string receiver =
             player_names_.count(h.receiver_slot)
                 ? player_names_.at(h.receiver_slot)
                 : (h.receiver_slot != -1
                        ? "Slot " + std::to_string(h.receiver_slot)
                        : "Unknown Player");
-        std::string location = location_names_.count(h.location_id)
-                                   ? location_names_.at(h.location_id)
-                                   : "Unknown Location";
+
+        std::string location = "Unknown Location";
+        std::string l_game = "";
+        if (h.finder_slot != -1 && slot_to_game_.count(h.finder_slot))
+          l_game = slot_to_game_.at(h.finder_slot);
+        if (!l_game.empty() && location_names_.count(l_game) &&
+            location_names_.at(l_game).count(h.location_id)) {
+          location = location_names_.at(l_game).at(h.location_id);
+        } else {
+          for (auto const &[gn, locs] : location_names_) {
+            if (locs.count(h.location_id)) {
+              location = locs.at(h.location_id);
+              break;
+            }
+          }
+        }
+
         std::string finder =
             player_names_.count(h.finder_slot)
                 ? player_names_.at(h.finder_slot)

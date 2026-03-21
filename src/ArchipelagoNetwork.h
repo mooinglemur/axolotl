@@ -70,11 +70,16 @@ public:
   const std::map<int, std::string> &GetPlayerNames() const {
     return player_names_;
   }
-  const std::map<int64_t, std::string> &GetItemNames() const {
+  const std::map<std::string, std::map<int64_t, std::string>> &
+  GetItemNames() const {
     return item_names_;
   }
-  const std::map<int64_t, std::string> &GetLocationNames() const {
+  const std::map<std::string, std::map<int64_t, std::string>> &
+  GetLocationNames() const {
     return location_names_;
+  }
+  const std::map<int, std::string> &GetSlotToGame() const {
+    return slot_to_game_;
   }
 
   // Callbacks for UI
@@ -107,9 +112,10 @@ private:
   std::mutex status_mutex_;
 
   // Data Package & Handshake data
-  std::map<int64_t, std::string> item_names_;
-  std::map<int64_t, std::string> location_names_;
+  std::map<std::string, std::map<int64_t, std::string>> item_names_;
+  std::map<std::string, std::map<int64_t, std::string>> location_names_;
   std::map<int, std::string> player_names_;
+  std::map<int, std::string> slot_to_game_;
 
   // History buffers
   std::vector<RichMessage> chat_history_;
@@ -131,7 +137,8 @@ private:
   void SendSync();
   void SendGetHints();
   void ResolvePendingItems();
-  std::string ResolveItemName(int64_t id);
+  std::string ResolveItemName(int64_t id, int slot = -1);
+  std::string ResolveLocationName(int64_t id, int slot = -1);
 
   void CheckDayChange(std::vector<RichMessage> &history, double timestamp,
                       int64_t &last_day);

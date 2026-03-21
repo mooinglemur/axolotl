@@ -168,6 +168,21 @@ void ArchipelagoNetwork::Update() {
         }
       }
 
+      // Store slot-to-game mapping
+      if (packet.contains("slot_info")) {
+        for (auto &[slot_str, slot_data] : packet["slot_info"].items()) {
+          try {
+            int slot_id = std::stoi(slot_str);
+            if (slot_data.contains("game")) {
+              std::string g_name = slot_data["game"].get<std::string>();
+              slot_to_game_[slot_id] = g_name;
+              slot_to_game_[(team_ << 16) | slot_id] = g_name;
+            }
+          } catch (...) {
+          }
+        }
+      }
+
       SendGetDataPackage();
       SendSync();
       SendGetHints();
@@ -188,21 +203,24 @@ void ArchipelagoNetwork::Update() {
           if (game_data.contains("item_name_to_id")) {
             for (auto &[item_name, item_id] :
                  game_data["item_name_to_id"].items()) {
-              item_names_[item_id.get<int64_t>()] = item_name;
+              item_names_[game_name][item_id.get<int64_t>()] = item_name;
             }
           }
           if (game_data.contains("location_name_to_id")) {
             for (auto &[loc_name, loc_id] :
                  game_data["location_name_to_id"].items()) {
-              location_names_[loc_id.get<int64_t>()] = loc_name;
+              location_names_[game_name][loc_id.get<int64_t>()] = loc_name;
             }
           }
         }
       }
       {
         std::lock_guard<std::mutex> status_lock(status_mutex_);
+        size_t total_items = 0;
+        for (auto const &[game, items] : item_names_)
+          total_items += items.size();
         status_messages_.push("Received Data Package (" +
-                              std::to_string(item_names_.size()) + " items)");
+                              std::to_string(total_items) + " items)");
       }
       ResolvePendingItems();
       history_changed = true;
@@ -250,12 +268,12 @@ void ArchipelagoNetwork::Update() {
           try {
             int64_t iid = get_as_id(content);
             int flags = part.contains("flags") ? part["flags"].get<int>() : 0;
-            if (item_names_.count(iid)) {
-              content = item_names_[iid];
-            } else {
+            int sid = part.contains("player") ? part["player"].get<int>() : -1;
+            content = ResolveItemName(iid, sid);
+            if (content.empty()) {
+              content = "Unknown Item " + std::to_string(iid);
               if (is_item_event) {
-                pending_items_.push_back({iid, 0, 0, flags, false});
-                content = "Unknown Item " + content;
+                pending_items_.push_back({iid, 0, sid, flags, false});
               }
             }
 
@@ -274,8 +292,10 @@ void ArchipelagoNetwork::Update() {
         } else if (type == "location_id") {
           try {
             int64_t lid = get_as_id(content);
-            if (location_names_.count(lid))
-              content = location_names_[lid];
+            int sid = part.contains("player") ? part["player"].get<int>() : -1;
+            std::string loc_name = ResolveLocationName(lid, sid);
+            if (!loc_name.empty())
+              content = loc_name;
             color = 0xFF00FF00; // Green Opaque (AABBGGRR)
           } catch (...) {
           }
@@ -364,7 +384,8 @@ void ArchipelagoNetwork::Update() {
       for (const auto &item : packet["items"]) {
         int64_t iid = get_as_id(item["item"]);
         int flags = item.contains("flags") ? item["flags"].get<int>() : 0;
-        std::string name = ResolveItemName(iid);
+        int sid = item.contains("player") ? item["player"].get<int>() : -1;
+        std::string name = ResolveItemName(iid, sid);
 
         RichMessage rm;
         rm.timestamp = current_time;
@@ -377,9 +398,8 @@ void ArchipelagoNetwork::Update() {
           color = 0xFF0045FF; // Red
 
         if (name.empty()) {
-          pending_items_.push_back({iid, (int)get_as_id(item["location"]),
-                                    (int)get_as_id(item["player"]), flags,
-                                    true});
+          pending_items_.push_back(
+              {iid, (int)get_as_id(item["location"]), sid, flags, true});
           rm.parts.push_back({"Unknown Item " + std::to_string(iid), color});
         } else {
           rm.parts.push_back({name, color});
@@ -511,8 +531,10 @@ void ArchipelagoNetwork::SendChat(const std::string &message) {
     }
 
     std::vector<std::string> i_names;
-    for (auto const &[id, name] : item_names_) {
-      i_names.push_back(name);
+    for (auto const &[gn, items] : item_names_) {
+      for (auto const &[id, name] : items) {
+        i_names.push_back(name);
+      }
     }
 
     double now = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -561,16 +583,49 @@ void ArchipelagoNetwork::SendChat(const std::string &message) {
   webSocket_.send(packet.dump());
 }
 
-std::string ArchipelagoNetwork::ResolveItemName(int64_t id) {
-  if (item_names_.count(id)) {
-    return item_names_[id];
+std::string ArchipelagoNetwork::ResolveItemName(int64_t id, int slot) {
+  std::string game = "";
+  if (slot != -1 && slot_to_game_.count(slot)) {
+    game = slot_to_game_[slot];
   }
+
+  if (!game.empty() && item_names_.count(game) && item_names_[game].count(id)) {
+    return item_names_[game][id];
+  }
+
+  // Fallback: search all games if game is unknown or item not found in that
+  // game
+  for (auto const &[gn, items] : item_names_) {
+    if (items.count(id))
+      return items.at(id);
+  }
+
+  return "";
+}
+
+std::string ArchipelagoNetwork::ResolveLocationName(int64_t id, int slot) {
+  std::string game = "";
+  if (slot != -1 && slot_to_game_.count(slot)) {
+    game = slot_to_game_[slot];
+  }
+
+  if (!game.empty() && location_names_.count(game) &&
+      location_names_[game].count(id)) {
+    return location_names_[game][id];
+  }
+
+  // Fallback: search all games
+  for (auto const &[gn, locations] : location_names_) {
+    if (locations.count(id))
+      return locations.at(id);
+  }
+
   return "";
 }
 
 void ArchipelagoNetwork::ResolvePendingItems() {
   for (auto &pending : pending_items_) {
-    std::string name = ResolveItemName(pending.id);
+    std::string name = ResolveItemName(pending.id, pending.receiver);
     if (!name.empty()) {
       if (pending.is_received_packet) {
         std::string search = "Unknown Item " + std::to_string(pending.id);
