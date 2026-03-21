@@ -301,6 +301,9 @@ windows-cross:
 sync-github:
   stage: build
   image: alpine:latest
+  tags:
+    - docker
+    - linux
   before_script:
     - apk add git
   script:
