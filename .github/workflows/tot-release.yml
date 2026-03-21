@@ -47,7 +47,14 @@ jobs:
           fi
           find artifacts/axolotl-apclient-windows-cross -name "*.msi" -exec cp {} release_assets/AxolotlAPTextClient-Windows-Static-latest.msi \; || true
 
-      - name: Update Latest Release
+      - name: Recreate Latest Tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes || true
+          git push origin :refs/tags/latest || true
+
+      - name: Create New Latest Release
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
