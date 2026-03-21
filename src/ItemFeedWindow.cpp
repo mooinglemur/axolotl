@@ -76,6 +76,7 @@ void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
     if (ImGui::BeginChild("FeedScrollingRegion")) {
       if (custom_font)
         ImGui::PushFont(custom_font);
+      int visible_row_idx = 0;
       for (int i = 0; i < (int)history_.size(); ++i) {
         const auto &rm = history_[i];
 
@@ -134,6 +135,17 @@ void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
           ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
           ImGui::SetCursorScreenPos(pos_start);
 
+          if (visible_row_idx % 2 == 1) {
+            float x_min =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            float x_max =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(x_min, pos_start.y),
+                ImVec2(x_max, pos_start.y + item_size.y),
+                ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+          }
+
           bool is_selected = false;
           if (selection_anchor_ != -1 && selection_active_ != -1) {
             int start = std::min(selection_anchor_, selection_active_);
@@ -171,6 +183,7 @@ void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
           ImGui::GetWindowDrawList()->ChannelsMerge();
           ImGui::PopID();
+          visible_row_idx++;
         }
       }
 
