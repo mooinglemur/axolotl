@@ -298,6 +298,15 @@ windows-cross:
     paths:
       - "axolotl-apclient-windows-cross-portable.zip"
       - "build-cross/*.msi"
-
+sync-github:
+  stage: build
+  image: alpine:latest
+  before_script:
+    - apk add git
+  script:
+    - git remote add github https://oauth2:${GITHUB_TOKEN}@github.com/mooinglemur/axolotl.git
+    - git push github main:main
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 
