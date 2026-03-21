@@ -14,6 +14,44 @@ HintWindow::HintWindow(
       slot_to_game_(slot_to_game), get_global_slot_(get_global_slot),
       settings_(settings) {}
 
+static int NaturalCompare(const std::string &a, const std::string &b) {
+  if (a.empty() && b.empty())
+    return 0;
+  if (a.empty())
+    return -1;
+  if (b.empty())
+    return 1;
+
+  auto itA = a.begin(), itB = b.begin();
+  while (itA != a.end() && itB != b.end()) {
+    if (isdigit(*itA) && isdigit(*itB)) {
+      unsigned long numA = 0;
+      while (itA != a.end() && isdigit(*itA)) {
+        numA = numA * 10 + (*itA - '0');
+        ++itA;
+      }
+      unsigned long numB = 0;
+      while (itB != b.end() && isdigit(*itB)) {
+        numB = numB * 10 + (*itB - '0');
+        ++itB;
+      }
+      if (numA != numB)
+        return (numA < numB) ? -1 : 1;
+    } else {
+      char cA = (char)tolower(*itA);
+      char cB = (char)tolower(*itB);
+      if (cA != cB) {
+        return (cA < cB) ? -1 : 1;
+      }
+      ++itA;
+      ++itB;
+    }
+  }
+  if (itA == a.end() && itB == b.end())
+    return 0;
+  return (itA == a.end()) ? -1 : 1;
+}
+
 void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                         ImFont *preview_fallback_font) {
   if (!is_open_)
@@ -90,7 +128,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                   return items.at(h.item_id);
               return std::string("Unknown");
             };
-            delta = resolve_item(hA).compare(resolve_item(hB));
+            delta = NaturalCompare(resolve_item(hA), resolve_item(hB));
           } else if (spec->ColumnIndex == 1) { // Receiver
             std::string nA = player_names_.count(hA.receiver_slot)
                                  ? player_names_.at(hA.receiver_slot)
@@ -98,7 +136,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
             std::string nB = player_names_.count(hB.receiver_slot)
                                  ? player_names_.at(hB.receiver_slot)
                                  : std::to_string(hB.receiver_slot);
-            delta = nA.compare(nB);
+            delta = NaturalCompare(nA, nB);
           } else if (spec->ColumnIndex == 2) { // Location
             auto resolve_loc = [&](const Hint &h) {
               std::string game = "";
@@ -112,7 +150,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                   return locs.at(h.location_id);
               return std::string("Unknown");
             };
-            delta = resolve_loc(hA).compare(resolve_loc(hB));
+            delta = NaturalCompare(resolve_loc(hA), resolve_loc(hB));
           } else if (spec->ColumnIndex == 3) { // Finder
             std::string nA = player_names_.count(hA.finder_slot)
                                  ? player_names_.at(hA.finder_slot)
@@ -120,7 +158,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
             std::string nB = player_names_.count(hB.finder_slot)
                                  ? player_names_.at(hB.finder_slot)
                                  : std::to_string(hB.finder_slot);
-            delta = nA.compare(nB);
+            delta = NaturalCompare(nA, nB);
           } else if (spec->ColumnIndex == 4) { // Status
             delta = (int)hA.found - (int)hB.found;
           }
