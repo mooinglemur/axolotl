@@ -92,10 +92,25 @@ ConnectionSettings Config::Load() {
     YAML::Node config = YAML::LoadFile(path.string());
     if (config["server_url"])
       settings.server_url = config["server_url"].as<std::string>();
-    if (config["slot_name"])
-      settings.slot_name = config["slot_name"].as<std::string>();
-    if (config["password"])
-      settings.password = config["password"].as<std::string>();
+    if (config["slots"] && config["slots"].IsSequence()) {
+      for (const auto &slot_node : config["slots"]) {
+        SlotSettings slot;
+        if (slot_node["name"])
+          slot.name = slot_node["name"].as<std::string>();
+        if (slot_node["password"])
+          slot.password = slot_node["password"].as<std::string>();
+        if (slot_node["connect_on_launch"])
+          slot.connect_on_launch = slot_node["connect_on_launch"].as<bool>();
+        settings.slots.push_back(slot);
+      }
+    } else if (config["slot_name"]) {
+      // Migration
+      SlotSettings slot;
+      slot.name = config["slot_name"].as<std::string>();
+      if (config["password"])
+        slot.password = config["password"].as<std::string>();
+      settings.slots.push_back(slot);
+    }
     if (config["ui_scale"])
       settings.ui_scale = config["ui_scale"].as<float>();
     if (config["content_scale"])
@@ -136,8 +151,16 @@ void Config::Save(const ConnectionSettings &settings) {
   YAML::Emitter out;
   out << YAML::BeginMap;
   out << YAML::Key << "server_url" << YAML::Value << settings.server_url;
-  out << YAML::Key << "slot_name" << YAML::Value << settings.slot_name;
-  out << YAML::Key << "password" << YAML::Value << settings.password;
+  out << YAML::Key << "slots" << YAML::Value << YAML::BeginSeq;
+  for (const auto &slot : settings.slots) {
+    out << YAML::BeginMap;
+    out << YAML::Key << "name" << YAML::Value << slot.name;
+    out << YAML::Key << "password" << YAML::Value << slot.password;
+    out << YAML::Key << "connect_on_launch" << YAML::Value
+        << slot.connect_on_launch;
+    out << YAML::EndMap;
+  }
+  out << YAML::EndSeq;
   out << YAML::Key << "ui_scale" << YAML::Value << settings.ui_scale;
   out << YAML::Key << "content_scale" << YAML::Value << settings.content_scale;
   out << YAML::Key << "font_path" << YAML::Value << settings.font_path;

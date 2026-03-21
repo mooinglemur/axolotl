@@ -7,8 +7,13 @@
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
 #include "version.h"
-#include <cstdlib>
+#include <chrono>
 #include <iostream>
+#include <thread>
+
+#ifndef GIT_HASH
+#define GIT_HASH "unknown"
+#endif
 
 #include <GLFW/glfw3.h>
 #include <backends/imgui_impl_glfw.h>
@@ -36,6 +41,9 @@ Application::Application()
     : current_config_(Config::Load()), pending_config_(current_config_) {
   is_first_launch_ = !std::filesystem::exists(Config::GetConfigPath());
   ap_network_.on_history_updated = [this]() {};
+  for (const auto &slot : current_config_.slots) {
+    ap_network_.AddSession(slot.name);
+  }
 }
 
 Application::~Application() {
@@ -56,7 +64,15 @@ Application::~Application() {
 #ifdef _WIN32
   ix::uninitNetSystem();
 #endif
-  ap_network_.Disconnect();
+  // Clear all callbacks BEFORE disconnecting to avoid background thread
+  // wake-ups
+  ap_network_.on_history_updated = nullptr;
+  ap_network_.SetWakeUpCallback(nullptr);
+
+  // Explicitly disconnect all sessions
+  ap_network_.DisconnectAll();
+
+  // Clear windows (destroying UI objects)
   windows_.clear();
 
 #ifdef __APPLE__
@@ -76,6 +92,8 @@ Application::~Application() {
   if (window_) {
     glfwDestroyWindow(window_);
   }
+  // Stop logging GLFW errors right before termination
+  glfwSetErrorCallback(nullptr);
   glfwTerminate();
 }
 
@@ -126,12 +144,12 @@ bool Application::Initialize() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
-  std::string window_title = "Axolotl - Archipelago Client";
-#ifdef AXOLOTL_OFFICIAL_RELEASE
-  window_title += " (" AXOLOTL_VERSION_STRING ")";
-#elif defined(GIT_HASH)
-  window_title += " (" + std::string(GIT_HASH) + ")";
+  std::string window_title =
+      "Axolotl - Archipelago Text Client (" AXOLOTL_VERSION_STRING;
+#ifdef GIT_HASH
+  window_title += "-" + std::string(GIT_HASH);
 #endif
+  window_title += ")";
 
   window_ = glfwCreateWindow(current_config_.window_width,
                              current_config_.window_height,
@@ -170,6 +188,7 @@ bool Application::Initialize() {
   io.IniFilename = imgui_ini_path_.c_str();
 
   ap_network_.SetMaxHistory(current_config_.max_history_size);
+  ap_network_.SetWakeUpCallback([this]() { glfwPostEmptyEvent(); });
 
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -216,22 +235,7 @@ bool Application::Initialize() {
   ReloadFonts();
 
   // Create all windows at startup
-  AddWindow(std::make_unique<ChatWindow>(
-      ap_network_.GetChatHistory(),
-      [this](const std::string &msg) { ap_network_.SendChat(msg); },
-      [this]() { return ap_network_.GetState(); },
-      [this](const std::string &u, const std::string &s, const std::string &p) {
-        current_config_.server_url = u;
-        current_config_.slot_name = s;
-        current_config_.password = p;
-        Config::Save(current_config_);
-        ap_network_.Connect(u, s, p);
-      },
-      [this]() { ap_network_.Disconnect(); },
-      [this]() -> const std::map<int, std::string> & {
-        return ap_network_.GetPlayerNames();
-      },
-      current_config_));
+  AddWindow(std::make_unique<ChatWindow>(ap_network_, current_config_));
 
   AddWindow(std::make_unique<SettingsWindow>(
       current_config_,
@@ -243,25 +247,16 @@ bool Application::Initialize() {
       [this](const std::string &p) { SetPreviewFont(p); },
       [this](const std::string &p) { SetPreviewFallbackFont(p); }));
 
-  auto received = std::make_unique<ReceivedItemsWindow>(
-      ap_network_.GetReceivedItemsHistory(), current_config_);
-  AddWindow(std::move(received));
+  AddWindow(
+      std::make_unique<ReceivedItemsWindow>(ap_network_, current_config_));
 
-  AddWindow(std::make_unique<ItemFeedWindow>(
-      ap_network_.GetItemHistory(),
-      [this]() { return ap_network_.GetGlobalSlot(); }, current_config_, false,
-      "Full Feed"));
+  AddWindow(std::make_unique<ItemFeedWindow>(ap_network_, current_config_,
+                                             false, "Full Feed"));
 
-  AddWindow(std::make_unique<ItemFeedWindow>(
-      ap_network_.GetItemHistory(),
-      [this]() { return ap_network_.GetGlobalSlot(); }, current_config_, true,
-      "Personal Feed"));
+  AddWindow(std::make_unique<ItemFeedWindow>(ap_network_, current_config_, true,
+                                             "Personal Feed"));
 
-  AddWindow(std::make_unique<HintWindow>(
-      ap_network_.GetHints(), ap_network_.GetPlayerNames(),
-      ap_network_.GetItemNames(), ap_network_.GetLocationNames(),
-      ap_network_.GetEntranceNames(), ap_network_.GetSlotToGame(),
-      [this]() { return ap_network_.GetGlobalSlot(); }, current_config_));
+  AddWindow(std::make_unique<HintWindow>(ap_network_, current_config_));
 
   if (is_first_launch_) {
     current_config_.show_windows["Chat"] = true;
@@ -410,14 +405,24 @@ void Application::SetPreviewFallbackFont(const std::string &path) {
 
 void Application::Run() {
   while (!glfwWindowShouldClose(window_)) {
+    double t_start_frame = glfwGetTime();
 #ifdef __APPLE__
     id<CAMetalDrawable> drawable = nil;
     id<MTLCommandBuffer> commandBuffer = nil;
     MTLRenderPassDescriptor *renderPassDescriptor = nil;
 #endif
-    glfwPollEvents();
+    double t_start = glfwGetTime();
+    glfwWaitEventsTimeout(0.016); // 60 FPS base
+    double t_after_poll = glfwGetTime();
+
+    bool net_changed = ap_network_.Update();
+
+    // Render if network changed OR if we received a real window event (not a
+    // timeout)
+    bool should_render = net_changed || (t_after_poll - t_start < 0.015);
 
     if (fonts_reload_pending_) {
+      should_render = true;
       ReloadFonts();
       fonts_reload_pending_ = false;
     }
@@ -427,9 +432,11 @@ void Application::Run() {
       ap_network_.SetMaxHistory(current_config_.max_history_size);
       fonts_reload_pending_ = true;
       settings_changed_pending_ = false;
+      should_render = true;
     }
 
-    ap_network_.Update();
+    if (!should_render)
+      continue;
 
     // Start ImGui frame
 #ifdef __APPLE__
@@ -468,13 +475,17 @@ void Application::Run() {
                                   &dock_id_bottom);
 
       ImGuiID dock_id_top_left, dock_id_top_right;
-      ImGui::DockBuilderSplitNode(dock_id_top, ImGuiDir_Left, 0.5f,
+      ImGui::DockBuilderSplitNode(dock_id_top, ImGuiDir_Left, 0.25f,
                                   &dock_id_top_left, &dock_id_top_right);
 
-      ImGui::DockBuilderDockWindow("Chat", dock_id_top_left);
-      ImGui::DockBuilderDockWindow("Hints", dock_id_top_right);
-      ImGui::DockBuilderDockWindow("Full Feed", dock_id_bottom);
+      ImGuiID dock_id_bottom_left, dock_id_bottom_right;
+      ImGui::DockBuilderSplitNode(dock_id_bottom, ImGuiDir_Left, 0.5f,
+                                  &dock_id_bottom_left, &dock_id_bottom_right);
 
+      ImGui::DockBuilderDockWindow("Chat", dock_id_top_right);
+      ImGui::DockBuilderDockWindow("Item Feed", dock_id_top_left);
+      ImGui::DockBuilderDockWindow("Log", dock_id_bottom_left);
+      ImGui::DockBuilderDockWindow("Hints", dock_id_bottom_right);
       ImGui::DockBuilderFinish(dockspace_id);
     }
 
@@ -482,29 +493,29 @@ void Application::Run() {
     if (ImGui::BeginMainMenuBar()) {
       if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Settings")) {
-          for (auto &window : windows_) {
-            if (window->GetName() == "Settings") {
-              window->SetOpen(true);
-              break;
-            }
+          // Open Settings
+          for (auto &w : windows_) {
+            if (w->GetName() == "Settings")
+              w->SetOpen(true);
           }
         }
-        if (ImGui::MenuItem("Exit")) {
-          glfwSetWindowShouldClose(window_, 1);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Exit", "Alt+F4")) {
+          glfwSetWindowShouldClose(window_, true);
         }
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Windows")) {
         for (auto &window : windows_) {
-          bool is_open = window->GetOpen();
-          if (ImGui::MenuItem(window->GetName().c_str(), nullptr, &is_open)) {
-            window->SetOpen(is_open);
+          bool open = window->GetOpen();
+          if (ImGui::MenuItem(window->GetName().c_str(), NULL, &open)) {
+            window->SetOpen(open);
           }
         }
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("About Axolotl")) {
+        if (ImGui::MenuItem("About")) {
           show_about_ = true;
         }
         ImGui::EndMenu();
@@ -513,38 +524,51 @@ void Application::Run() {
     }
 
     if (show_about_) {
-      ImGui::OpenPopup("About Axolotl");
+      ImGui::OpenPopup("About Axolotl Archipelago Client");
     }
 
-    if (ImGui::BeginPopupModal("About Axolotl", &show_about_,
+    if (ImGui::BeginPopupModal("About Axolotl Archipelago Client", &show_about_,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
       ImGui::Text("Axolotl Archipelago Text Client");
-      ImGui::Separator();
-      ImGui::Text("Version: %s", AXOLOTL_VERSION_STRING);
-#ifdef GIT_HASH
-      ImGui::Text("Git Hash: %s", GIT_HASH);
-#else
-      ImGui::Text("Git Hash: unknown");
-#endif
+      ImGui::Text("Version: %s (%s)", AXOLOTL_VERSION_STRING, GIT_HASH);
       ImGui::Text("(c) 2026 MooingLemur");
       ImGui::Separator();
+      ImGui::Text("A modern, multi-slot capable Archipelago text client.");
+      ImGui::Text("Built with ImGui and IXWebSocket.");
+      ImGui::Spacing();
+      ImGui::Text("Credits:");
+      ImGui::BulletText("ImGui by ocornut");
+      ImGui::BulletText("IXWebSocket by machinezone");
+      ImGui::BulletText("Archipelago by the AP Team");
 
-      ImGui::Text("Axolotl is licensed under the ");
+      ImGui::Separator();
+      ImGui::Text("Licenses:");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("Axolotl (");
       ImGui::SameLine(0, 0);
       RenderLink(
-          "MIT License",
+          "MIT",
           "https://github.com/MooingLemur/axolotl/blob/main/LICENSE.txt");
       ImGui::SameLine(0, 0);
-      ImGui::Text(".");
-
-      ImGui::Text("Third-party libraries used:");
-
+      ImGui::Text(")");
       ImGui::Bullet();
       ImGui::SameLine();
       ImGui::Text("Dear ImGui (");
       ImGui::SameLine(0, 0);
       RenderLink("MIT",
                  "https://github.com/ocornut/imgui/blob/master/LICENSE.txt");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("IXWebSocket (");
+      ImGui::SameLine(0, 0);
+      RenderLink(
+          "BSD 3-Clause",
+          "https://github.com/machinezone/IXWebSocket/blob/master/LICENSE.txt");
       ImGui::SameLine(0, 0);
       ImGui::Text(")");
 
@@ -563,16 +587,6 @@ void Application::Run() {
       ImGui::SameLine(0, 0);
       RenderLink("MIT",
                  "https://github.com/jbeder/yaml-cpp/blob/master/LICENSE");
-      ImGui::SameLine(0, 0);
-      ImGui::Text(")");
-
-      ImGui::Bullet();
-      ImGui::SameLine();
-      ImGui::Text("IXWebSocket (");
-      ImGui::SameLine(0, 0);
-      RenderLink(
-          "BSD 3-Clause",
-          "https://github.com/machinezone/IXWebSocket/blob/master/LICENSE.txt");
       ImGui::SameLine(0, 0);
       ImGui::Text(")");
 
@@ -621,6 +635,14 @@ void Application::Run() {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(window_);
 #endif
+
+    // Cap at 60 FPS to be a "polite" desktop app
+    double t_cap_end = glfwGetTime();
+    double frame_dt = t_cap_end - t_start_frame;
+    if (frame_dt < 0.0166) {
+      std::this_thread::sleep_for(
+          std::chrono::duration<double>(0.0166 - frame_dt));
+    }
   }
 
   // Workaround for Wayland segmentation fault on exit:

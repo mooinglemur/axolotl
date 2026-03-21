@@ -1,13 +1,15 @@
 #pragma once
 #include "ArchipelagoNetwork.h"
 #include <imgui.h>
+#include <set>
 #include <string>
 #include <vector>
 
 struct ConnectionSettings;
 
 inline void RenderRichMessageWrapped(const char *timestamp_str,
-                                     const std::vector<MessagePart> &parts) {
+                                     const std::vector<MessagePart> &parts,
+                                     const std::set<int> *my_slots = nullptr) {
   if (timestamp_str && timestamp_str[0] != '\0') {
     ImGui::TextDisabled("%s", timestamp_str);
     ImGui::SameLine(0, 4.0f);
@@ -20,7 +22,11 @@ inline void RenderRichMessageWrapped(const char *timestamp_str,
 
   for (size_t i = 0; i < parts.size(); ++i) {
     const auto &part = parts[i];
-    ImVec4 color = ImGui::ColorConvertU32ToFloat4(part.color);
+    uint32_t use_color = part.color;
+    if (my_slots && part.player_id != -1) {
+      use_color = my_slots->count(part.player_id) ? 0xFFFF00FF : 0xFFCCCCCC;
+    }
+    ImVec4 color = ImGui::ColorConvertU32ToFloat4(use_color);
     ImGui::PushStyleColor(ImGuiCol_Text, color);
 
     const char *word_start = part.text.c_str();

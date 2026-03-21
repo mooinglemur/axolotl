@@ -27,17 +27,77 @@ static double GetCurrentTimestamp() {
          1000000.0;
 }
 
-ArchipelagoNetwork::ArchipelagoNetwork() {
+// --- ArchipelagoSession ---
+
+ArchipelagoSession::ArchipelagoSession(ArchipelagoNetwork *manager,
+                                       const std::string &name)
+    : manager_(manager), name_(name) {
   webSocket_.setOnMessageCallback(
       [this](const ix::WebSocketMessagePtr &msg) { HandleMessage(msg); });
 }
 
-ArchipelagoNetwork::~ArchipelagoNetwork() {
-  webSocket_.setOnMessageCallback(nullptr);
+ArchipelagoSession::~ArchipelagoSession() {
   Disconnect();
+  webSocket_.setOnMessageCallback(nullptr);
 }
 
-void ArchipelagoNetwork::HandleMessage(const ix::WebSocketMessagePtr &msg) {
+void ArchipelagoSession::Connect(const std::string &url,
+                                 const std::string &password) {
+  original_url_ = url;
+  password_ = password;
+  tried_wss_ = false;
+  tried_ws_ = false;
+  pending_fallback_ = false;
+  connection_error_time_ = -1.0;
+
+  metadata_ = manager_->GetOrCreateMetadata(url);
+
+  std::string full_url = url;
+  if (full_url.find("://") == std::string::npos) {
+    tried_wss_ = true;
+    full_url = "wss://" + full_url;
+  }
+
+  webSocket_.setUrl(full_url);
+  webSocket_.enableAutomaticReconnection();
+  webSocket_.enablePerMessageDeflate();
+
+  std::string user_agent = "AxolotlAPTextClient/";
+  user_agent += AXOLOTL_VERSION_STRING;
+#ifdef GIT_HASH
+  user_agent += " (git " + std::string(GIT_HASH) + ")";
+#endif
+  webSocket_.setExtraHeaders({{"User-Agent", user_agent}});
+
+  auto ca_path = Config::GetCaBundlePath();
+  if (std::filesystem::exists(ca_path)) {
+    ix::SocketTLSOptions tls_options;
+    tls_options.caFile = ca_path.string();
+    webSocket_.setTLSOptions(tls_options);
+  }
+
+  webSocket_.start();
+  user_wants_connection_ = true;
+}
+
+void ArchipelagoSession::Disconnect() {
+  webSocket_.stop();
+  is_connected_ = false;
+  user_wants_connection_ = false;
+  manager_->OnStatusMessage(this, "Disconnected by user");
+}
+
+ArchipelagoSession::State ArchipelagoSession::GetState() const {
+  auto readyState = webSocket_.getReadyState();
+  if (readyState == ix::ReadyState::Open && is_connected_) {
+    return State::Connected;
+  } else if (user_wants_connection_) {
+    return State::Connecting;
+  }
+  return State::Disconnected;
+}
+
+void ArchipelagoSession::HandleMessage(const ix::WebSocketMessagePtr &msg) {
   if (msg->type == ix::WebSocketMessageType::Message) {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     try {
@@ -46,35 +106,30 @@ void ArchipelagoNetwork::HandleMessage(const ix::WebSocketMessagePtr &msg) {
         for (auto &packet : j) {
           message_queue_.push({packet, GetCurrentTimestamp()});
         }
+        manager_->WakeUp();
       }
     } catch (const std::exception &e) {
       std::lock_guard<std::mutex> status_lock(status_mutex_);
       status_messages_.push({"JSON parse error: " + std::string(e.what()),
                              GetCurrentTimestamp()});
+      manager_->WakeUp(); // Added WakeUp call here
     }
   } else if (msg->type == ix::WebSocketMessageType::Open) {
     connection_error_time_ = -1.0;
-    std::lock_guard<std::mutex> status_lock(status_mutex_);
-    status_messages_.push({"WebSocket connected to " + webSocket_.getUrl(),
-                           GetCurrentTimestamp()});
+    manager_->OnStatusMessage(this,
+                              "WebSocket connected to " + webSocket_.getUrl());
   } else if (msg->type == ix::WebSocketMessageType::Close) {
     if (connection_error_time_ <= 0)
       connection_error_time_ = GetCurrentTimestamp();
-    std::lock_guard<std::mutex> status_lock(status_mutex_);
-    status_messages_.push({"WebSocket disconnected from " + webSocket_.getUrl(),
-                           GetCurrentTimestamp()});
     is_connected_ = false;
+    manager_->OnStatusMessage(this, "WebSocket disconnected from " +
+                                        webSocket_.getUrl());
   } else if (msg->type == ix::WebSocketMessageType::Error) {
     if (connection_error_time_ <= 0)
       connection_error_time_ = GetCurrentTimestamp();
-    {
-      std::lock_guard<std::mutex> status_lock(status_mutex_);
-      status_messages_.push({"WebSocket error: " + msg->errorInfo.reason +
-                                 " (URL: " + webSocket_.getUrl() + ")",
-                             GetCurrentTimestamp()});
-    }
+    manager_->OnStatusMessage(this,
+                              "WebSocket error: " + msg->errorInfo.reason);
 
-    // Only fallback if it's likely an SSL/TLS error
     std::string reason = msg->errorInfo.reason;
     std::transform(reason.begin(), reason.end(), reason.begin(), ::tolower);
     bool is_tls_error = (reason.find("ssl") != std::string::npos ||
@@ -96,33 +151,30 @@ void ArchipelagoNetwork::HandleMessage(const ix::WebSocketMessagePtr &msg) {
   }
 }
 
-void ArchipelagoNetwork::Update() {
-  // Handle deferred fallback
+bool ArchipelagoSession::Update() {
+  bool changed = false;
   if (pending_fallback_) {
-    {
-      std::lock_guard<std::mutex> status_lock(status_mutex_);
-      status_messages_.push({"Executing deferred fallback to " + pending_url_,
-                             GetCurrentTimestamp()});
-    }
+    manager_->OnStatusMessage(this,
+                              "Executing deferred fallback to " + pending_url_);
     pending_fallback_ = false;
     webSocket_.stop();
     webSocket_.setUrl(pending_url_);
     webSocket_.start();
+    changed = true;
   }
 
-  // Handle reconnection timeout (5 minutes)
+  // Timeout logic
   if (user_wants_connection_ && !is_connected_ && connection_error_time_ > 0) {
     if (GetCurrentTimestamp() - connection_error_time_ > 300.0) {
       Disconnect();
       RichMessage rm;
       rm.timestamp = GetCurrentTimestamp();
-      rm.parts.push_back({"[System] Reconnection attempts timed out after 5 "
-                          "minutes. Please reconnect manually.",
-                          0xFF0000FF}); // Red
-      CheckDayChange(chat_history_, rm.timestamp, last_chat_day_);
-      chat_history_.push_back(rm);
-      if (on_history_updated)
-        on_history_updated();
+      rm.parts.push_back(
+          {"[System][" + name_ +
+               "] Reconnection attempts timed out after 5 minutes.",
+           0xFF0000FF});
+      manager_->OnGlobalMessage(this, rm, false);
+      changed = true;
     }
   }
 
@@ -132,18 +184,16 @@ void ArchipelagoNetwork::Update() {
     std::lock_guard<std::mutex> status_lock(status_mutex_);
     std::swap(local_status, status_messages_);
   }
-
+  if (!local_status.empty())
+    changed = true;
   while (!local_status.empty()) {
     auto q_status = local_status.front();
     local_status.pop();
-    double msg_time = q_status.timestamp;
-
     RichMessage rm;
-    rm.timestamp = msg_time;
+    rm.timestamp = q_status.timestamp;
     rm.parts.push_back(
-        {"[System] " + q_status.message, 0xFFAAAAAA}); // Gray Opaque (AABBGGRR)
-    CheckDayChange(chat_history_, msg_time, last_chat_day_);
-    chat_history_.push_back(rm);
+        {"[System][" + name_ + "] " + q_status.message, 0xFFAAAAAA});
+    manager_->OnGlobalMessage(this, rm, false);
   }
 
   std::queue<QueuedPacket> local_queue;
@@ -152,19 +202,15 @@ void ArchipelagoNetwork::Update() {
     std::swap(local_queue, message_queue_);
   }
 
-  bool history_changed = false;
-  if (!chat_history_.empty() || !item_history_.empty() ||
-      !received_items_history_.empty()) {
-    history_changed = true;
-  }
-
+  if (!local_queue.empty())
+    changed = true;
   while (!local_queue.empty()) {
     auto q_packet = local_queue.front();
     local_queue.pop();
     json &packet = q_packet.packet;
     double msg_time = q_packet.timestamp;
-
     std::string cmd = packet["cmd"];
+
     if (cmd == "RoomInfo") {
       SendConnect();
     } else if (cmd == "Connected") {
@@ -172,21 +218,10 @@ void ArchipelagoNetwork::Update() {
       connection_error_time_ = -1.0;
       local_slot_ = packet["slot"].get<int>();
       team_ = packet.contains("team") ? packet["team"].get<int>() : 0;
-
-      // Always clear received items on NEW connection (server sends them again)
       received_items_history_.clear();
       last_received_day_ = -1;
 
-      if (clear_item_history_pending_) {
-        item_history_.clear();
-        hints_.clear();
-        player_names_.clear();
-        last_item_day_ = -1;
-        clear_item_history_pending_ = false;
-      }
-
-      // Store player names
-      if (packet.contains("players")) {
+      if (packet.contains("players") && metadata_) {
         for (auto &player : packet["players"]) {
           int p_team = player.contains("team") ? player["team"].get<int>() : 0;
           int p_slot = player["slot"].get<int>();
@@ -195,24 +230,20 @@ void ArchipelagoNetwork::Update() {
                   ? player["alias"].get<std::string>()
                   : (player.contains("name") ? player["name"].get<std::string>()
                                              : "Unknown");
-
-          player_names_[(p_team << 16) | p_slot] = p_name;
-          // Also store just by slot for team 0 (legacy/simple)
-          if (p_team == 0) {
-            player_names_[p_slot] = p_name;
-          }
+          metadata_->player_names[(p_team << 16) | p_slot] = p_name;
+          if (p_team == 0)
+            metadata_->player_names[p_slot] = p_name;
         }
       }
 
-      // Store slot-to-game mapping
-      if (packet.contains("slot_info")) {
+      if (packet.contains("slot_info") && metadata_) {
         for (auto &[slot_str, slot_data] : packet["slot_info"].items()) {
           try {
             int slot_id = std::stoi(slot_str);
             if (slot_data.contains("game")) {
               std::string g_name = slot_data["game"].get<std::string>();
-              slot_to_game_[slot_id] = g_name;
-              slot_to_game_[(team_ << 16) | slot_id] = g_name;
+              metadata_->slot_to_game[slot_id] = g_name;
+              metadata_->slot_to_game[(team_ << 16) | slot_id] = g_name;
             }
           } catch (...) {
           }
@@ -225,61 +256,51 @@ void ArchipelagoNetwork::Update() {
 
       RichMessage rm;
       rm.timestamp = msg_time;
-      rm.parts.push_back({"Connected as " + slot_ + " (Slot " +
-                              std::to_string(local_slot_) + ", Team " +
-                              std::to_string(team_) + ")",
-                          0xFF00FF00}); // Green Opaque (AABBGGRR)
-      CheckDayChange(chat_history_, msg_time, last_chat_day_);
-      chat_history_.push_back(rm);
-      history_changed = true;
-    } else if (cmd == "DataPackage") {
+      rm.parts.push_back(
+          {name_ + " connected (Slot " + std::to_string(local_slot_) + ")",
+           0xFF00FF00});
+      manager_->OnGlobalMessage(this, rm, false);
+
+    } else if (cmd == "DataPackage" && metadata_) {
       auto &dp = packet["data"];
       if (dp.contains("games")) {
         for (auto &[game_name, game_data] : dp["games"].items()) {
           if (game_data.contains("item_name_to_id")) {
             for (auto &[item_name, item_id] :
-                 game_data["item_name_to_id"].items()) {
-              item_names_[game_name][item_id.get<int64_t>()] = item_name;
-            }
+                 game_data["item_name_to_id"].items())
+              metadata_->item_names[game_name][item_id.get<int64_t>()] =
+                  item_name;
           }
           if (game_data.contains("location_name_to_id")) {
             for (auto &[loc_name, loc_id] :
-                 game_data["location_name_to_id"].items()) {
-              location_names_[game_name][loc_id.get<int64_t>()] = loc_name;
-            }
+                 game_data["location_name_to_id"].items())
+              metadata_->location_names[game_name][loc_id.get<int64_t>()] =
+                  loc_name;
           }
           if (game_data.contains("entrance_name_to_id")) {
             for (auto &[ent_name, ent_id] :
-                 game_data["entrance_name_to_id"].items()) {
-              entrance_names_[game_name][ent_id.get<int64_t>()] = ent_name;
-            }
+                 game_data["entrance_name_to_id"].items())
+              metadata_->entrance_names[game_name][ent_id.get<int64_t>()] =
+                  ent_name;
           }
         }
       }
-      {
-        std::lock_guard<std::mutex> status_lock(status_mutex_);
-        size_t total_items = 0;
-        for (auto const &[game, items] : item_names_)
-          total_items += items.size();
-        status_messages_.push({"Received Data Package (" +
-                                   std::to_string(total_items) + " items)",
-                               msg_time});
-      }
+      metadata_->data_package_received = true;
       ResolvePendingItems();
-      history_changed = true;
+      manager_->ReResolveHistory();
     } else if (cmd == "ConnectionRefused") {
       if (connection_error_time_ <= 0)
         connection_error_time_ = GetCurrentTimestamp();
       RichMessage rm;
       rm.timestamp = msg_time;
-      rm.parts.push_back({"Connection refused: " + packet.dump(),
-                          0xFF0000FF}); // Red Opaque (AABBGGRR)
-      CheckDayChange(chat_history_, msg_time, last_chat_day_);
-      chat_history_.push_back(rm);
-      history_changed = true;
+      rm.parts.push_back(
+          {"Connection refused for " + name_ + ": " + packet.dump(),
+           0xFF0000FF});
+      manager_->OnGlobalMessage(this, rm, false);
     } else if (cmd == "PrintJSON") {
       RichMessage rm;
       rm.timestamp = msg_time;
+      rm.source_slot = name_;
       bool is_item_event = false;
       if (packet.contains("type")) {
         std::string type = packet["type"];
@@ -292,21 +313,22 @@ void ArchipelagoNetwork::Update() {
             part.contains("type") ? part["type"].get<std::string>() : "text";
         std::string content =
             part.contains("text") ? part["text"].get<std::string>() : "";
-        uint32_t color = 0xFFFFFFFF; // White Opaque (AABBGGRR)
+        uint32_t color = 0xFFFFFFFF;
 
         if (type == "player_id") {
           try {
             int pid = (int)get_as_id(content);
-            int global_id =
-                (player_names_.count(pid)) ? pid : ((team_ << 16) | pid);
-            if (player_names_.count(global_id))
-              content = player_names_[global_id];
-
-            if (pid == local_slot_) {
-              color = 0xFFFF00FF; // Magenta Opaque (AABBGGRR)
-            } else {
-              color = 0xFFCCCCCC; // Slightly Gray Opaque (AABBGGRR)
+            int global_id = -1;
+            if (metadata_) {
+              global_id = (metadata_->player_names.count(pid))
+                              ? pid
+                              : ((team_ << 16) | pid);
+              if (metadata_->player_names.count(global_id))
+                content = metadata_->player_names[global_id];
             }
+            color = (pid == local_slot_) ? 0xFFFF00FF : 0xFFCCCCCC;
+            rm.parts.push_back({content, color, global_id});
+            continue;
           } catch (...) {
           }
         } else if (type == "item_id") {
@@ -317,21 +339,17 @@ void ArchipelagoNetwork::Update() {
             content = ResolveItemName(iid, sid);
             if (content.empty()) {
               content = "Unknown Item " + std::to_string(iid);
-              if (is_item_event) {
+              if (is_item_event)
                 pending_items_.push_back({iid, 0, sid, flags, false});
-              }
             }
-
-            // Colors based on flags
-            if (flags & 0x01) {        // Progression
-              color = 0xFFFF5FAF;      // Purple Opaque (AABBGGRR)
-            } else if (flags & 0x02) { // Useful
-              color = 0xFFED9564;      // Blue Opaque (AABBGGRR)
-            } else if (flags & 0x04) { // Trap
-              color = 0xFF0045FF;      // Red Opaque (AABBGGRR)
-            } else {                   // Junk
-              color = 0xFFFFFF00;      // Cyan Opaque (AABBGGRR)
-            }
+            if (flags & 0x01)
+              color = 0xFFFF5FAF;
+            else if (flags & 0x02)
+              color = 0xFFED9564;
+            else if (flags & 0x04)
+              color = 0xFF0045FF;
+            else
+              color = 0xFFFFFF00;
           } catch (...) {
           }
         } else if (type == "location_id") {
@@ -341,7 +359,7 @@ void ArchipelagoNetwork::Update() {
             std::string loc_name = ResolveLocationName(lid, sid);
             if (!loc_name.empty())
               content = loc_name;
-            color = 0xFF00FF00; // Green Opaque (AABBGGRR)
+            color = 0xFF00FF00;
           } catch (...) {
           }
         }
@@ -360,21 +378,18 @@ void ArchipelagoNetwork::Update() {
                            : (packet.contains("player") ? packet["player"]
                                                         : json(-1))));
             rm.receiver_slot = (r_slot != -1) ? ((team_ << 16) | r_slot) : -1;
-
             int s_slot = (int)get_as_id(
                 packet.contains("item") && packet["item"].contains("player")
                     ? packet["item"]["player"]
                     : json(-1));
             rm.sender_slot = (s_slot != -1) ? ((team_ << 16) | s_slot) : -1;
-
             if (packet.contains("item") &&
                 packet["item"].contains("location")) {
               int64_t loc_id = get_as_id(packet["item"]["location"]);
               for (auto &hint : hints_) {
                 if (hint.location_id == loc_id &&
-                    hint.finder_slot == rm.sender_slot) {
+                    hint.finder_slot == rm.sender_slot)
                   hint.found = true;
-                }
               }
             }
           } else if (type == "Hint") {
@@ -405,6 +420,7 @@ void ArchipelagoNetwork::Update() {
               h.item_flags = packet["item"].contains("flags")
                                  ? packet["item"]["flags"].get<int>()
                                  : 0;
+              h.source_slot = name_;
               hints_.push_back(h);
 
               rm.receiver_slot = h.receiver_slot;
@@ -413,19 +429,14 @@ void ArchipelagoNetwork::Update() {
             }
           }
         }
-        CheckDayChange(item_history_, msg_time, last_item_day_);
-        item_history_.push_back(rm);
+        manager_->OnGlobalMessage(this, rm, true);
       } else {
-        CheckDayChange(chat_history_, msg_time, last_chat_day_);
-        chat_history_.push_back(rm);
+        manager_->OnGlobalMessage(this, rm, false);
       }
-      history_changed = true;
     } else if (cmd == "ReceivedItems") {
       int index = packet.contains("index") ? packet["index"].get<int>() : 0;
-      if (index == 0) {
+      if (index == 0)
         received_items_history_.clear();
-        last_received_day_ = -1;
-      }
       for (const auto &item : packet["items"]) {
         int64_t iid = get_as_id(item["item"]);
         int flags = item.contains("flags") ? item["flags"].get<int>() : 0;
@@ -434,13 +445,14 @@ void ArchipelagoNetwork::Update() {
 
         RichMessage rm;
         rm.timestamp = msg_time;
-        uint32_t color = 0xFFFFFF00; // Junk/Cyan default Opaque (AABBGGRR)
+        rm.source_slot = name_;
+        uint32_t color = 0xFFFFFF00;
         if (flags & 0x01)
-          color = 0xFFFF5FAF; // Purple
+          color = 0xFFFF5FAF;
         else if (flags & 0x02)
-          color = 0xFFED9564; // Blue
+          color = 0xFFED9564;
         else if (flags & 0x04)
-          color = 0xFF0045FF; // Red
+          color = 0xFF0045FF;
 
         if (name.empty()) {
           pending_items_.push_back({iid, sid, local_slot_, flags, true});
@@ -448,12 +460,10 @@ void ArchipelagoNetwork::Update() {
         } else {
           rm.parts.push_back({name, color});
         }
-        CheckDayChange(received_items_history_, msg_time, last_received_day_);
         received_items_history_.push_back(rm);
+        manager_->SetItemsDirty();
       }
-      history_changed = true;
     } else if (cmd == "Retrieved") {
-      int hint_count = 0;
       if (packet.contains("keys") && packet["keys"].is_object()) {
         auto &keys = packet["keys"];
         std::string hint_key = "_read_hints_" + std::to_string(team_) + "_" +
@@ -485,15 +495,12 @@ void ArchipelagoNetwork::Update() {
                                                            : json(-1))));
 
                 if (h_val.contains("entrance")) {
-                  if (h_val["entrance"].is_string()) {
+                  if (h_val["entrance"].is_string())
                     h.entrance_name = h_val["entrance"].get<std::string>();
-                  } else {
-                    int64_t eid = get_as_id(h_val["entrance"]);
-                    h.entrance_name = ResolveEntranceName(eid, f_slot);
-                  }
+                  else
+                    h.entrance_name = ResolveEntranceName(
+                        get_as_id(h_val["entrance"]), f_slot);
                 }
-
-                // Apply team offset to slot IDs
                 h.receiver_slot =
                     (r_slot != -1) ? ((team_ << 16) | r_slot) : -1;
                 h.finder_slot = (f_slot != -1) ? ((team_ << 16) | f_slot) : -1;
@@ -505,250 +512,23 @@ void ArchipelagoNetwork::Update() {
                         ? h_val["item_flags"].get<int>()
                         : (h_val.contains("flags") ? h_val["flags"].get<int>()
                                                    : 0);
-
+                h.source_slot = name_;
                 hints_.push_back(h);
-                hint_count++;
+                manager_->SetHintsDirty();
               } catch (...) {
               }
             }
           }
         }
       }
-      {
-        std::lock_guard<std::mutex> status_lock(status_mutex_);
-        status_messages_.push({"Retrieved " + std::to_string(hint_count) +
-                                   " hints from server storage",
-                               msg_time});
-      }
-      history_changed = true;
     }
   }
-
-  if (max_history_size_ > 0) {
-    if ((int)chat_history_.size() > max_history_size_) {
-      chat_history_.erase(chat_history_.begin(),
-                          chat_history_.begin() +
-                              (chat_history_.size() - max_history_size_));
-      history_changed = true;
-    }
-    if ((int)item_history_.size() > max_history_size_) {
-      item_history_.erase(item_history_.begin(),
-                          item_history_.begin() +
-                              (item_history_.size() - max_history_size_));
-      history_changed = true;
-    }
-    if ((int)received_items_history_.size() > max_history_size_) {
-      received_items_history_.erase(
-          received_items_history_.begin(),
-          received_items_history_.begin() +
-              (received_items_history_.size() - max_history_size_));
-      history_changed = true;
-    }
-  }
-
-  if (history_changed && on_history_updated) {
-    on_history_updated();
-  }
+  return changed;
 }
 
-void ArchipelagoNetwork::SendChat(const std::string &message) {
-  if (message == "/debug fakefeed") {
-    item_history_.clear();
-    last_item_day_ = -1;
-
-    if (item_names_.empty() || player_names_.empty()) {
-      RichMessage rm;
-      rm.timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
-                         std::chrono::system_clock::now().time_since_epoch())
-                         .count() /
-                     1000000.0;
-      rm.parts.push_back({"Not connected or no data package.", 0xFF0000FF});
-      item_history_.push_back(rm);
-      if (on_history_updated)
-        on_history_updated();
-      return;
-    }
-
-    std::vector<std::string> p_names;
-    std::vector<int> p_slots;
-    for (auto const &[id, name] : player_names_) {
-      if (name != "Unknown" && name != "Server") {
-        p_names.push_back(name);
-        p_slots.push_back(id);
-      }
-    }
-    if (p_names.empty()) {
-      p_names.push_back("Player");
-      p_slots.push_back(1);
-    }
-
-    std::vector<std::string> i_names;
-    for (auto const &[gn, items] : item_names_) {
-      for (auto const &[id, name] : items) {
-        i_names.push_back(name);
-      }
-    }
-
-    double now = std::chrono::duration_cast<std::chrono::microseconds>(
-                     std::chrono::system_clock::now().time_since_epoch())
-                     .count() /
-                 1000000.0;
-    double start_time = now - (72.0 * 3600.0);
-
-    int num_fakes = 100;
-    double time_step = (now - start_time) / num_fakes;
-
-    for (int i = 0; i < num_fakes; ++i) {
-      double t = start_time + (i * time_step);
-      CheckDayChange(item_history_, t, last_item_day_);
-
-      int s_idx = rand() % p_names.size();
-      int r_idx = rand() % p_names.size();
-      int i_idx = rand() % i_names.size();
-
-      RichMessage rm;
-      rm.timestamp = t;
-      rm.sender_slot = p_slots[s_idx];
-      rm.receiver_slot = p_slots[r_idx];
-
-      uint32_t name_color =
-          0xFFFF00FF; // Magenta default (will just use one color for debug)
-      uint32_t item_color = 0xFFED9564; // Blue
-
-      rm.parts.push_back({p_names[s_idx], name_color});
-      rm.parts.push_back({" found ", 0xFFFFFFFF});
-      rm.parts.push_back({i_names[i_idx], item_color});
-      rm.parts.push_back({" for ", 0xFFFFFFFF});
-      rm.parts.push_back({p_names[r_idx], name_color});
-
-      item_history_.push_back(rm);
-    }
-
-    if (on_history_updated)
-      on_history_updated();
-
-    return;
-  }
-
+void ArchipelagoSession::SendConnect() {
   json packet = json::array();
-  packet.push_back({{"cmd", "Say"}, {"text", message}});
-  webSocket_.send(packet.dump());
-}
-
-std::string ArchipelagoNetwork::ResolveItemName(int64_t id, int slot) {
-  std::string game = "";
-  if (slot != -1 && slot_to_game_.count(slot)) {
-    game = slot_to_game_[slot];
-  }
-
-  if (!game.empty() && item_names_.count(game) && item_names_[game].count(id)) {
-    return item_names_[game][id];
-  }
-
-  // Fallback: search all games if game is unknown or item not found in that
-  // game
-  for (auto const &[gn, items] : item_names_) {
-    if (items.count(id))
-      return items.at(id);
-  }
-
-  return "";
-}
-
-std::string ArchipelagoNetwork::ResolveLocationName(int64_t id, int slot) {
-  std::string game = "";
-  if (slot != -1 && slot_to_game_.count(slot)) {
-    game = slot_to_game_[slot];
-  }
-
-  if (!game.empty() && location_names_.count(game) &&
-      location_names_[game].count(id)) {
-    return location_names_[game][id];
-  }
-
-  // Fallback: search all games
-  for (auto const &[gn, locations] : location_names_) {
-    if (locations.count(id))
-      return locations.at(id);
-  }
-
-  return "";
-}
-
-std::string ArchipelagoNetwork::ResolveEntranceName(int64_t id, int slot) {
-  if (id == 0)
-    return "";
-
-  std::string game = "";
-  if (slot != -1 && slot_to_game_.count(slot)) {
-    game = slot_to_game_[slot];
-  }
-
-  if (!game.empty() && entrance_names_.count(game) &&
-      entrance_names_[game].count(id)) {
-    return entrance_names_[game][id];
-  }
-
-  // Fallback: search all games
-  for (auto const &[gn, entrances] : entrance_names_) {
-    if (entrances.count(id))
-      return entrances.at(id);
-  }
-
-  return "";
-}
-
-void ArchipelagoNetwork::ResolvePendingItems() {
-  for (auto &pending : pending_items_) {
-    std::string name = ResolveItemName(pending.id, pending.receiver);
-    if (!name.empty()) {
-      if (pending.is_received_packet) {
-        std::string search = "Unknown Item " + std::to_string(pending.id);
-        for (auto &rm : received_items_history_) {
-          for (auto &part : rm.parts) {
-            if (part.text == search) {
-              part.text = name;
-            }
-          }
-        }
-      } else {
-        std::string search = "Unknown Item " + std::to_string(pending.id);
-        for (auto &rm : item_history_) {
-          for (auto &part : rm.parts) {
-            size_t pos = part.text.find(search);
-            if (pos != std::string::npos) {
-              part.text.replace(pos, search.length(), name);
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-void ArchipelagoNetwork::SendGetDataPackage() {
-  json packet = json::array();
-  packet.push_back({{"cmd", "GetDataPackage"}});
-  webSocket_.send(packet.dump());
-}
-
-void ArchipelagoNetwork::SendSync() {
-  json packet = json::array();
-  packet.push_back({{"cmd", "Sync"}});
-  webSocket_.send(packet.dump());
-}
-
-void ArchipelagoNetwork::SendGetHints() {
-  json packet = json::array();
-  std::string hint_key = "_read_hints_" + std::to_string(team_) + "_" +
-                         std::to_string(local_slot_);
-  packet.push_back({{"cmd", "Get"}, {"keys", {hint_key}}});
-  webSocket_.send(packet.dump());
-}
-
-void ArchipelagoNetwork::SendConnect() {
-  json packet = json::array();
-  std::string uuid = "axolotl-client";
+  std::string uuid = "axolotl-client-" + name_;
 #ifdef GIT_HASH
   uuid += "-" + std::string(GIT_HASH);
 #endif
@@ -756,7 +536,7 @@ void ArchipelagoNetwork::SendConnect() {
       {{"cmd", "Connect"},
        {"password", password_},
        {"game", ""},
-       {"name", slot_},
+       {"name", name_},
        {"uuid", uuid},
        {"version",
         {{"class", "Version"}, {"major", 0}, {"minor", 5}, {"build", 1}}},
@@ -765,74 +545,319 @@ void ArchipelagoNetwork::SendConnect() {
   webSocket_.send(packet.dump());
 }
 
-void ArchipelagoNetwork::Connect(const std::string &url,
-                                 const std::string &slot,
-                                 const std::string &password) {
-  if (url != last_requested_url_ || slot != last_requested_slot_) {
-    clear_item_history_pending_ = true;
-  }
-  last_requested_url_ = url;
-  last_requested_slot_ = slot;
-
-  original_url_ = url;
-  slot_ = slot;
-  password_ = password;
-  connection_error_time_ = -1.0;
-  tried_wss_ = false;
-  tried_ws_ = false;
-  pending_fallback_ = false;
-
-  std::string full_url = url;
-  if (full_url.find("://") == std::string::npos) {
-    tried_wss_ = true;
-    full_url = "wss://" + full_url;
-  }
-
-  webSocket_.setUrl(full_url);
-  webSocket_.enableAutomaticReconnection();
-  webSocket_.enablePerMessageDeflate();
-
-  std::string user_agent = "AxolotlAPTextClient/";
-  user_agent += AXOLOTL_VERSION_STRING;
-#ifdef GIT_HASH
-  user_agent += " (git " + std::string(GIT_HASH) + ")";
-#endif
-  webSocket_.setExtraHeaders({{"User-Agent", user_agent}});
-
-  // Configure TLS if we have a bundled CA
-  auto ca_path = Config::GetCaBundlePath();
-  if (std::filesystem::exists(ca_path)) {
-    ix::SocketTLSOptions tls_options;
-    tls_options.caFile = ca_path.string();
-    webSocket_.setTLSOptions(tls_options);
-  }
-
-  webSocket_.start();
-  user_wants_connection_ = true;
+void ArchipelagoSession::SendChat(const std::string &message) {
+  json packet = json::array();
+  packet.push_back({{"cmd", "Say"}, {"text", message}});
+  webSocket_.send(packet.dump());
 }
 
-void ArchipelagoNetwork::Disconnect() {
-  webSocket_.stop();
-  is_connected_ = false;
-  user_wants_connection_ = false;
-  {
-    std::lock_guard<std::mutex> lock(status_mutex_);
-    status_messages_.push({"Disconnected by user", GetCurrentTimestamp()});
+void ArchipelagoSession::SendGetDataPackage() {
+  json packet = json::array();
+  packet.push_back({{"cmd", "GetDataPackage"}});
+  webSocket_.send(packet.dump());
+}
+
+void ArchipelagoSession::SendSync() {
+  json packet = json::array();
+  packet.push_back({{"cmd", "Sync"}});
+  webSocket_.send(packet.dump());
+}
+
+void ArchipelagoSession::SendGetHints() {
+  json packet = json::array();
+  std::string hint_key = "_read_hints_" + std::to_string(team_) + "_" +
+                         std::to_string(local_slot_);
+  packet.push_back({{"cmd", "Get"}, {"keys", {hint_key}}});
+  webSocket_.send(packet.dump());
+}
+
+std::string ArchipelagoSession::ResolveItemName(int64_t id, int slot) {
+  if (!metadata_)
+    return "";
+  std::string game = (slot != -1 && metadata_->slot_to_game.count(slot))
+                         ? metadata_->slot_to_game[slot]
+                         : "";
+  if (!game.empty() && metadata_->item_names.count(game) &&
+      metadata_->item_names[game].count(id))
+    return metadata_->item_names[game][id];
+  for (auto const &[gn, items] : metadata_->item_names)
+    if (items.count(id))
+      return items.at(id);
+  return "";
+}
+
+std::string ArchipelagoSession::ResolveLocationName(int64_t id, int slot) {
+  if (!metadata_)
+    return "";
+  std::string game = (slot != -1 && metadata_->slot_to_game.count(slot))
+                         ? metadata_->slot_to_game[slot]
+                         : "";
+  if (!game.empty() && metadata_->location_names.count(game) &&
+      metadata_->location_names[game].count(id))
+    return metadata_->location_names[game][id];
+  for (auto const &[gn, locations] : metadata_->location_names)
+    if (locations.count(id))
+      return locations.at(id);
+  return "";
+}
+
+std::string ArchipelagoSession::ResolveEntranceName(int64_t id, int slot) {
+  if (id == 0 || !metadata_)
+    return "";
+  std::string game = (slot != -1 && metadata_->slot_to_game.count(slot))
+                         ? metadata_->slot_to_game[slot]
+                         : "";
+  if (!game.empty() && metadata_->entrance_names.count(game) &&
+      metadata_->entrance_names[game].count(id))
+    return metadata_->entrance_names[game][id];
+  for (auto const &[gn, entrances] : metadata_->entrance_names)
+    if (entrances.count(id))
+      return entrances.at(id);
+  return "";
+}
+
+void ArchipelagoSession::ResolvePendingItems() {
+  for (auto &pending : pending_items_) {
+    std::string name = ResolveItemName(pending.id, pending.receiver);
+    if (!name.empty()) {
+      std::string search = "Unknown Item " + std::to_string(pending.id);
+      if (pending.is_received_packet) {
+        for (auto &rm : received_items_history_)
+          for (auto &part : rm.parts)
+            if (part.text == search)
+              part.text = name;
+      }
+    }
   }
 }
 
-bool ArchipelagoNetwork::IsConnected() const {
-  return GetState() == State::Connected;
+// --- ArchipelagoNetwork (Manager) ---
+
+ArchipelagoNetwork::ArchipelagoNetwork() {}
+ArchipelagoNetwork::~ArchipelagoNetwork() {
+  sessions_.clear(); // This will destroy sessions and stop their websockets
 }
 
-ArchipelagoNetwork::State ArchipelagoNetwork::GetState() const {
-  auto readyState = webSocket_.getReadyState();
-  if (readyState == ix::ReadyState::Open && is_connected_) {
-    return State::Connected;
-  } else if (user_wants_connection_) {
-    return State::Connecting;
+ArchipelagoSession *ArchipelagoNetwork::AddSession(const std::string &name) {
+  if (GetSession(name))
+    return GetSession(name);
+  sessions_.push_back(std::make_unique<ArchipelagoSession>(this, name));
+  slots_dirty_ = true;
+  return sessions_.back().get();
+}
+
+void ArchipelagoNetwork::RemoveSession(const std::string &name) {
+  for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
+    if ((*it)->GetName() == name) {
+      sessions_.erase(it);
+      slots_dirty_ = true;
+      if (on_history_updated)
+        on_history_updated();
+      return;
+    }
   }
-  return State::Disconnected;
+}
+
+void ArchipelagoNetwork::DisconnectAll() {
+  for (auto &session : sessions_) {
+    session->Disconnect();
+  }
+}
+
+ArchipelagoSession *ArchipelagoNetwork::GetSession(const std::string &name) {
+  for (auto &s : sessions_)
+    if (s->GetName() == name)
+      return s.get();
+  return nullptr;
+}
+
+std::shared_ptr<ServerMetadata>
+ArchipelagoNetwork::GetOrCreateMetadata(const std::string &url) {
+  if (url_to_metadata_.count(url))
+    return url_to_metadata_[url];
+  auto metadata = std::make_shared<ServerMetadata>();
+  url_to_metadata_[url] = metadata;
+  return metadata;
+}
+
+bool ArchipelagoNetwork::Update() {
+  bool changed = false;
+  for (auto &session : sessions_) {
+    bool was_connected = session->IsConnected();
+    if (session->Update())
+      changed = true;
+    if (was_connected != session->IsConnected()) {
+      slots_dirty_ = true;
+      aggregated_items_dirty_ = true;
+      aggregated_hints_dirty_ = true;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+bool ArchipelagoNetwork::IsAnySessionActive() const {
+  for (const auto &s : sessions_) {
+    if (s->GetState() != State::Disconnected)
+      return true;
+  }
+  return false;
+}
+
+const std::set<int> &ArchipelagoNetwork::GetConnectedSlots() {
+  if (slots_dirty_) {
+    connected_slots_cache_.clear();
+    for (const auto &s : sessions_) {
+      if (s->IsConnected()) {
+        connected_slots_cache_.insert((s->GetTeam() << 16) | s->GetLocalSlot());
+        if (s->GetTeam() == 0)
+          connected_slots_cache_.insert(s->GetLocalSlot());
+      }
+    }
+    slots_dirty_ = false;
+  }
+  return connected_slots_cache_;
+}
+
+void ArchipelagoNetwork::SendChat(const std::string &session_name,
+                                  const std::string &message) {
+  auto s = GetSession(session_name);
+  if (s)
+    s->SendChat(message);
+}
+
+void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
+                                         const RichMessage &msg,
+                                         bool is_item_feed) {
+  // Always allow status messages (not attributed to a game event) through
+  bool is_status =
+      !is_item_feed && !msg.parts.empty() &&
+      (msg.parts[0].text.find("[System]") != std::string::npos ||
+       msg.parts[0].text.find(" connected (Slot ") != std::string::npos ||
+       msg.parts[0].text.find("Connection refused") != std::string::npos);
+
+  if (!is_status && !IsMasterSession(session))
+    return;
+
+  if (is_item_feed) {
+    aggregated_items_dirty_ = true;
+    CheckDayChange(item_history_, msg.timestamp, last_item_day_);
+    item_history_.push_back(msg);
+  } else {
+    CheckDayChange(chat_history_, msg.timestamp, last_chat_day_);
+    chat_history_.push_back(msg);
+  }
+
+  if (max_history_size_ > 0) {
+    if ((int)chat_history_.size() > max_history_size_)
+      chat_history_.erase(chat_history_.begin(),
+                          chat_history_.begin() +
+                              (chat_history_.size() - max_history_size_));
+    if ((int)item_history_.size() > max_history_size_)
+      item_history_.erase(item_history_.begin(),
+                          item_history_.begin() +
+                              (item_history_.size() - max_history_size_));
+  }
+
+  if (on_history_updated)
+    on_history_updated();
+}
+
+std::string ArchipelagoNetwork::ResolveItemName(int64_t id, int slot) {
+  for (auto &s : sessions_) {
+    std::string name = s->ResolveItemName(id, slot);
+    if (!name.empty())
+      return name;
+  }
+  return "";
+}
+
+std::string ArchipelagoNetwork::ResolveLocationName(int64_t id, int slot) {
+  for (auto &s : sessions_) {
+    std::string name = s->ResolveLocationName(id, slot);
+    if (!name.empty())
+      return name;
+  }
+  return "";
+}
+
+std::string ArchipelagoNetwork::ResolveEntranceName(int64_t id, int slot) {
+  for (auto &s : sessions_) {
+    std::string name = s->ResolveEntranceName(id, slot);
+    if (!name.empty())
+      return name;
+  }
+  return "";
+}
+
+std::string ArchipelagoNetwork::ResolvePlayerName(int slot) {
+  for (auto &s : sessions_) {
+    const auto &names = s->GetPlayerNames();
+    if (names.count(slot))
+      return names.at(slot);
+  }
+  return "Unknown Player " + std::to_string(slot);
+}
+
+void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
+                                         const std::string &msg) {
+  // Always log status messages? Or only from master?
+  // Let's log them from all for now, but prefixed.
+}
+
+bool ArchipelagoNetwork::IsMasterSession(ArchipelagoSession *session) const {
+  if (sessions_.empty())
+    return false;
+  // Simple rule: first session connected to a specific URL is the master for
+  // that URL
+  std::string url = session->GetUrl();
+  for (const auto &s : sessions_) {
+    if (s->GetUrl() == url && s->IsConnected()) {
+      return s.get() == session;
+    }
+  }
+  // If none connected yet, the first one trying is the master
+  for (const auto &s : sessions_) {
+    if (s->GetUrl() == url)
+      return s.get() == session;
+  }
+  return false;
+}
+
+const std::vector<RichMessage> &
+ArchipelagoNetwork::GetAggregatedReceivedItems() const {
+  if (aggregated_items_dirty_) {
+    aggregated_items_cache_.clear();
+    for (const auto &s : sessions_) {
+      const auto &history = s->GetReceivedItems();
+      aggregated_items_cache_.insert(aggregated_items_cache_.end(),
+                                     history.begin(), history.end());
+    }
+    std::sort(
+        aggregated_items_cache_.begin(), aggregated_items_cache_.end(),
+        [](const auto &a, const auto &b) { return a.timestamp < b.timestamp; });
+    aggregated_items_dirty_ = false;
+  }
+  return aggregated_items_cache_;
+}
+
+const std::vector<Hint> &ArchipelagoNetwork::GetAggregatedHints() const {
+  if (aggregated_hints_dirty_) {
+    aggregated_hints_cache_.clear();
+    std::set<std::tuple<int64_t, int64_t, int, int>> seen;
+    for (const auto &s : sessions_) {
+      const auto &hints = s->GetHints();
+      for (const auto &h : hints) {
+        auto key = std::make_tuple(h.item_id, h.location_id, h.receiver_slot,
+                                   h.finder_slot);
+        if (seen.insert(key).second) {
+          aggregated_hints_cache_.push_back(h);
+        }
+      }
+    }
+    aggregated_hints_dirty_ = false;
+  }
+  return aggregated_hints_cache_;
 }
 
 void ArchipelagoNetwork::CheckDayChange(std::vector<RichMessage> &history,
@@ -858,4 +883,33 @@ void ArchipelagoNetwork::CheckDayChange(std::vector<RichMessage> &history,
     history.push_back(dm);
   }
   last_day = current_day;
+}
+
+void ArchipelagoNetwork::ReResolveHistory() {
+  auto reresolve = [&](std::vector<RichMessage> &history) {
+    for (auto &rm : history) {
+      for (auto &part : rm.parts) {
+        if (part.text.find("Unknown Item ") == 0) {
+          try {
+            int64_t id = std::stoll(part.text.substr(13));
+            std::string name = ResolveItemName(id, rm.receiver_slot);
+            if (!name.empty())
+              part.text = name;
+          } catch (...) {
+          }
+        }
+        if (part.text.find("Unknown Location ") == 0) {
+          try {
+            int64_t id = std::stoll(part.text.substr(17));
+            std::string name = ResolveLocationName(id, rm.sender_slot);
+            if (!name.empty())
+              part.text = name;
+          } catch (...) {
+          }
+        }
+      }
+    }
+  };
+  reresolve(chat_history_);
+  reresolve(item_history_);
 }

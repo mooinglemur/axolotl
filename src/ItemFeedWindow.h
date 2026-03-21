@@ -2,25 +2,22 @@
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
 #include "Window.h"
-#include <functional>
 #include <string>
-#include <vector>
 
 class ItemFeedWindow : public Window {
 public:
-  ItemFeedWindow(const std::vector<RichMessage> &history,
-                 std::function<int()> get_global_slot,
+  ItemFeedWindow(ArchipelagoNetwork &ap_network,
                  const ConnectionSettings &settings, bool personal_only = false,
                  const std::string &name = "Personal Feed");
   void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
               ImFont *preview_fallback_font = nullptr) override;
 
 private:
-  int selection_anchor_ = -1;
-  int selection_active_ = -1;
-  const std::vector<RichMessage> &history_;
-  std::function<int()> get_global_slot_;
+  ArchipelagoNetwork &ap_network_;
   const ConnectionSettings &settings_;
   bool personal_only_;
   std::string filter_text_;
+
+  int selection_anchor_ = -1;
+  int selection_active_ = -1;
 };

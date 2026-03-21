@@ -2,11 +2,17 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <vector>
+
+struct SlotSettings {
+  std::string name = "Player1";
+  std::string password = "";
+  bool connect_on_launch = false; // Internal helper for future use?
+};
 
 struct ConnectionSettings {
   std::string server_url = "archipelago.gg:0";
-  std::string slot_name = "Player1";
-  std::string password = "";
+  std::vector<SlotSettings> slots;
 
   // UI Preferences
   float ui_scale = 1.0f;

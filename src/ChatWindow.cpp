@@ -4,26 +4,15 @@
 #include <cstring>
 #include <ctime>
 #include <imgui.h>
+#include <set>
 
-ChatWindow::ChatWindow(
-    const std::vector<RichMessage> &history,
-    std::function<void(const std::string &)> on_send_chat,
-    std::function<ArchipelagoNetwork::State()> get_state,
-    std::function<void(const std::string &, const std::string &,
-                       const std::string &)>
-        on_connect,
-    std::function<void()> on_disconnect,
-    std::function<const std::map<int, std::string> &()> get_player_names,
-    const ConnectionSettings &settings, const std::string &name)
-    : Window(name), get_state_(get_state), on_connect_(on_connect),
-      on_disconnect_(on_disconnect), get_player_names_(get_player_names),
-      settings_(settings), history_(history), on_send_chat_(on_send_chat) {
+ChatWindow::ChatWindow(ArchipelagoNetwork &ap_network,
+                       ConnectionSettings &settings, const std::string &name)
+    : Window(name), ap_network_(ap_network), settings_(settings) {
   input_text_.reserve(256);
 
   // Load initial settings
   strncpy(server_url_, settings.server_url.c_str(), sizeof(server_url_) - 1);
-  strncpy(slot_name_, settings.slot_name.c_str(), sizeof(slot_name_) - 1);
-  strncpy(password_, settings.password.c_str(), sizeof(password_) - 1);
 }
 
 void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
@@ -32,84 +21,99 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
     return;
 
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
-    // Connection Controls (Wrapping)
-    auto state =
-        get_state_ ? get_state_() : ArchipelagoNetwork::State::Disconnected;
-    bool is_disconnected = (state == ArchipelagoNetwork::State::Disconnected);
-
+    // Multi-slot Connection Controls
     float avail_width = ImGui::GetContentRegionAvail().x;
-    float server_width = std::max(210.0f, avail_width * 0.18f);
-    float slot_width = std::max(175.0f, avail_width * 0.2f);
-    float pw_width = std::max(130.0f, avail_width * 0.15f);
-
-    ImGui::BeginDisabled(!is_disconnected);
+    float server_width = std::max(210.0f, avail_width * 0.25f);
+    float slot_width = std::max(150.0f, avail_width * 0.2f);
+    float pw_width = std::max(100.0f, avail_width * 0.15f);
 
     ImGui::SetNextItemWidth(server_width);
-    ImGui::InputText("##Server", server_url_, sizeof(server_url_));
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Server URL");
-
-    auto MaybeSameLine = [&](float next_width) {
-      float last_x2 = ImGui::GetItemRectMax().x;
-      float spacing = ImGui::GetStyle().ItemSpacing.x;
-      float window_right =
-          ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-      if (last_x2 + spacing + next_width < window_right) {
-        ImGui::SameLine();
-      }
-    };
-
-    MaybeSameLine(slot_width);
-    ImGui::SetNextItemWidth(slot_width);
-    ImGui::InputText("##Slot", slot_name_, sizeof(slot_name_));
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Slot Name");
-
-    MaybeSameLine(pw_width);
-    ImGui::SetNextItemWidth(pw_width);
-    ImGui::InputText("##Password", password_, sizeof(password_),
-                     ImGuiInputTextFlags_Password);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Password");
-
+    ImGui::BeginDisabled(ap_network_.IsAnySessionActive());
+    if (ImGui::InputText("Server URL", server_url_, sizeof(server_url_))) {
+      settings_.server_url = server_url_;
+    }
     ImGui::EndDisabled();
-
-    const char *btn_text = "Connect";
-    if (state == ArchipelagoNetwork::State::Connecting)
-      btn_text = "Cancel";
-    else if (state == ArchipelagoNetwork::State::Connected)
-      btn_text = "Disconnect";
-
-    float btn_width =
-        ImGui::CalcTextSize(btn_text).x + ImGui::GetStyle().FramePadding.x * 2;
-    MaybeSameLine(btn_width);
-
-    if (state == ArchipelagoNetwork::State::Disconnected) {
-      if (ImGui::Button("Connect")) {
-        if (on_connect_) {
-          on_connect_(server_url_, slot_name_, password_);
-        }
-      }
-    } else if (state == ArchipelagoNetwork::State::Connecting) {
-      if (ImGui::Button("Cancel")) {
-        if (on_disconnect_)
-          on_disconnect_();
-      }
-    } else if (state == ArchipelagoNetwork::State::Connected) {
-      if (ImGui::Button("Disconnect")) {
-        if (on_disconnect_)
-          on_disconnect_();
-      }
+    ImGui::SameLine();
+    if (ImGui::Button("Add Slot")) {
+      settings_.slots.push_back({"NewPlayer", "", false});
+      ap_network_.AddSession(settings_.slots.back().name);
+      Config::Save(settings_);
     }
 
     ImGui::Separator();
 
+    for (int i = 0; i < (int)settings_.slots.size(); ++i) {
+      ImGui::PushID(i);
+      auto &slot = settings_.slots[i];
+      auto session = ap_network_.GetSession(slot.name);
+      auto state = session ? session->GetState()
+                           : ArchipelagoNetwork::State::Disconnected;
+
+      ImGui::BeginDisabled(state != ArchipelagoNetwork::State::Disconnected);
+      ImGui::SetNextItemWidth(slot_width);
+      char s_buf[64];
+      strncpy(s_buf, slot.name.c_str(), sizeof(s_buf) - 1);
+      if (ImGui::InputText("##SlotName", s_buf, sizeof(s_buf))) {
+        // Need careful rename handling if we wanted to be robust
+        slot.name = s_buf;
+      }
+      ImGui::SetItemTooltip("Slot Name / Player Name");
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(pw_width);
+      char p_buf[64];
+      strncpy(p_buf, slot.password.c_str(), sizeof(p_buf) - 1);
+      if (ImGui::InputText("##Password", p_buf, sizeof(p_buf),
+                           ImGuiInputTextFlags_Password)) {
+        slot.password = p_buf;
+      }
+      ImGui::SetItemTooltip(
+          "Input slot password here if the server requires one.");
+      ImGui::EndDisabled();
+
+      ImGui::SameLine();
+      if (state == ArchipelagoNetwork::State::Disconnected) {
+        if (ImGui::Button("Connect")) {
+          Config::Save(settings_); // Save before connecting
+          if (!session)
+            session = ap_network_.AddSession(slot.name);
+          session->Connect(settings_.server_url, slot.password);
+        }
+      } else if (state == ArchipelagoNetwork::State::Connecting) {
+        if (ImGui::Button("Cancel")) {
+          if (session)
+            session->Disconnect();
+        }
+      } else if (state == ArchipelagoNetwork::State::Connected) {
+        if (ImGui::Button("Disconnect")) {
+          if (session)
+            session->Disconnect();
+        }
+      }
+
+      ImGui::SameLine();
+      bool can_remove = (settings_.slots.size() > 1) &&
+                        (state == ArchipelagoNetwork::State::Disconnected);
+      ImGui::BeginDisabled(!can_remove);
+      if (ImGui::Button("Remove")) {
+        ap_network_.RemoveSession(slot.name);
+        settings_.slots.erase(settings_.slots.begin() + i);
+        Config::Save(settings_);
+        ImGui::EndDisabled();
+        ImGui::PopID();
+        break;
+      }
+      ImGui::EndDisabled();
+      ImGui::PopID();
+    }
+
     ImGui::Separator();
 
     // History
+    const auto &history = ap_network_.GetChatHistory();
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-    // Day-change detection
+
+    // Day-change detection (simplified for multi-slot - just use system time)
     int current_yday = -1;
     int current_year = -1;
     {
@@ -120,12 +124,11 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
     }
 
     bool show_date = false;
-    for (const auto &rm : history_) {
-      std::time_t t = (std::time_t)rm.timestamp;
+    if (!history.empty()) {
+      std::time_t t = (std::time_t)history.front().timestamp;
       std::tm *rm_tm = std::localtime(&t);
       if (rm_tm->tm_yday != current_yday || rm_tm->tm_year != current_year) {
         show_date = true;
-        break;
       }
     }
 
@@ -134,9 +137,10 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
             ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar)) {
       if (custom_font)
         ImGui::PushFont(custom_font);
+      const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
       int visible_row_idx = 0;
-      for (int i = 0; i < (int)history_.size(); ++i) {
-        const auto &rm = history_[i];
+      for (int i = 0; i < (int)history.size(); ++i) {
+        const auto &rm = history[i];
         ImGui::PushID(i);
 
         ImGui::GetWindowDrawList()->ChannelsSplit(2);
@@ -157,8 +161,7 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
                         settings_.timestamp_format_short.c_str(), tm_ptr);
         }
 
-        RenderRichMessageWrapped(time_buf, rm.parts);
-
+        RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
         ImGui::EndGroup();
         ImVec2 item_size = ImGui::GetItemRectSize();
         ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
@@ -188,78 +191,51 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
                               ImGuiSelectableFlags_SpanAllColumns |
                                   ImGuiSelectableFlags_AllowOverlap,
                               ImVec2(0, item_size.y))) {
-          // Handled by mouse state below for drag support
         }
-
         if (ImGui::IsItemClicked(0)) {
-          if (ImGui::GetIO().KeyShift && selection_anchor_ != -1) {
+          if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
             selection_active_ = i;
-          } else {
-            if (selection_anchor_ == i && selection_active_ == i) {
-              // Clicked the only selected item, so toggle off
-              selection_anchor_ = -1;
-              selection_active_ = -1;
-            } else {
-              selection_anchor_ = i;
-              selection_active_ = i;
-            }
+          else {
+            selection_anchor_ = i;
+            selection_active_ = i;
           }
         }
         if (ImGui::IsItemHovered(
                 ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-            ImGui::IsMouseDown(0)) {
+            ImGui::IsMouseDown(0))
           selection_active_ = i;
+
+        if (ImGui::BeginPopupContextItem("ChatLineCtx",
+                                         ImGuiPopupFlags_MouseButtonRight)) {
+          if (ImGui::MenuItem("Copy Selection")) {
+            std::string selected_text;
+            int start = std::min(selection_anchor_, selection_active_);
+            int end = std::max(selection_anchor_, selection_active_);
+            for (int j = start; j <= end; ++j) {
+              for (const auto &p : history[j].parts)
+                selected_text += p.text;
+              if (j < end)
+                selected_text += "\n";
+            }
+            ImGui::SetClipboardText(selected_text.c_str());
+          }
+          if (ImGui::MenuItem("Clear Selection")) {
+            selection_anchor_ = -1;
+            selection_active_ = -1;
+          }
+          ImGui::EndPopup();
         }
 
         ImGui::GetWindowDrawList()->ChannelsMerge();
-
         ImGui::PopID();
         visible_row_idx++;
       }
 
-      if (ImGui::BeginPopupContextWindow("MessageCtx",
-                                         ImGuiPopupFlags_MouseButtonRight)) {
-        if (ImGui::MenuItem("Copy Selected")) {
-          if (selection_anchor_ != -1 && selection_active_ != -1) {
-            int start = std::min(selection_anchor_, selection_active_);
-            int end = std::max(selection_anchor_, selection_active_);
-            std::string full_text;
-            for (int sel = start; sel <= end; ++sel) {
-              const auto &m = history_[sel];
-              std::time_t mt = (std::time_t)m.timestamp;
-              std::tm *mtm = std::localtime(&mt);
-              char mt_buf[64];
-              if (show_date) {
-                std::strftime(mt_buf, sizeof(mt_buf),
-                              (settings_.timestamp_format_long + " ").c_str(),
-                              mtm);
-              } else {
-                std::strftime(mt_buf, sizeof(mt_buf),
-                              (settings_.timestamp_format_short + " ").c_str(),
-                              mtm);
-              }
-              full_text += mt_buf;
-              for (const auto &p : m.parts)
-                full_text += p.text;
-              full_text += "\n";
-            }
-            ImGui::SetClipboardText(full_text.c_str());
-          }
-        }
-        if (ImGui::MenuItem("Clear Selection")) {
-          selection_anchor_ = -1;
-          selection_active_ = -1;
-        }
-        ImGui::EndPopup();
-      }
-
-      // Clear selection if clicking empty space
       if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
           !ImGui::IsAnyItemHovered()) {
         selection_anchor_ = -1;
         selection_active_ = -1;
       }
-
       if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         ImGui::SetScrollHereY(1.0f);
       if (custom_font)
@@ -269,98 +245,107 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     ImGui::Separator();
 
-    // Input
+    // Input with Slot Selection Dropdown
+    std::vector<std::string> connected_slots;
+    for (const auto &s : ap_network_.GetSessions()) {
+      if (s->IsConnected())
+        connected_slots.push_back(s->GetName());
+    }
+
+    if (connected_slots.empty()) {
+      ImGui::BeginDisabled();
+      ImGui::Text("Connect a slot to chat...");
+    } else {
+      if (selected_send_slot_idx_ >= (int)connected_slots.size())
+        selected_send_slot_idx_ = 0;
+      float max_name_width = 0.0f;
+      for (const auto &name : connected_slots) {
+        max_name_width =
+            std::max(max_name_width, ImGui::CalcTextSize(name.c_str()).x);
+      }
+      float combo_width = max_name_width +
+                          ImGui::GetStyle().FramePadding.x * 2.0f +
+                          ImGui::GetFrameHeight();
+      ImGui::SetNextItemWidth(combo_width);
+      if (ImGui::BeginCombo("##SlotSelect",
+                            connected_slots[selected_send_slot_idx_].c_str())) {
+        for (int i = 0; i < (int)connected_slots.size(); ++i) {
+          if (ImGui::Selectable(connected_slots[i].c_str(),
+                                i == selected_send_slot_idx_))
+            selected_send_slot_idx_ = i;
+        }
+        ImGui::EndCombo();
+      }
+      ImGui::SameLine();
+    }
+
     ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue |
                                       ImGuiInputTextFlags_CallbackHistory |
                                       ImGuiInputTextFlags_CallbackAlways;
-    if (ac_active_) {
+    if (ac_active_)
       input_flags |= ImGuiInputTextFlags_CallbackCompletion;
-    }
 
-    // Autocomplete popup
+    // Autocomplete logic remains mostly same but uses selected slot's player
+    // names
     if (ac_active_ && !ac_matches_.empty()) {
       ImVec2 pos = ImGui::GetCursorScreenPos();
       pos.y -= (ac_matches_.size() * ImGui::GetTextLineHeightWithSpacing()) +
                ImGui::GetStyle().WindowPadding.y * 2;
       ImGui::SetNextWindowPos(pos);
       ImGui::SetNextWindowSizeConstraints(ImVec2(200, 0), ImVec2(500, 200));
-      ImGuiWindowFlags popup_flags =
-          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-          ImGuiWindowFlags_AlwaysAutoResize |
-          ImGuiWindowFlags_NoFocusOnAppearing;
-
-      if (ImGui::Begin("AutoCompPopup", nullptr, popup_flags)) {
+      if (ImGui::Begin("AutoCompPopup", nullptr,
+                       ImGuiWindowFlags_NoTitleBar |
+                           ImGuiWindowFlags_AlwaysAutoResize |
+                           ImGuiWindowFlags_NoFocusOnAppearing)) {
         for (int i = 0; i < (int)ac_matches_.size(); ++i) {
-          bool is_selected = (i == ac_selected_idx_);
-          if (ImGui::Selectable(ac_matches_[i].c_str(), is_selected)) {
-            // Mouse click support
+          if (ImGui::Selectable(ac_matches_[i].c_str(),
+                                i == ac_selected_idx_)) {
             std::string buf_str(input_buf_);
-            if (ac_cursor_pos_ >= 0 &&
-                ac_cursor_pos_ + ac_match_string_.length() <=
-                    buf_str.length()) {
-              buf_str.replace(ac_cursor_pos_, ac_match_string_.length(),
-                              ac_matches_[i] + " ");
-              strncpy(input_buf_, buf_str.c_str(), sizeof(input_buf_) - 1);
-              input_buf_[sizeof(input_buf_) - 1] = '\0';
-            }
+            buf_str.replace(ac_cursor_pos_, ac_match_string_.length(),
+                            ac_matches_[i] + " ");
+            strncpy(input_buf_, buf_str.c_str(), sizeof(input_buf_) - 1);
             ac_active_ = false;
-            ImGui::SetKeyboardFocusHere(-1); // Re-focus on input after clicking
+            ImGui::SetKeyboardFocusHere(-1);
           }
-          if (is_selected)
-            ImGui::SetItemDefaultFocus();
         }
+        ImGui::End();
       }
-      ImGui::End();
     }
-
-    ImGui::Text(">");
-    ImGui::SameLine();
 
     float button_width =
         ImGui::CalcTextSize("Send").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float input_width =
-        ImGui::GetContentRegionAvail().x - button_width - spacing;
-
+    float input_width = ImGui::GetContentRegionAvail().x - button_width -
+                        ImGui::GetStyle().ItemSpacing.x;
     if (focus_input_) {
       ImGui::SetKeyboardFocusHere(0);
       focus_input_ = false;
     }
-
-    ImGui::PushItemWidth(input_width);
+    ImGui::SetNextItemWidth(input_width);
     bool send =
         ImGui::InputText("##Input", input_buf_, sizeof(input_buf_), input_flags,
                          &ChatWindow::TextEditCallbackStub, (void *)this);
-    ImGui::PopItemWidth();
-
     ImGui::SameLine();
-    if (ImGui::Button("Send")) {
+    if (ImGui::Button("Send"))
       send = true;
-    }
 
-    if (send) {
-      if (input_buf_[0] != '\0') {
-        std::string msg(input_buf_);
-        if (on_send_chat_) {
-          on_send_chat_(msg);
-        }
-        if (input_history_.empty() || input_history_.back() != msg) {
-          input_history_.push_back(msg);
-        }
-        history_pos_ = -1;
-        ac_active_ = false;
-        input_buf_[0] = '\0'; // Clear input
-      }
+    if (send && input_buf_[0] != '\0' && !connected_slots.empty()) {
+      ap_network_.SendChat(connected_slots[selected_send_slot_idx_],
+                           input_buf_);
+      if (input_history_.empty() || input_history_.back() != input_buf_)
+        input_history_.push_back(input_buf_);
+      history_pos_ = -1;
+      ac_active_ = false;
+      input_buf_[0] = '\0';
       focus_input_ = true;
     }
+    if (connected_slots.empty())
+      ImGui::EndDisabled();
   }
   ImGui::End();
 }
 
 int ChatWindow::TextEditCallbackStub(ImGuiInputTextCallbackData *data) {
-  ChatWindow *window = (ChatWindow *)data->UserData;
-  return window->TextEditCallback(data);
+  return ((ChatWindow *)data->UserData)->TextEditCallback(data);
 }
 
 int ChatWindow::TextEditCallback(ImGuiInputTextCallbackData *data) {
@@ -399,26 +384,29 @@ int ChatWindow::TextEditCallback(ImGuiInputTextCallbackData *data) {
       std::transform(l_match.begin(), l_match.end(), l_match.begin(),
                      ::tolower);
 
-      if (get_player_names_) {
-        for (const auto &[id, name] : get_player_names_()) {
-          if (name == "Unknown" || name == "Server")
-            continue;
-          std::string l_name = name;
-          std::transform(l_name.begin(), l_name.end(), l_name.begin(),
-                         ::tolower);
-          if (l_name.find(l_match) == 0) { // starts with
-            ac_matches_.push_back(name);
+      std::vector<std::string> connected_slots;
+      for (const auto &s : ap_network_.GetSessions())
+        if (s->IsConnected())
+          connected_slots.push_back(s->GetName());
+      if (!connected_slots.empty()) {
+        auto s =
+            ap_network_.GetSession(connected_slots[selected_send_slot_idx_]);
+        if (s) {
+          for (const auto &[id, name] : s->GetPlayerNames()) {
+            if (name == "Unknown" || name == "Server")
+              continue;
+            std::string l_name = name;
+            std::transform(l_name.begin(), l_name.end(), l_name.begin(),
+                           ::tolower);
+            if (l_name.find(l_match) == 0)
+              ac_matches_.push_back(name);
           }
         }
       }
-
-      if (ac_matches_.empty()) {
+      if (ac_matches_.empty())
         ac_active_ = false;
-      } else {
-        if (ac_selected_idx_ >= (int)ac_matches_.size()) {
-          ac_selected_idx_ = ac_matches_.size() - 1;
-        }
-      }
+      else if (ac_selected_idx_ >= (int)ac_matches_.size())
+        ac_selected_idx_ = ac_matches_.size() - 1;
     }
   } else if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
     if (ac_active_ && !ac_matches_.empty()) {
@@ -439,25 +427,20 @@ int ChatWindow::TextEditCallback(ImGuiInputTextCallbackData *data) {
           ac_selected_idx_ = 0;
       }
     } else {
-      const int prev_history_pos = history_pos_;
+      int old_pos = history_pos_;
       if (data->EventKey == ImGuiKey_UpArrow) {
         if (history_pos_ == -1)
           history_pos_ = input_history_.size() - 1;
         else if (history_pos_ > 0)
           history_pos_--;
       } else if (data->EventKey == ImGuiKey_DownArrow) {
-        if (history_pos_ != -1) {
-          if (++history_pos_ >= (int)input_history_.size()) {
-            history_pos_ = -1;
-          }
-        }
+        if (history_pos_ != -1 && ++history_pos_ >= (int)input_history_.size())
+          history_pos_ = -1;
       }
-
-      if (prev_history_pos != history_pos_) {
-        const char *history_str =
-            (history_pos_ >= 0) ? input_history_[history_pos_].c_str() : "";
+      if (old_pos != history_pos_) {
         data->DeleteChars(0, data->BufTextLen);
-        data->InsertChars(0, history_str);
+        data->InsertChars(
+            0, (history_pos_ >= 0) ? input_history_[history_pos_].c_str() : "");
       }
     }
   }

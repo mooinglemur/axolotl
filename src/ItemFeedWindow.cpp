@@ -3,13 +3,13 @@
 #include <cstring>
 #include <ctime>
 #include <imgui.h>
+#include <set>
 
-ItemFeedWindow::ItemFeedWindow(const std::vector<RichMessage> &history,
-                               std::function<int()> get_global_slot,
+ItemFeedWindow::ItemFeedWindow(ArchipelagoNetwork &ap_network,
                                const ConnectionSettings &settings,
                                bool personal_only, const std::string &name)
-    : Window(name), history_(history), get_global_slot_(get_global_slot),
-      settings_(settings), personal_only_(personal_only) {}
+    : Window(name), ap_network_(ap_network), settings_(settings),
+      personal_only_(personal_only) {}
 
 void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
                             ImFont *preview_fallback_font) {
@@ -31,196 +31,132 @@ void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     ImGui::Separator();
 
-    ImGui::Separator();
+    auto const &history = ap_network_.GetItemHistory();
+    const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
 
-    bool show_date = false;
-    if (!filter_text_.empty()) {
+    if (ImGui::BeginChild("FeedScrollingRegion")) {
+      if (custom_font)
+        ImGui::PushFont(custom_font);
+
       std::time_t now = std::time(nullptr);
       std::tm *now_tm = std::localtime(&now);
       int current_yday = now_tm->tm_yday;
       int current_year = now_tm->tm_year;
 
-      std::string l_filter = filter_text_;
-      std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
-                     ::tolower);
-
-      int global_slot = get_global_slot_ ? get_global_slot_() : -1;
-
-      for (const auto &rm : history_) {
-        bool passes_personal = true;
-        if (personal_only_) {
-          passes_personal = (rm.sender_slot == global_slot ||
-                             rm.receiver_slot == global_slot);
-        }
-        if (!passes_personal)
-          continue;
-
-        std::string full_text;
-        for (const auto &p : rm.parts)
-          full_text += p.text;
-
-        std::string l_text = full_text;
-        std::transform(l_text.begin(), l_text.end(), l_text.begin(), ::tolower);
-        if (l_text.find(l_filter) != std::string::npos) {
-          std::time_t t = (std::time_t)rm.timestamp;
-          std::tm *rm_tm = std::localtime(&t);
-          if (rm_tm->tm_yday != current_yday ||
-              rm_tm->tm_year != current_year) {
-            show_date = true;
-            break;
-          }
-        }
-      }
-    }
-
-    if (ImGui::BeginChild("FeedScrollingRegion")) {
-      if (custom_font)
-        ImGui::PushFont(custom_font);
       int visible_row_idx = 0;
-      for (int i = 0; i < (int)history_.size(); ++i) {
-        const auto &rm = history_[i];
+      for (int i = 0; i < (int)history.size(); ++i) {
+        const auto &rm = history[i];
+        bool is_selected = false;
 
-        bool passes_personal = true;
         if (personal_only_) {
-          int global_slot = get_global_slot_ ? get_global_slot_() : -1;
-          passes_personal = (rm.sender_slot == global_slot ||
-                             rm.receiver_slot == global_slot);
+          bool matches = (my_slots.count(rm.sender_slot) ||
+                          my_slots.count(rm.receiver_slot));
+          if (!matches)
+            continue;
         }
 
-        if (!passes_personal)
-          continue;
-
-        std::string full_text;
-        for (const auto &p : rm.parts)
-          full_text += p.text;
-
-        bool show = false;
-        if (filter_text_.empty()) {
-          show = true;
-        } else {
+        if (!filter_text_.empty()) {
+          std::string full_text;
+          for (const auto &p : rm.parts)
+            full_text += p.text;
           std::string l_text = full_text;
           std::string l_filter = filter_text_;
           std::transform(l_text.begin(), l_text.end(), l_text.begin(),
                          ::tolower);
           std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
                          ::tolower);
-          show = (l_text.find(l_filter) != std::string::npos);
+          if (l_text.find(l_filter) == std::string::npos)
+            continue;
         }
 
-        if (show) {
-          ImGui::PushID(i);
+        ImGui::PushID(i);
 
-          ImGui::GetWindowDrawList()->ChannelsSplit(2);
-          ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+        ImGui::GetWindowDrawList()->ChannelsSplit(2);
+        ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
 
-          ImVec2 pos_start = ImGui::GetCursorScreenPos();
-          ImGui::BeginGroup();
+        ImVec2 pos_start = ImGui::GetCursorScreenPos();
+        ImGui::BeginGroup();
 
-          // Timestamp
-          std::time_t t = (std::time_t)rm.timestamp;
-          std::tm *tm_ptr = std::localtime(&t);
-          char time_buf[32];
-          if (show_date) {
-            std::strftime(time_buf, sizeof(time_buf),
-                          settings_.timestamp_format_long.c_str(), tm_ptr);
-          } else {
-            std::strftime(time_buf, sizeof(time_buf),
-                          settings_.timestamp_format_short.c_str(), tm_ptr);
-          }
+        // Timestamp
+        std::time_t t = (std::time_t)rm.timestamp;
+        std::tm *tm_ptr = std::localtime(&t);
+        char time_buf[64];
+        if (tm_ptr->tm_yday != current_yday ||
+            tm_ptr->tm_year != current_year) {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_long.c_str(), tm_ptr);
+        } else {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_short.c_str(), tm_ptr);
+        }
 
-          RenderRichMessageWrapped(time_buf, rm.parts);
+        RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
+        ImGui::EndGroup();
+        ImVec2 item_size = ImGui::GetItemRectSize();
+        ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
+        ImGui::SetCursorScreenPos(pos_start);
 
-          ImGui::EndGroup();
-          ImVec2 item_size = ImGui::GetItemRectSize();
-          ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
-          ImGui::SetCursorScreenPos(pos_start);
+        if (visible_row_idx % 2 == 1) {
+          float x_min =
+              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+          float x_max =
+              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+          ImGui::GetWindowDrawList()->AddRectFilled(
+              ImVec2(x_min, pos_start.y),
+              ImVec2(x_max, pos_start.y + item_size.y),
+              ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+        }
+        if (selection_anchor_ != -1 && selection_active_ != -1) {
+          int start = std::min(selection_anchor_, selection_active_);
+          int end = std::max(selection_anchor_, selection_active_);
+          is_selected = (i >= start && i <= end);
+        }
 
-          if (visible_row_idx % 2 == 1) {
-            float x_min =
-                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            float x_max =
-                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(x_min, pos_start.y),
-                ImVec2(x_max, pos_start.y + item_size.y),
-                ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
-          }
-
-          bool is_selected = false;
-          if (selection_anchor_ != -1 && selection_active_ != -1) {
-            int start = std::min(selection_anchor_, selection_active_);
-            int end = std::max(selection_anchor_, selection_active_);
-            is_selected = (i >= start && i <= end);
-          }
-
-          char label[32];
-          snprintf(label, sizeof(label), "##row_%d", i);
-          if (ImGui::Selectable(label, is_selected,
-                                ImGuiSelectableFlags_SpanAllColumns |
-                                    ImGuiSelectableFlags_AllowOverlap,
-                                ImVec2(0, item_size.y))) {
-            // Updated via mouse state
-          }
-          if (ImGui::IsItemClicked(0)) {
-            if (ImGui::GetIO().KeyShift && selection_anchor_ != -1) {
-              selection_active_ = i;
-            } else {
-              if (selection_anchor_ == i && selection_active_ == i) {
-                // Clicked the only selected item, so toggle off
-                selection_anchor_ = -1;
-                selection_active_ = -1;
-              } else {
-                selection_anchor_ = i;
-                selection_active_ = i;
-              }
-            }
-          }
-          if (ImGui::IsItemHovered(
-                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-              ImGui::IsMouseDown(0)) {
+        char label[32];
+        snprintf(label, sizeof(label), "##row_%d", i);
+        if (ImGui::Selectable(label, is_selected,
+                              ImGuiSelectableFlags_SpanAllColumns |
+                                  ImGuiSelectableFlags_AllowOverlap,
+                              ImVec2(0, item_size.y))) {
+        }
+        if (ImGui::IsItemClicked(0)) {
+          if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
+            selection_active_ = i;
+          else {
+            selection_anchor_ = i;
             selection_active_ = i;
           }
-
-          ImGui::GetWindowDrawList()->ChannelsMerge();
-          ImGui::PopID();
-          visible_row_idx++;
         }
-      }
+        if (ImGui::IsItemHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            ImGui::IsMouseDown(0))
+          selection_active_ = i;
 
-      if (ImGui::BeginPopupContextWindow("ItemFeedCtx",
+        if (ImGui::BeginPopupContextItem("FeedLineCtx",
                                          ImGuiPopupFlags_MouseButtonRight)) {
-        if (ImGui::MenuItem("Copy Selected")) {
-          if (selection_anchor_ != -1 && selection_active_ != -1) {
+          if (ImGui::MenuItem("Copy Selection")) {
+            std::string selected_text;
             int start = std::min(selection_anchor_, selection_active_);
             int end = std::max(selection_anchor_, selection_active_);
-            std::string export_text;
-            for (int sel = start; sel <= end; ++sel) {
-              const auto &m = history_[sel];
-              std::time_t mt = (std::time_t)m.timestamp;
-              std::tm *mtm = std::localtime(&mt);
-              char mt_buf[32];
-              if (show_date) {
-                std::strftime(mt_buf, sizeof(mt_buf),
-                              (settings_.timestamp_format_long + " ").c_str(),
-                              mtm);
-              } else {
-                std::strftime(mt_buf, sizeof(mt_buf),
-                              (settings_.timestamp_format_short + " ").c_str(),
-                              mtm);
-              }
-              export_text += mt_buf;
-              for (const auto &p : m.parts)
-                export_text += p.text;
-              export_text += "\n";
+            for (int j = start; j <= end; ++j) {
+              const auto &rm_j = history[j];
+              for (const auto &p : rm_j.parts)
+                selected_text += p.text;
+              if (j < end)
+                selected_text += "\n";
             }
-            ImGui::SetClipboardText(export_text.c_str());
+            ImGui::SetClipboardText(selected_text.c_str());
           }
+          if (ImGui::MenuItem("Clear Selection")) {
+            selection_anchor_ = -1;
+            selection_active_ = -1;
+          }
+          ImGui::EndPopup();
         }
-        if (ImGui::MenuItem("Clear Selection")) {
-          selection_anchor_ = -1;
-          selection_active_ = -1;
-        }
-        ImGui::EndPopup();
+
+        ImGui::GetWindowDrawList()->ChannelsMerge();
+        ImGui::PopID();
+        visible_row_idx++;
       }
 
       if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
@@ -228,7 +164,6 @@ void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
         selection_anchor_ = -1;
         selection_active_ = -1;
       }
-
       if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         ImGui::SetScrollHereY(1.0f);
       if (custom_font)
