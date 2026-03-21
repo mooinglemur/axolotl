@@ -192,7 +192,7 @@ windows-cross:
     # Build zlib for mingw
     - git clone --depth 1 -b v1.3.1 https://github.com/madler/zlib.git
     - mkdir zlib/build && cd zlib/build
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 -DAXOLOTL_IGNORE_DIRTY=ON ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     # -- Remove the dll and dll.a files so that the static library is used
     - rm -f /usr/x86_64-w64-mingw32/lib/libzlib.dll.a /usr/x86_64-w64-mingw32/bin/libzlib.dll
@@ -200,25 +200,25 @@ windows-cross:
     # Build nlohmann_json for mingw
     - git clone --depth 1 -b v3.11.3 https://github.com/nlohmann/json.git
     - mkdir json/build && cd json/build
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DJSON_BuildTests=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 -DAXOLOTL_IGNORE_DIRTY=ON ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DJSON_BuildTests=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     - cd $ROOT_DIR
     # Build mbedtls for mingw
     - git clone --depth 1 -b v3.5.2 https://github.com/ARMmbed/mbedtls.git
     - mkdir mbedtls/build && cd mbedtls/build
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 -DAXOLOTL_IGNORE_DIRTY=ON ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     - cd $ROOT_DIR
     # Build yaml-cpp for mingw
     - git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
     - mkdir yaml-cpp/build && cd yaml-cpp/build
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 -DAXOLOTL_IGNORE_DIRTY=ON ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     - cd $ROOT_DIR
     # Build glfw for mingw
     - git clone --depth 1 -b 3.3.10 https://github.com/glfw/glfw.git
     - mkdir glfw/build && cd glfw/build
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 -DAXOLOTL_IGNORE_DIRTY=ON ..
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     - cd $ROOT_DIR
 
