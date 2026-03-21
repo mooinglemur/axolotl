@@ -75,11 +75,14 @@ jobs:
             **macOS**:
             - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-macOS-latest.dmg)
 
-            **Windows (Native Builds)**:
+            **Windows**:  
+            The two sets of Windows builds should behave identically to each other, but both are provided for testing purposes.
+
+            *Windows MSYS2 Builds*:
             - [MSI Installer](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Native-latest.msi)
             - [Portable EXE](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Native-latest.exe)
 
-            **Windows (Cross-Compiled)**:
+            *Windows Mingw-w64 Cross-Compiled Builds*:
             - [MSI Installer](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Static-latest.msi)
             - [Portable EXE](https://github.com/${{ github.repository }}/releases/download/latest/AxolotlAPTextClient-Windows-Static-latest.exe)
           artifacts: release_assets/*
