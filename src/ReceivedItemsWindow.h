@@ -15,6 +15,7 @@ public:
 private:
   int selection_anchor_ = -1;
   int selection_active_ = -1;
+  bool collapse_ = false;
   const std::vector<RichMessage> &history_;
   const ConnectionSettings &settings_;
   std::string filter_text_;

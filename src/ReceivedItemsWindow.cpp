@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <ctime>
 #include <imgui.h>
+#include <map>
 
 ReceivedItemsWindow::ReceivedItemsWindow(
     const std::vector<RichMessage> &history, const ConnectionSettings &settings,
@@ -20,11 +21,19 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
     strncpy(filter_buf, filter_text_.c_str(), sizeof(filter_buf));
     filter_buf[sizeof(filter_buf) - 1] = '\0';
 
-    ImGui::PushItemWidth(-1.0f);
+    float collapse_width = ImGui::CalcTextSize("Collapse").x +
+                           ImGui::GetStyle().ItemInnerSpacing.x +
+                           ImGui::GetFrameHeight();
+    ImGui::PushItemWidth(-(collapse_width + ImGui::GetStyle().ItemSpacing.x));
     if (ImGui::InputText("##Filter", filter_buf, sizeof(filter_buf))) {
       filter_text_ = filter_buf;
     }
     ImGui::PopItemWidth();
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Collapse", &collapse_)) {
+      selection_anchor_ = -1;
+      selection_active_ = -1;
+    }
 
     ImGui::Separator();
 
@@ -60,12 +69,54 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
       }
     }
 
+    struct DisplayRow {
+      RichMessage rm;
+      int count = 1;
+      std::vector<int> original_indices;
+    };
+    std::vector<DisplayRow> display_rows;
+
+    if (collapse_) {
+      std::map<std::string, DisplayRow> groups;
+      for (int i = 0; i < (int)history_.size(); ++i) {
+        const auto &rm = history_[i];
+        std::string full_text;
+        for (const auto &p : rm.parts)
+          full_text += p.text;
+
+        auto &dr = groups[full_text];
+        if (dr.count == 0 ||
+            dr.original_indices.empty()) { // dr.count was 0 if first time
+          dr.rm = rm;
+          dr.count = 1;
+        } else {
+          dr.count++;
+          if (rm.timestamp > dr.rm.timestamp) {
+            dr.rm.timestamp = rm.timestamp;
+          }
+        }
+        dr.original_indices.push_back(i);
+      }
+      for (auto &pair : groups) {
+        display_rows.push_back(pair.second);
+      }
+      std::sort(display_rows.begin(), display_rows.end(),
+                [](const DisplayRow &a, const DisplayRow &b) {
+                  return a.rm.timestamp < b.rm.timestamp;
+                });
+    } else {
+      for (int i = 0; i < (int)history_.size(); ++i) {
+        display_rows.push_back({history_[i], 1, {i}});
+      }
+    }
+
     if (ImGui::BeginChild("ReceivedScrollingRegion")) {
       if (custom_font)
         ImGui::PushFont(custom_font);
       int visible_row_idx = 0;
-      for (int i = 0; i < (int)history_.size(); ++i) {
-        const auto &rm = history_[i];
+      for (int i = 0; i < (int)display_rows.size(); ++i) {
+        const auto &row = display_rows[i];
+        const auto &rm = row.rm;
         std::string full_text;
         for (const auto &p : rm.parts)
           full_text += p.text;
@@ -104,7 +155,12 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
                           settings_.timestamp_format_short.c_str(), tm_ptr);
           }
 
-          RenderRichMessageWrapped(time_buf, rm.parts);
+          auto parts = rm.parts;
+          if (row.count > 1) {
+            parts.push_back({" (x" + std::to_string(row.count) + ")",
+                             0xFFAAAAAA}); // Light gray/dimmed
+          }
+          RenderRichMessageWrapped(time_buf, parts);
 
           ImGui::EndGroup();
           ImVec2 item_size = ImGui::GetItemRectSize();
@@ -172,7 +228,8 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
             int end = std::max(selection_anchor_, selection_active_);
             std::string export_text;
             for (int sel = start; sel <= end; ++sel) {
-              const auto &m = history_[sel];
+              const auto &row = display_rows[sel];
+              const auto &m = row.rm;
               std::time_t mt = (std::time_t)m.timestamp;
               std::tm *mtm = std::localtime(&mt);
               char mt_buf[32];
@@ -188,6 +245,9 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
               export_text += mt_buf;
               for (const auto &p : m.parts)
                 export_text += p.text;
+              if (row.count > 1) {
+                export_text += " (x" + std::to_string(row.count) + ")";
+              }
               export_text += "\n";
             }
             ImGui::SetClipboardText(export_text.c_str());
