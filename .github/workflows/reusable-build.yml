@@ -23,7 +23,7 @@ jobs:
       - name: Build Flatpak
         run: |
           # Inject the official release flag into the manifest's config-opts for the main module
-          sed -i '/axolotl-apclient/,/buildsystem: cmake-ninja/ s/buildsystem: cmake-ninja/buildsystem: cmake-ninja\n    config-opts: ["-DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && "ON" || "OFF" }}", "-DAXOLOTL_IGNORE_DIRTY=ON"]/' com.mooinglemur.axolotl.yml
+          sed -i '/axolotl-apclient/,/buildsystem: cmake-ninja/ s/buildsystem: cmake-ninja/buildsystem: cmake-ninja\n    config-opts: ["-DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && 'ON' || 'OFF' }}", "-DAXOLOTL_IGNORE_DIRTY=ON"]/' com.mooinglemur.axolotl.yml
           flatpak-builder --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
           flatpak build-export repo build-dir
           flatpak build-bundle repo axolotl-apclient.flatpak com.mooinglemur.axolotl
