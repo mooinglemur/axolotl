@@ -1,0 +1,95 @@
+name: Official Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Verify Version Match
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "Tag version: $TAG_VERSION"
+
+          # Extract version from src/version.h
+          HEADER_VERSION=$(grep 'AXOLOTL_VERSION_STRING' src/version.h | awk -F'"' '{print $2}')
+          echo "Header version: $HEADER_VERSION"
+
+          if [ "$TAG_VERSION" != "$HEADER_VERSION" ]; then
+            echo "::error::Version mismatch! Tag ($TAG_VERSION) does not match src/version.h ($HEADER_VERSION)"
+            exit 1
+          fi
+          echo "Version check passed."
+
+  build:
+    needs: validate
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      official_release: true
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename and Prepare Assets
+        run: |
+          sudo apt-get install -y unzip
+          mkdir -p release_assets
+          # Linux
+          find artifacts/axolotl-apclient-appimage -name "Axolotl*.AppImage" -exec cp {} release_assets/AxolotlAPTextClient-Linux-x86_64.AppImage \; || true
+          find artifacts/axolotl-apclient-flatpak -name "*.flatpak" -exec cp {} release_assets/com.mooinglemur.axolotl.flatpak \; || true
+          # macOS
+          find artifacts/axolotl-apclient-macos -name "*.dmg" -exec cp {} release_assets/AxolotlAPTextClient-macOS.dmg \; || true
+          # Windows Native
+          if [ -f artifacts/axolotl-apclient-windows/axolotl-apclient-windows-portable.zip ]; then
+            unzip artifacts/axolotl-apclient-windows/axolotl-apclient-windows-portable.zip -d native_temp
+            find native_temp -name axolotl-apclient.exe -exec cp {} release_assets/AxolotlAPTextClient-Windows-Native.exe \; || true
+          fi
+          find artifacts/axolotl-apclient-windows -name "*.msi" -exec cp {} release_assets/AxolotlAPTextClient-Windows-Native.msi \; || true
+          # Windows Cross
+          if [ -f artifacts/axolotl-apclient-windows-cross/axolotl-apclient-windows-cross-portable.zip ]; then
+            unzip artifacts/axolotl-apclient-windows-cross/axolotl-apclient-windows-cross-portable.zip -d cross_temp
+            mv cross_temp/axolotl-apclient.exe release_assets/AxolotlAPTextClient-Windows-Static.exe
+          fi
+          find artifacts/axolotl-apclient-windows-cross -name "*.msi" -exec cp {} release_assets/AxolotlAPTextClient-Windows-Static.msi \; || true
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          tag: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            Official Release ${{ github.ref_name }} of the Axolotl Archipelago Text Client.
+
+            **Changes**:
+            - See the commit history for details.
+
+            **Direct Downloads**:
+            - [Linux AppImage](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Linux-x86_64.AppImage)
+            - [Linux Flatpak](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/com.mooinglemur.axolotl.flatpak)
+            - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-macOS.dmg)
+            - [Windows Native (Portable)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Native.exe)
+            - [Windows Native (MSI)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Native.msi)
+            - [Windows Static (Portable)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Static.exe)
+            - [Windows Static (MSI)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Static.msi)
+          artifacts: release_assets/*
+          prerelease: false
+          replacesArtifacts: true
+          makeLatest: true

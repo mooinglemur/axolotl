@@ -125,9 +125,16 @@ bool Application::Initialize() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
+  std::string window_title = "Axolotl - Archipelago Client";
+#ifdef AXOLOTL_OFFICIAL_RELEASE
+  window_title += " (" AXOLOTL_VERSION_STRING ")";
+#elif defined(GIT_HASH)
+  window_title += " (" + std::string(GIT_HASH) + ")";
+#endif
+
   window_ = glfwCreateWindow(current_config_.window_width,
                              current_config_.window_height,
-                             "Axolotl - Archipelago Client", NULL, NULL);
+                             window_title.c_str(), NULL, NULL);
   if (!window_) {
     const char *description;
     int code = glfwGetError(&description);

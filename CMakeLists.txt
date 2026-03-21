@@ -102,6 +102,10 @@ endif()
 
 # Application executable
 file(GLOB_RECURSE SRC_FILES "src/*.cpp")
+# Options
+option(AXOLOTL_OFFICIAL_RELEASE "Build as an official release" OFF)
+option(AXOLOTL_IGNORE_DIRTY "Skip the dirty repo check" OFF)
+
 if (APPLE)
     set_source_files_properties(src/Application.cpp PROPERTIES LANGUAGE OBJCXX)
 endif()
@@ -118,21 +122,27 @@ execute_process(
 if (NOT GIT_RESULT EQUAL 0)
     set(GIT_HASH "nogit")
 else()
-    # Check if repo is dirty
-    execute_process(
-        COMMAND git status --porcelain
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_STATUS
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    if (NOT "${GIT_STATUS}" STREQUAL "")
-        set(GIT_HASH "${GIT_HASH}+")
+    if (NOT AXOLOTL_IGNORE_DIRTY)
+        # Check if repo is dirty
+        execute_process(
+            COMMAND git status --porcelain
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_STATUS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if (NOT "${GIT_STATUS}" STREQUAL "")
+            set(GIT_HASH "${GIT_HASH}+")
+        endif()
     endif()
 endif()
 
 add_executable(axolotl-apclient WIN32 ${SRC_FILES})
 target_include_directories(axolotl-apclient PRIVATE src)
 target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32 GIT_HASH="${GIT_HASH}")
+
+if (AXOLOTL_OFFICIAL_RELEASE)
+    target_compile_definitions(axolotl-apclient PRIVATE AXOLOTL_OFFICIAL_RELEASE)
+endif()
 
 if (APPLE)
     if (USE_MBED_TLS)

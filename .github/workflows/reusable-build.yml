@@ -2,6 +2,12 @@ name: Reusable Build
 
 on:
   workflow_call:
+    inputs:
+      official_release:
+        description: 'Build as an official release'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   linux-flatpak:
@@ -16,6 +22,8 @@ jobs:
 
       - name: Build Flatpak
         run: |
+          # Inject the official release flag into the manifest's config-opts for the main module
+          sed -i '/axolotl-apclient/,/buildsystem: cmake-ninja/ s/buildsystem: cmake-ninja/buildsystem: cmake-ninja\n    config-opts: ["-DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && "ON" || "OFF" }}", "-DAXOLOTL_IGNORE_DIRTY=ON"]/' com.mooinglemur.axolotl.yml
           flatpak-builder --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
           flatpak build-export repo build-dir
           flatpak build-bundle repo axolotl-apclient.flatpak com.mooinglemur.axolotl
@@ -47,7 +55,7 @@ jobs:
       - name: Patch and Build
         run: |
           mkdir build && cd build
-          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && 'ON' || 'OFF' }} -DAXOLOTL_IGNORE_DIRTY=ON ..
           cd ..
           cat <<'EOF' > mbed_patch.py
           import sys
@@ -95,7 +103,7 @@ jobs:
       - name: Patch and Build
         run: |
           mkdir build && cd build
-          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=OFF -DUSE_OPEN_SSL=OFF ..
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=OFF -DUSE_OPEN_SSL=OFF -DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && 'ON' || 'OFF' }} -DAXOLOTL_IGNORE_DIRTY=ON ..
           ninja
 
       - name: Package
@@ -193,7 +201,9 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
             -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
             -DZLIB_USE_STATIC_LIBS=ON \
-            -DCMAKE_PREFIX_PATH="$PWD/deps"
+            -DCMAKE_PREFIX_PATH="$PWD/deps" \
+            -DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && 'ON' || 'OFF' }} \
+            -DAXOLOTL_IGNORE_DIRTY=ON
           cmake --build build --config Release
 
       - name: Package
@@ -273,7 +283,7 @@ jobs:
       - name: Patch and Build
         run: |
           mkdir build-cross && cd build-cross
-          cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF ..
+          cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && 'ON' || 'OFF' }} -DAXOLOTL_IGNORE_DIRTY=ON ..
           cd ..
           sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
           cat <<'EOF' > mbed_patch.py
