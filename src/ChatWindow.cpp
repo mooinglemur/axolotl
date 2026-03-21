@@ -207,12 +207,37 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
         if (ImGui::BeginPopupContextItem("ChatLineCtx",
                                          ImGuiPopupFlags_MouseButtonRight)) {
-          if (ImGui::MenuItem("Copy Selection")) {
+          if (ImGui::MenuItem("Copy selection")) {
             std::string selected_text;
             int start = std::min(selection_anchor_, selection_active_);
             int end = std::max(selection_anchor_, selection_active_);
             for (int j = start; j <= end; ++j) {
               for (const auto &p : history[j].parts)
+                selected_text += p.text;
+              if (j < end)
+                selected_text += "\n";
+            }
+            ImGui::SetClipboardText(selected_text.c_str());
+          }
+          if (ImGui::MenuItem("Copy selection (with timestamps)")) {
+            std::string selected_text;
+            int start = std::min(selection_anchor_, selection_active_);
+            int end = std::max(selection_anchor_, selection_active_);
+            for (int j = start; j <= end; ++j) {
+              const auto &rm_j = history[j];
+              std::time_t t = (std::time_t)rm_j.timestamp;
+              std::tm *tm_ptr = std::localtime(&t);
+              char time_buf[64];
+              if (show_date) {
+                std::strftime(time_buf, sizeof(time_buf),
+                              settings_.timestamp_format_long.c_str(), tm_ptr);
+              } else {
+                std::strftime(time_buf, sizeof(time_buf),
+                              settings_.timestamp_format_short.c_str(), tm_ptr);
+              }
+              selected_text += time_buf;
+              selected_text += " ";
+              for (const auto &p : rm_j.parts)
                 selected_text += p.text;
               if (j < end)
                 selected_text += "\n";
@@ -252,12 +277,22 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
         connected_slots.push_back(s->GetName());
     }
 
+    int selected_idx = -1;
+    if (!selected_send_slot_name_.empty()) {
+      auto it = std::find(connected_slots.begin(), connected_slots.end(),
+                          selected_send_slot_name_);
+      if (it != connected_slots.end())
+        selected_idx = std::distance(connected_slots.begin(), it);
+    }
+    if (selected_idx == -1 && !connected_slots.empty()) {
+      selected_idx = 0;
+      selected_send_slot_name_ = connected_slots[0];
+    }
+
     if (connected_slots.empty()) {
       ImGui::BeginDisabled();
       ImGui::Text("Connect a slot to chat...");
     } else {
-      if (selected_send_slot_idx_ >= (int)connected_slots.size())
-        selected_send_slot_idx_ = 0;
       float max_name_width = 0.0f;
       for (const auto &name : connected_slots) {
         max_name_width =
@@ -268,11 +303,10 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
                           ImGui::GetFrameHeight();
       ImGui::SetNextItemWidth(combo_width);
       if (ImGui::BeginCombo("##SlotSelect",
-                            connected_slots[selected_send_slot_idx_].c_str())) {
+                            connected_slots[selected_idx].c_str())) {
         for (int i = 0; i < (int)connected_slots.size(); ++i) {
-          if (ImGui::Selectable(connected_slots[i].c_str(),
-                                i == selected_send_slot_idx_))
-            selected_send_slot_idx_ = i;
+          if (ImGui::Selectable(connected_slots[i].c_str(), i == selected_idx))
+            selected_send_slot_name_ = connected_slots[i];
         }
         ImGui::EndCombo();
       }
@@ -329,8 +363,7 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
       send = true;
 
     if (send && input_buf_[0] != '\0' && !connected_slots.empty()) {
-      ap_network_.SendChat(connected_slots[selected_send_slot_idx_],
-                           input_buf_);
+      ap_network_.SendChat(selected_send_slot_name_, input_buf_);
       if (input_history_.empty() || input_history_.back() != input_buf_)
         input_history_.push_back(input_buf_);
       history_pos_ = -1;
@@ -388,9 +421,17 @@ int ChatWindow::TextEditCallback(ImGuiInputTextCallbackData *data) {
       for (const auto &s : ap_network_.GetSessions())
         if (s->IsConnected())
           connected_slots.push_back(s->GetName());
-      if (!connected_slots.empty()) {
-        auto s =
-            ap_network_.GetSession(connected_slots[selected_send_slot_idx_]);
+
+      int selected_idx = -1;
+      if (!selected_send_slot_name_.empty()) {
+        auto it = std::find(connected_slots.begin(), connected_slots.end(),
+                            selected_send_slot_name_);
+        if (it != connected_slots.end())
+          selected_idx = std::distance(connected_slots.begin(), it);
+      }
+
+      if (selected_idx != -1) {
+        auto s = ap_network_.GetSession(connected_slots[selected_idx]);
         if (s) {
           for (const auto &[id, name] : s->GetPlayerNames()) {
             if (name == "Unknown" || name == "Server")

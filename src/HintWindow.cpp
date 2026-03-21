@@ -1,6 +1,8 @@
 #include "HintWindow.h"
 #include <algorithm>
 #include <imgui.h>
+#include <imgui_internal.h>
+#include <cstring>
 #include <set>
 #include <string>
 
@@ -151,33 +153,170 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
         ImGui::TableNextRow();
 
-        ImGui::TableSetColumnIndex(0);
-
-        // Re-add Selectable for Copying
-        ImGui::PushID(i);
-        char label[32];
-        snprintf(label, sizeof(label), "##hintrow_%d", i);
-        if (ImGui::Selectable(label, false,
-                              ImGuiSelectableFlags_SpanAllColumns |
-                                  ImGuiSelectableFlags_AllowOverlap)) {
+        bool is_selected = false;
+        if (selection_anchor_ != -1 && selection_active_ != -1) {
+          int start = std::min(selection_anchor_, selection_active_);
+          int end = std::max(selection_anchor_, selection_active_);
+          is_selected = (i >= start && i <= end);
         }
 
-        if (ImGui::BeginPopupContextItem("HintCtx",
-                                         ImGuiPopupFlags_MouseButtonRight)) {
-          if (ImGui::MenuItem("Copy Hint Text (with markdown)")) {
-            std::string cb = "**[Hint]:** " + receiver + "'s *" + item +
-                             "* is at **" + location + "**";
-            if (!h.entrance_name.empty())
-              cb += " (via **" + h.entrance_name + "**)";
-            cb += " in **" + finder + "**'s World. (" +
-                  (h.found ? "found" : "not found") + ")";
-            ImGui::SetClipboardText(cb.c_str());
+        ImGui::PushID(i);
+        bool selectable_rendered = false;
+        for (int col = 0; col < 6; col++) {
+          if (ImGui::TableSetColumnIndex(col)) {
+            char label[32];
+            snprintf(label, sizeof(label), "##hintrow_%d", i);
+            if (ImGui::Selectable(label, is_selected,
+                                  ImGuiSelectableFlags_SpanAllColumns |
+                                      ImGuiSelectableFlags_AllowOverlap)) {
+            }
+            if (ImGui::IsItemClicked(0)) {
+              if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
+                selection_active_ = i;
+              else {
+                selection_anchor_ = i;
+                selection_active_ = i;
+              }
+            }
+            if (ImGui::IsItemHovered(
+                    ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                ImGui::IsMouseDown(0))
+              selection_active_ = i;
+
+            ImGuiTable *table = ImGui::GetCurrentTable();
+            struct ColumnOrder {
+              int index;
+              int order;
+            };
+            std::vector<ColumnOrder> visible_cols;
+            if (table) {
+              for (int c = 0; c < 6; c++) {
+                if (c < table->Columns.size() && table->Columns[c].IsEnabled) {
+                  visible_cols.push_back({c, table->Columns[c].DisplayOrder});
+                }
+              }
+              std::sort(visible_cols.begin(), visible_cols.end(),
+                        [](const auto &a, const auto &b) {
+                          return a.order < b.order;
+                        });
+            }
+
+            if (ImGui::BeginPopupContextItem("HintCtx",
+                                             ImGuiPopupFlags_MouseButtonRight)) {
+              if (ImGui::MenuItem("Copy selection (with markdown)")) {
+                std::string selected_text;
+                int start = std::min(selection_anchor_, selection_active_);
+                int end = std::max(selection_anchor_, selection_active_);
+                for (int j = start; j <= end; ++j) {
+                  const auto &h_j = hints[j];
+                  std::string item_j = ap_network_.ResolveItemName(
+                      h_j.item_id, h_j.receiver_slot);
+                  std::string receiver_j =
+                      ap_network_.ResolvePlayerName(h_j.receiver_slot);
+                  std::string location_j = ap_network_.ResolveLocationName(
+                      h_j.location_id, h_j.finder_slot);
+                  std::string entrance_j = h_j.entrance_name;
+                  std::string finder_j =
+                      ap_network_.ResolvePlayerName(h_j.finder_slot);
+                  std::string status_j = h_j.found ? "found" : "not found";
+
+                  if (!filter_text_.empty()) {
+                    std::string l_filter = filter_text_;
+                    std::transform(l_filter.begin(), l_filter.end(),
+                                   l_filter.begin(), ::tolower);
+                    std::string l_all = item_j + " " + receiver_j + " " +
+                                        location_j + " " + entrance_j + " " +
+                                        finder_j + " " + status_j;
+                    std::transform(l_all.begin(), l_all.end(), l_all.begin(),
+                                   ::tolower);
+                    if (l_all.find(l_filter) == std::string::npos)
+                      continue;
+                  }
+
+                  std::string cb = "**[Hint]:** " + receiver_j + "'s *" +
+                                   item_j + "* is at **" + location_j + "**";
+                  if (!h_j.entrance_name.empty())
+                    cb += " (via **" + h_j.entrance_name + "**)";
+                  cb += " in **" + finder_j + "**'s World. (" + status_j + ")";
+                  selected_text += cb;
+                  if (j < end)
+                    selected_text += "\n";
+                }
+                ImGui::SetClipboardText(selected_text.c_str());
+              }
+              if (ImGui::MenuItem("Copy selection (tab-delimited)")) {
+                std::string selected_text;
+                int start = std::min(selection_anchor_, selection_active_);
+                int end = std::max(selection_anchor_, selection_active_);
+                if (start == -1)
+                  return;
+
+                for (int j = start; j <= end; ++j) {
+                  const auto &h_j = hints[j];
+                  std::string item_j = ap_network_.ResolveItemName(
+                      h_j.item_id, h_j.receiver_slot);
+                  std::string receiver_j =
+                      ap_network_.ResolvePlayerName(h_j.receiver_slot);
+                  std::string location_j = ap_network_.ResolveLocationName(
+                      h_j.location_id, h_j.finder_slot);
+                  std::string entrance_j = h_j.entrance_name;
+                  std::string finder_j =
+                      ap_network_.ResolvePlayerName(h_j.finder_slot);
+                  std::string status_j = h_j.found ? "found" : "not found";
+
+                  // Filter check
+                  if (!filter_text_.empty()) {
+                    std::string l_filter = filter_text_;
+                    std::transform(l_filter.begin(), l_filter.end(),
+                                   l_filter.begin(), ::tolower);
+                    std::string l_all = item_j + " " + receiver_j + " " +
+                                        location_j + " " + entrance_j + " " +
+                                        finder_j + " " + status_j;
+                    std::transform(l_all.begin(), l_all.end(), l_all.begin(),
+                                   ::tolower);
+                    if (l_all.find(l_filter) == std::string::npos)
+                      continue;
+                  }
+
+                  for (size_t c_idx = 0; c_idx < visible_cols.size(); ++c_idx) {
+                    int c_num = visible_cols[c_idx].index;
+                    if (c_num == 0)
+                      selected_text += item_j;
+                    else if (c_num == 1)
+                      selected_text += receiver_j;
+                    else if (c_num == 2)
+                      selected_text += location_j;
+                    else if (c_num == 3)
+                      selected_text += entrance_j;
+                    else if (c_num == 4)
+                      selected_text += finder_j;
+                    else if (c_num == 5)
+                      selected_text += status_j;
+
+                    if (c_idx < visible_cols.size() - 1)
+                      selected_text += "\t";
+                  }
+                  if (j < end)
+                    selected_text += "\n";
+                }
+                ImGui::SetClipboardText(selected_text.c_str());
+              }
+              if (ImGui::MenuItem("Clear selection")) {
+                selection_anchor_ = -1;
+                selection_active_ = -1;
+              }
+              ImGui::EndPopup();
+            }
+            selectable_rendered = true;
+            break;
           }
-          ImGui::EndPopup();
         }
         ImGui::PopID();
 
-        ImGui::SameLine(0, 0);
+        ImGui::TableSetColumnIndex(0);
+        if (selectable_rendered) {
+          ImGui::SameLine(0, 0);
+        }
 
         uint32_t color = 0xFFFFFF00;
         if (h.item_flags & 0x01)

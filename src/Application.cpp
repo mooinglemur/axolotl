@@ -166,6 +166,7 @@ bool Application::Initialize() {
     glfwSetWindowPos(window_, current_config_.window_x,
                      current_config_.window_y);
   }
+  glfwShowWindow(window_);
 
 #ifdef __APPLE__
   glfwMakeContextCurrent(window_);
@@ -435,8 +436,14 @@ void Application::Run() {
       should_render = true;
     }
 
+    if (first_render_) {
+      should_render = true;
+    }
+
     if (!should_render)
       continue;
+
+    first_render_ = false;
 
     // Start ImGui frame
 #ifdef __APPLE__

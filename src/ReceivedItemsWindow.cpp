@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <ctime>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <map>
 #include <set>
 #include <vector>
@@ -140,9 +141,6 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
         }
 
         ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-
-        // Timestamp
         bool is_selected = false;
         if (selection_anchor_ != -1 && selection_active_ != -1) {
           int start = std::min(selection_anchor_, selection_active_);
@@ -151,48 +149,118 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
         }
 
         ImGui::PushID(i);
-        char label[32];
-        snprintf(label, sizeof(label), "##row_%d", i);
-        if (ImGui::Selectable(label, is_selected,
-                              ImGuiSelectableFlags_SpanAllColumns |
-                                  ImGuiSelectableFlags_AllowOverlap)) {
-        }
-        if (ImGui::IsItemClicked(0)) {
-          if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
-            selection_active_ = i;
-          else {
-            selection_anchor_ = i;
-            selection_active_ = i;
-          }
-        }
-        if (ImGui::IsItemHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-            ImGui::IsMouseDown(0))
-          selection_active_ = i;
-
-        if (ImGui::BeginPopupContextItem("ReceivedLineCtx",
-                                         ImGuiPopupFlags_MouseButtonRight)) {
-          if (ImGui::MenuItem("Copy Selection")) {
-            std::string selected_text;
-            int start = std::min(selection_anchor_, selection_active_);
-            int end = std::max(selection_anchor_, selection_active_);
-            for (int j = start; j <= end; ++j) {
-              const auto &rm_j = display_rows[j].rm;
-              for (const auto &p : rm_j.parts)
-                selected_text += p.text;
-              if (j < end)
-                selected_text += "\n";
+        // Find first visible column for the selectable
+        bool selectable_rendered = false;
+        for (int col = 0; col < 3; col++) {
+          if (ImGui::TableSetColumnIndex(col)) {
+            char label[32];
+            snprintf(label, sizeof(label), "##row_%d", i);
+            if (ImGui::Selectable(label, is_selected,
+                                  ImGuiSelectableFlags_SpanAllColumns |
+                                      ImGuiSelectableFlags_AllowOverlap |
+                                      ImGuiSelectableFlags_SelectOnClick)) {
             }
-            ImGui::SetClipboardText(selected_text.c_str());
+            if (ImGui::IsItemClicked(0)) {
+              if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
+                selection_active_ = i;
+              else {
+                selection_anchor_ = i;
+                selection_active_ = i;
+              }
+            }
+            if (ImGui::IsItemHovered(
+                    ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                ImGui::IsMouseDown(0))
+              selection_active_ = i;
+
+            ImGuiTable *table = ImGui::GetCurrentTable();
+            if (ImGui::BeginPopupContextItem(
+                    "ReceivedLineCtx", ImGuiPopupFlags_MouseButtonRight)) {
+              if (ImGui::MenuItem("Copy Selection")) {
+                std::string selected_text;
+                int start_sel = std::min(selection_anchor_, selection_active_);
+                int end_sel = std::max(selection_anchor_, selection_active_);
+                if (start_sel != -1) {
+                  if (table) {
+                    struct ColumnOrder {
+                      int index;
+                      int order;
+                    };
+                    std::vector<ColumnOrder> visible_cols;
+                    for (int c = 0; c < 3; c++) {
+                      if (c < table->Columns.size() &&
+                          table->Columns[c].IsEnabled) {
+                        visible_cols.push_back(
+                            {c, table->Columns[c].DisplayOrder});
+                      }
+                    }
+                    std::sort(visible_cols.begin(), visible_cols.end(),
+                              [](const auto &a, const auto &b) {
+                                return a.order < b.order;
+                              });
+
+                    for (int j = start_sel; j <= end_sel; ++j) {
+                      const auto &row_j = display_rows[j];
+                      for (size_t c_idx = 0; c_idx < visible_cols.size();
+                           ++c_idx) {
+                        int c_num = visible_cols[c_idx].index;
+                        if (c_num == 0) {
+                          // Timestamp column
+                          std::time_t t_j = (std::time_t)row_j.rm.timestamp;
+                          std::tm *tm_ptr_j = std::localtime(&t_j);
+                          char t_buf[64];
+                          if (tm_ptr_j->tm_yday != current_yday ||
+                              tm_ptr_j->tm_year != current_year) {
+                            std::strftime(
+                                t_buf, sizeof(t_buf),
+                                settings_.timestamp_format_long.c_str(),
+                                tm_ptr_j);
+                          } else {
+                            std::strftime(
+                                t_buf, sizeof(t_buf),
+                                settings_.timestamp_format_short.c_str(),
+                                tm_ptr_j);
+                          }
+                          selected_text += t_buf;
+                        } else if (c_num == 1) {
+                          // Slot column
+                          selected_text += row_j.rm.source_slot;
+                        } else if (c_num == 2) {
+                          // Item column
+                          selected_text += row_j.text_cache;
+                          if (row_j.count > 1) {
+                            selected_text +=
+                                " (x" + std::to_string(row_j.count) + ")";
+                          }
+                        }
+                        if (c_idx < visible_cols.size() - 1)
+                          selected_text += "\t";
+                      }
+                      if (j < end_sel)
+                        selected_text += "\n";
+                    }
+                    ImGui::SetClipboardText(selected_text.c_str());
+                  }
+                }
+              }
+              if (ImGui::MenuItem("Clear Selection")) {
+                selection_anchor_ = -1;
+                selection_active_ = -1;
+              }
+              ImGui::EndPopup();
+            }
+            selectable_rendered = true;
+            break;
           }
-          if (ImGui::MenuItem("Clear Selection")) {
-            selection_anchor_ = -1;
-            selection_active_ = -1;
-          }
-          ImGui::EndPopup();
         }
         ImGui::PopID();
-        ImGui::SameLine(0, 0);
+
+        // Restore column 0 if we were just using it for selectable,
+        // or just proceed to actual data rendering
+        ImGui::TableSetColumnIndex(0);
+        if (selectable_rendered) {
+          ImGui::SameLine(0, 0);
+        }
 
         std::time_t t = (std::time_t)rm.timestamp;
         std::tm *tm_ptr = std::localtime(&t);

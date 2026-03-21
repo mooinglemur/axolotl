@@ -134,12 +134,38 @@ void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
         if (ImGui::BeginPopupContextItem("FeedLineCtx",
                                          ImGuiPopupFlags_MouseButtonRight)) {
-          if (ImGui::MenuItem("Copy Selection")) {
+          if (ImGui::MenuItem("Copy selection")) {
             std::string selected_text;
             int start = std::min(selection_anchor_, selection_active_);
             int end = std::max(selection_anchor_, selection_active_);
             for (int j = start; j <= end; ++j) {
               const auto &rm_j = history[j];
+              for (const auto &p : rm_j.parts)
+                selected_text += p.text;
+              if (j < end)
+                selected_text += "\n";
+            }
+            ImGui::SetClipboardText(selected_text.c_str());
+          }
+          if (ImGui::MenuItem("Copy selection (with timestamps)")) {
+            std::string selected_text;
+            int start = std::min(selection_anchor_, selection_active_);
+            int end = std::max(selection_anchor_, selection_active_);
+            for (int j = start; j <= end; ++j) {
+              const auto &rm_j = history[j];
+              std::time_t t = (std::time_t)rm_j.timestamp;
+              std::tm *tm_ptr = std::localtime(&t);
+              char time_buf[64];
+              if (tm_ptr->tm_yday != current_yday ||
+                  tm_ptr->tm_year != current_year) {
+                std::strftime(time_buf, sizeof(time_buf),
+                              settings_.timestamp_format_long.c_str(), tm_ptr);
+              } else {
+                std::strftime(time_buf, sizeof(time_buf),
+                              settings_.timestamp_format_short.c_str(), tm_ptr);
+              }
+              selected_text += time_buf;
+              selected_text += " ";
               for (const auto &p : rm_j.parts)
                 selected_text += p.text;
               if (j < end)

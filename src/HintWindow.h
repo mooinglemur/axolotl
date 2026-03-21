@@ -2,6 +2,7 @@
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
 #include "Window.h"
+#include <imgui.h>
 #include <string>
 
 class HintWindow : public Window {
@@ -15,4 +16,7 @@ private:
   ArchipelagoNetwork &ap_network_;
   const ConnectionSettings &settings_;
   std::string filter_text_;
+
+  int selection_anchor_ = -1;
+  int selection_active_ = -1;
 };

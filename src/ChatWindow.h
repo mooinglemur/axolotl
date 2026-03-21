@@ -17,7 +17,7 @@ private:
   ConnectionSettings &settings_;
 
   char server_url_[256] = "archipelago.gg:0";
-  int selected_send_slot_idx_ = 0;
+  std::string selected_send_slot_name_;
 
   std::string input_text_;
   char input_buf_[256] = "";
