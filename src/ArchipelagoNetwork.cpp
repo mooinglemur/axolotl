@@ -212,6 +212,12 @@ void ArchipelagoNetwork::Update() {
               location_names_[game_name][loc_id.get<int64_t>()] = loc_name;
             }
           }
+          if (game_data.contains("entrance_name_to_id")) {
+            for (auto &[ent_name, ent_id] :
+                 game_data["entrance_name_to_id"].items()) {
+              entrance_names_[game_name][ent_id.get<int64_t>()] = ent_name;
+            }
+          }
         }
       }
       {
@@ -426,6 +432,11 @@ void ArchipelagoNetwork::Update() {
                     get_as_id(h_val.contains("item") ? h_val["item"] : json(0));
                 h.location_id = get_as_id(
                     h_val.contains("location") ? h_val["location"] : json(0));
+                int f_slot = (int)get_as_id(h_val.contains("finding_player")
+                                                ? h_val["finding_player"]
+                                                : (h_val.contains("finding")
+                                                       ? h_val["finding"]
+                                                       : json(-1)));
 
                 int r_slot = (int)get_as_id(
                     h_val.contains("receiving_player")
@@ -435,11 +446,14 @@ void ArchipelagoNetwork::Update() {
                                : (h_val.contains("player") ? h_val["player"]
                                                            : json(-1))));
 
-                int f_slot = (int)get_as_id(h_val.contains("finding_player")
-                                                ? h_val["finding_player"]
-                                                : (h_val.contains("finding")
-                                                       ? h_val["finding"]
-                                                       : json(-1)));
+                if (h_val.contains("entrance")) {
+                  if (h_val["entrance"].is_string()) {
+                    h.entrance_name = h_val["entrance"].get<std::string>();
+                  } else {
+                    int64_t eid = get_as_id(h_val["entrance"]);
+                    h.entrance_name = ResolveEntranceName(eid, f_slot);
+                  }
+                }
 
                 // Apply team offset to slot IDs
                 h.receiver_slot =
@@ -617,6 +631,29 @@ std::string ArchipelagoNetwork::ResolveLocationName(int64_t id, int slot) {
   for (auto const &[gn, locations] : location_names_) {
     if (locations.count(id))
       return locations.at(id);
+  }
+
+  return "";
+}
+
+std::string ArchipelagoNetwork::ResolveEntranceName(int64_t id, int slot) {
+  if (id == 0)
+    return "";
+
+  std::string game = "";
+  if (slot != -1 && slot_to_game_.count(slot)) {
+    game = slot_to_game_[slot];
+  }
+
+  if (!game.empty() && entrance_names_.count(game) &&
+      entrance_names_[game].count(id)) {
+    return entrance_names_[game][id];
+  }
+
+  // Fallback: search all games
+  for (auto const &[gn, entrances] : entrance_names_) {
+    if (entrances.count(id))
+      return entrances.at(id);
   }
 
   return "";

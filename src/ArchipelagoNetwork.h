@@ -30,6 +30,7 @@ struct RichMessage {
 struct Hint {
   int64_t item_id;
   int64_t location_id;
+  std::string entrance_name;
   int receiver_slot;
   int finder_slot;
   bool found;
@@ -78,6 +79,10 @@ public:
   GetLocationNames() const {
     return location_names_;
   }
+  const std::map<std::string, std::map<int64_t, std::string>> &
+  GetEntranceNames() const {
+    return entrance_names_;
+  }
   const std::map<int, std::string> &GetSlotToGame() const {
     return slot_to_game_;
   }
@@ -114,6 +119,7 @@ private:
   // Data Package & Handshake data
   std::map<std::string, std::map<int64_t, std::string>> item_names_;
   std::map<std::string, std::map<int64_t, std::string>> location_names_;
+  std::map<std::string, std::map<int64_t, std::string>> entrance_names_;
   std::map<int, std::string> player_names_;
   std::map<int, std::string> slot_to_game_;
 
@@ -139,6 +145,7 @@ private:
   void ResolvePendingItems();
   std::string ResolveItemName(int64_t id, int slot = -1);
   std::string ResolveLocationName(int64_t id, int slot = -1);
+  std::string ResolveEntranceName(int64_t id, int slot = -1);
 
   void CheckDayChange(std::vector<RichMessage> &history, double timestamp,
                       int64_t &last_day);

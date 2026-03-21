@@ -6,13 +6,14 @@ HintWindow::HintWindow(
     const std::map<int, std::string> &player_names,
     const std::map<std::string, std::map<int64_t, std::string>> &item_names,
     const std::map<std::string, std::map<int64_t, std::string>> &location_names,
+    const std::map<std::string, std::map<int64_t, std::string>> &entrance_names,
     const std::map<int, std::string> &slot_to_game,
     std::function<int()> get_global_slot, const ConnectionSettings &settings,
     const std::string &name)
     : Window(name), hints_(hints), player_names_(player_names),
       item_names_(item_names), location_names_(location_names),
-      slot_to_game_(slot_to_game), get_global_slot_(get_global_slot),
-      settings_(settings) {}
+      entrance_names_(entrance_names), slot_to_game_(slot_to_game),
+      get_global_slot_(get_global_slot), settings_(settings) {}
 
 static int NaturalCompare(const std::string &a, const std::string &b) {
   if (a.empty() && b.empty())
@@ -74,11 +75,12 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
         ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable |
         ImGuiTableFlags_ScrollY;
 
-    if (ImGui::BeginTable("HintTable", 5, flags)) {
+    if (ImGui::BeginTable("HintTable", 6, flags)) {
       ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("Receiver", ImGuiTableColumnFlags_WidthFixed,
                               100.0f);
       ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn("Entrance", ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("Finder", ImGuiTableColumnFlags_WidthFixed,
                               100.0f);
       ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed,
@@ -151,7 +153,13 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
               return std::string("Unknown");
             };
             delta = NaturalCompare(resolve_loc(hA), resolve_loc(hB));
-          } else if (spec->ColumnIndex == 3) { // Finder
+          } else if (spec->ColumnIndex == 3) { // Entrance
+            std::string entA =
+                hA.entrance_name.empty() ? "Vanilla" : hA.entrance_name;
+            std::string entB =
+                hB.entrance_name.empty() ? "Vanilla" : hB.entrance_name;
+            delta = NaturalCompare(entA, entB);
+          } else if (spec->ColumnIndex == 4) { // Finder
             std::string nA = player_names_.count(hA.finder_slot)
                                  ? player_names_.at(hA.finder_slot)
                                  : std::to_string(hA.finder_slot);
@@ -159,7 +167,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                                  ? player_names_.at(hB.finder_slot)
                                  : std::to_string(hB.finder_slot);
             delta = NaturalCompare(nA, nB);
-          } else if (spec->ColumnIndex == 4) { // Status
+          } else if (spec->ColumnIndex == 5) { // Status
             delta = (int)hA.found - (int)hB.found;
           }
           if (delta == 0)
@@ -216,6 +224,9 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
           }
         }
 
+        std::string entrance =
+            h.entrance_name.empty() ? "Vanilla" : h.entrance_name;
+
         std::string finder =
             player_names_.count(h.finder_slot)
                 ? player_names_.at(h.finder_slot)
@@ -225,7 +236,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
         if (!l_filter.empty()) {
           std::string l_all = item + " " + receiver + " " + location + " " +
-                              finder + " " + status;
+                              entrance + " " + finder + " " + status;
           std::transform(l_all.begin(), l_all.end(), l_all.begin(), ::tolower);
           if (l_all.find(l_filter) == std::string::npos)
             continue;
@@ -249,9 +260,11 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                                          ImGuiPopupFlags_MouseButtonRight)) {
           if (ImGui::MenuItem("Copy Hint Text (with markdown)")) {
             std::string cb = "**[Hint]:** " + receiver + "'s *" + item +
-                             "* is at **" + location + "** in **" + finder +
-                             "**'s World. (" +
-                             (h.found ? "found" : "not found") + ")";
+                             "* is at **" + location + "**";
+            if (!h.entrance_name.empty())
+              cb += " (via **" + h.entrance_name + "**)";
+            cb += " in **" + finder + "**'s World. (" +
+                  (h.found ? "found" : "not found") + ")";
             ImGui::SetClipboardText(cb.c_str());
           }
           ImGui::EndPopup();
@@ -285,7 +298,12 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
         ImGui::TableSetColumnIndex(2);
         ImGui::TextColored(ImColor(0, 255, 0), "%s", location.c_str());
 
+        // Entrance column
         ImGui::TableSetColumnIndex(3);
+        ImGui::Text("%s", entrance.c_str());
+
+        // Finder column
+        ImGui::TableSetColumnIndex(4);
         if (h.finder_slot == global_slot) {
           ImGui::TextColored(ImColor(255, 0, 255), "%s", finder.c_str());
         } else {
@@ -293,7 +311,7 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
         }
 
         // Status column: Green if found, Red if not, Yellow if unknown
-        ImGui::TableSetColumnIndex(4);
+        ImGui::TableSetColumnIndex(5);
         uint32_t status_color = 0xFF00FFFF; // Yellow Opaque (R+G)
         if (status == "Found") {
           status_color = 0xFF00FF00; // Green Opaque
