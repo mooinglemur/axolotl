@@ -308,7 +308,7 @@ sync-github:
     - apk add git
   script:
     - git remote add github https://oauth2:${GITHUB_TOKEN}@github.com/mooinglemur/axolotl.git
-    - git push github main:main
+    - git push github HEAD:main
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
