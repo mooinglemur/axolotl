@@ -289,7 +289,7 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
           std::strftime(time_buf, sizeof(time_buf),
                         settings_.timestamp_format_short.c_str(), tm_ptr);
         }
-        ImGui::Text("%s", time_buf);
+        ImGui::TextDisabled("%s", time_buf);
 
         ImGui::TableSetColumnIndex(1);
         ImGui::Text("%s", rm.source_slot.c_str());
