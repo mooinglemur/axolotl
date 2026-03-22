@@ -1,8 +1,8 @@
 #include "HintWindow.h"
 #include <algorithm>
+#include <cstring>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <cstring>
 #include <set>
 #include <string>
 
@@ -43,10 +43,22 @@ static int NaturalCompare(const std::string &a, const std::string &b) {
   return (itA == a.end()) ? -1 : 1;
 }
 
-void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
-                        ImFont *preview_fallback_font) {
+void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
+                        ImFont *preview_font, ImFont *preview_fallback_font) {
   if (!is_open_)
     return;
+
+  const auto &hints = ap_network_.GetAggregatedHints();
+  uint64_t current_version = ap_network_.GetDataVersion();
+  bool sort_dirty = false;
+  if (ImGuiTableSortSpecs *sort_specs =
+          ImGui::TableGetSortSpecs()) { // Use TableGetSortSpecs to check if
+                                        // sorting changed
+    if (sort_specs->SpecsDirty) {
+      sort_dirty = true;
+      sort_specs->SpecsDirty = false;
+    }
+  }
 
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
@@ -60,7 +72,32 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     ImGui::Separator();
 
-    auto hints = ap_network_.GetAggregatedHints();
+    if (hints.size() != last_hint_count_ || sort_dirty ||
+        current_version != last_data_version_ || force_rebuild_) {
+      last_data_version_ = current_version;
+      resolved_hints_.clear();
+      for (const auto &h : hints) {
+        ResolvedHint rh;
+        rh.hint = h;
+        rh.item_name = ap_network_.ResolveItemName(h.item_id, h.receiver_slot);
+        rh.receiver_name = ap_network_.ResolvePlayerName(h.receiver_slot);
+        rh.location_name =
+            ap_network_.ResolveLocationName(h.location_id, h.finder_slot);
+        rh.entrance_name = h.entrance_name;
+        rh.finder_name = ap_network_.ResolvePlayerName(h.finder_slot);
+        rh.status_name = h.found ? "Found" : "Not Found";
+
+        rh.lower_combined = rh.item_name + " " + rh.receiver_name + " " +
+                            rh.location_name + " " + rh.entrance_name + " " +
+                            rh.finder_name + " " +
+                            rh.status_name; // Include status in combined string
+        std::transform(rh.lower_combined.begin(), rh.lower_combined.end(),
+                       rh.lower_combined.begin(), ::tolower);
+
+        resolved_hints_.push_back(rh);
+      }
+      force_rebuild_ = false;
+    }
 
     if (ImGui::BeginTable(
             "HintTable", 6,
@@ -82,44 +119,46 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
       ImGui::TableHeadersRow();
 
       if (ImGuiTableSortSpecs *sorts_specs = ImGui::TableGetSortSpecs()) {
-        if (sorts_specs->SpecsCount > 0 && hints.size() > 1) {
-          const auto *spec = &sorts_specs->Specs[0];
-          std::sort(
-              hints.begin(), hints.end(), [&](const Hint &hA, const Hint &hB) {
-                int delta = 0;
-                if (spec->ColumnIndex == 0)
-                  delta = NaturalCompare(
-                      ap_network_.ResolveItemName(hA.item_id, hA.receiver_slot),
-                      ap_network_.ResolveItemName(hB.item_id,
-                                                  hB.receiver_slot));
-                else if (spec->ColumnIndex == 1)
-                  delta = NaturalCompare(
-                      ap_network_.ResolvePlayerName(hA.receiver_slot),
-                      ap_network_.ResolvePlayerName(hB.receiver_slot));
-                else if (spec->ColumnIndex == 2)
-                  delta = NaturalCompare(ap_network_.ResolveLocationName(
-                                             hA.location_id, hA.finder_slot),
-                                         ap_network_.ResolveLocationName(
-                                             hB.location_id, hB.finder_slot));
-                else if (spec->ColumnIndex == 3)
-                  delta = NaturalCompare(hA.entrance_name, hB.entrance_name);
-                else if (spec->ColumnIndex == 4)
-                  delta = NaturalCompare(
-                      ap_network_.ResolvePlayerName(hA.finder_slot),
-                      ap_network_.ResolvePlayerName(hB.finder_slot));
-                else if (spec->ColumnIndex == 5) {
-                  if (hA.found != hB.found)
-                    return (spec->SortDirection == ImGuiSortDirection_Ascending)
-                               ? (!hA.found && hB.found)
-                               : (hA.found && !hB.found);
-                  return false;
-                }
-                if (delta != 0)
-                  return (spec->SortDirection == ImGuiSortDirection_Ascending)
-                             ? (delta < 0)
-                             : (delta > 0);
-                return false;
-              });
+        if (sorts_specs->SpecsDirty || hints.size() != last_hint_count_ ||
+            current_version != last_data_version_ || force_rebuild_) {
+          if (sorts_specs->SpecsCount > 0 && resolved_hints_.size() > 1) {
+            const auto *spec = &sorts_specs->Specs[0];
+            std::stable_sort(
+                resolved_hints_.begin(), resolved_hints_.end(),
+                [&](const ResolvedHint &hA, const ResolvedHint &hB) {
+                  int delta = 0;
+                  if (spec->ColumnIndex == 0)
+                    delta = NaturalCompare(hA.item_name, hB.item_name);
+                  else if (spec->ColumnIndex == 1)
+                    delta = NaturalCompare(hA.receiver_name, hB.receiver_name);
+                  else if (spec->ColumnIndex == 2)
+                    delta = NaturalCompare(hA.location_name, hB.location_name);
+                  else if (spec->ColumnIndex == 3)
+                    delta = NaturalCompare(hA.entrance_name, hB.entrance_name);
+                  else if (spec->ColumnIndex == 4)
+                    delta = NaturalCompare(hA.finder_name, hB.finder_name);
+                  else if (spec->ColumnIndex == 5)
+                    delta = hA.hint.found - hB.hint.found;
+
+                  if (delta != 0)
+                    return (spec->SortDirection ==
+                            ImGuiSortDirection_Ascending)
+                               ? (delta < 0)
+                               : (delta > 0);
+
+                  // Tie-breakers
+                  int t1 = NaturalCompare(hA.item_name, hB.item_name);
+                  if (t1 != 0)
+                    return t1 < 0;
+                  int t2 = NaturalCompare(hA.receiver_name, hB.receiver_name);
+                  if (t2 != 0)
+                    return t2 < 0;
+                  return NaturalCompare(hA.location_name, hB.location_name) < 0;
+                });
+          }
+          sorts_specs->SpecsDirty = false;
+          last_hint_count_ = hints.size();
+          last_data_version_ = current_version;
         }
       }
 
@@ -137,25 +176,22 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
       if (selection_active_ >= (int)hints.size())
         selection_active_ = hints.empty() ? -1 : (int)hints.size() - 1;
 
-      for (int i = 0; i < (int)hints.size(); ++i) {
-        const auto &h = hints[i];
-        std::string item =
-            ap_network_.ResolveItemName(h.item_id, h.receiver_slot);
-        std::string receiver = ap_network_.ResolvePlayerName(h.receiver_slot);
-        std::string location =
-            ap_network_.ResolveLocationName(h.location_id, h.finder_slot);
-        std::string entrance =
-            h.entrance_name.empty() ? "Vanilla" : h.entrance_name;
-        std::string finder = ap_network_.ResolvePlayerName(h.finder_slot);
-        std::string status = h.found ? "Found" : "Not Found";
+      for (int i = 0; i < (int)resolved_hints_.size(); ++i) {
+        const auto &rh = resolved_hints_[i];
+        const auto &h = rh.hint;
 
         if (!l_filter.empty()) {
-          std::string l_all = item + " " + receiver + " " + location + " " +
-                              entrance + " " + finder + " " + status;
-          std::transform(l_all.begin(), l_all.end(), l_all.begin(), ::tolower);
-          if (l_all.find(l_filter) == std::string::npos)
+          if (rh.lower_combined.find(l_filter) == std::string::npos)
             continue;
         }
+
+        std::string item = rh.item_name;
+        std::string receiver = rh.receiver_name;
+        std::string location = rh.location_name;
+        std::string entrance =
+            h.entrance_name.empty() ? "Vanilla" : h.entrance_name;
+        std::string finder = rh.finder_name;
+        std::string status = rh.status_name;
 
         ImGui::TableNextRow();
 
@@ -212,48 +248,40 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
                         });
             }
 
-            if (ImGui::BeginPopupContextItem("HintCtx",
-                                             ImGuiPopupFlags_MouseButtonRight)) {
+            if (ImGui::BeginPopupContextItem(
+                    "HintCtx", ImGuiPopupFlags_MouseButtonRight)) {
               if (selection_anchor_ == -1) {
                 selection_anchor_ = i;
                 selection_active_ = i;
               }
               if (ImGui::MenuItem("Copy selection (with markdown)")) {
                 std::string selected_text;
-                int start = std::max(0, std::min(selection_anchor_, selection_active_));
-                int end = std::min((int)hints.size() - 1,
-                                   std::max(selection_anchor_, selection_active_));
-                for (int j = start; j <= end && j < (int)hints.size(); ++j) {
-                  const auto &h_j = hints[j];
-                  std::string item_j = ap_network_.ResolveItemName(
-                      h_j.item_id, h_j.receiver_slot);
-                  std::string receiver_j =
-                      ap_network_.ResolvePlayerName(h_j.receiver_slot);
-                  std::string location_j = ap_network_.ResolveLocationName(
-                      h_j.location_id, h_j.finder_slot);
-                  std::string entrance_j = h_j.entrance_name;
-                  std::string finder_j =
-                      ap_network_.ResolvePlayerName(h_j.finder_slot);
-                  std::string status_j = h_j.found ? "found" : "not found";
+                int start =
+                    std::max(0, std::min(selection_anchor_, selection_active_));
+                int end =
+                    std::min((int)resolved_hints_.size() - 1,
+                             std::max(selection_anchor_, selection_active_));
+                std::string l_filter = filter_text_;
+                std::transform(l_filter.begin(), l_filter.end(),
+                               l_filter.begin(), ::tolower);
 
-                  if (!filter_text_.empty()) {
-                    std::string l_filter = filter_text_;
-                    std::transform(l_filter.begin(), l_filter.end(),
-                                   l_filter.begin(), ::tolower);
-                    std::string l_all = item_j + " " + receiver_j + " " +
-                                        location_j + " " + entrance_j + " " +
-                                        finder_j + " " + status_j;
-                    std::transform(l_all.begin(), l_all.end(), l_all.begin(),
-                                   ::tolower);
-                    if (l_all.find(l_filter) == std::string::npos)
+                for (int j = start; j <= end && j < (int)resolved_hints_.size();
+                     ++j) {
+                  const auto &rh_j = resolved_hints_[j];
+                  const auto &h_j = rh_j.hint;
+
+                  if (!l_filter.empty()) {
+                    if (rh_j.lower_combined.find(l_filter) == std::string::npos)
                       continue;
                   }
 
-                  std::string cb = "**[Hint]:** " + receiver_j + "'s *" +
-                                   item_j + "* is at **" + location_j + "**";
+                  std::string cb = "**[Hint]:** " + rh_j.receiver_name +
+                                   "'s *" + rh_j.item_name + "* is at **" +
+                                   rh_j.location_name + "**";
                   if (!h_j.entrance_name.empty())
                     cb += " (via **" + h_j.entrance_name + "**)";
-                  cb += " in **" + finder_j + "**'s World. (" + status_j + ")";
+                  cb += " in **" + rh_j.finder_name + "**'s World. (" +
+                        rh_j.status_name + ")";
                   selected_text += cb;
                   if (j < end)
                     selected_text += "\n";
@@ -262,58 +290,46 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
               }
               if (ImGui::MenuItem("Copy selection (tab-delimited)")) {
                 std::string selected_text;
-                int start = std::max(0, std::min(selection_anchor_, selection_active_));
-                int end = std::min((int)hints.size() - 1,
-                                   std::max(selection_anchor_, selection_active_));
-                if (start == -1 || start >= (int)hints.size())
-                  return;
+                int start_c =
+                    std::max(0, std::min(selection_anchor_, selection_active_));
+                int end_c =
+                    std::min((int)resolved_hints_.size() - 1,
+                             std::max(selection_anchor_, selection_active_));
 
-                for (int j = start; j <= end && j < (int)hints.size(); ++j) {
-                  const auto &h_j = hints[j];
-                  std::string item_j = ap_network_.ResolveItemName(
-                      h_j.item_id, h_j.receiver_slot);
-                  std::string receiver_j =
-                      ap_network_.ResolvePlayerName(h_j.receiver_slot);
-                  std::string location_j = ap_network_.ResolveLocationName(
-                      h_j.location_id, h_j.finder_slot);
-                  std::string entrance_j = h_j.entrance_name;
-                  std::string finder_j =
-                      ap_network_.ResolvePlayerName(h_j.finder_slot);
-                  std::string status_j = h_j.found ? "found" : "not found";
+                std::string l_filter = filter_text_;
+                std::transform(l_filter.begin(), l_filter.end(),
+                               l_filter.begin(), ::tolower);
 
-                  // Filter check
-                  if (!filter_text_.empty()) {
-                    std::string l_filter = filter_text_;
-                    std::transform(l_filter.begin(), l_filter.end(),
-                                   l_filter.begin(), ::tolower);
-                    std::string l_all = item_j + " " + receiver_j + " " +
-                                        location_j + " " + entrance_j + " " +
-                                        finder_j + " " + status_j;
-                    std::transform(l_all.begin(), l_all.end(), l_all.begin(),
-                                   ::tolower);
-                    if (l_all.find(l_filter) == std::string::npos)
+                for (int j = start_c;
+                     j <= end_c && j < (int)resolved_hints_.size(); ++j) {
+                  const auto &rh_j = resolved_hints_[j];
+
+                  if (!l_filter.empty()) {
+                    if (rh_j.lower_combined.find(l_filter) == std::string::npos)
                       continue;
                   }
 
                   for (size_t c_idx = 0; c_idx < visible_cols.size(); ++c_idx) {
                     int c_num = visible_cols[c_idx].index;
                     if (c_num == 0)
-                      selected_text += item_j;
+                      selected_text += rh_j.item_name;
                     else if (c_num == 1)
-                      selected_text += receiver_j;
+                      selected_text += rh_j.receiver_name;
                     else if (c_num == 2)
-                      selected_text += location_j;
+                      selected_text += rh_j.location_name;
                     else if (c_num == 3)
-                      selected_text += entrance_j;
+                      selected_text += rh_j.entrance_name.empty()
+                                           ? "Vanilla"
+                                           : rh_j.entrance_name;
                     else if (c_num == 4)
-                      selected_text += finder_j;
+                      selected_text += rh_j.finder_name;
                     else if (c_num == 5)
-                      selected_text += status_j;
+                      selected_text += rh_j.status_name;
 
                     if (c_idx < visible_cols.size() - 1)
                       selected_text += "\t";
                   }
-                  if (j < end)
+                  if (j < end_c)
                     selected_text += "\n";
                 }
                 ImGui::SetClipboardText(selected_text.c_str());

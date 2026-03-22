@@ -16,8 +16,8 @@ ChatWindow::ChatWindow(ArchipelagoNetwork &ap_network,
   strncpy(server_url_, settings.server_url.c_str(), sizeof(server_url_) - 1);
 }
 
-void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
-                        ImFont *preview_fallback_font) {
+void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
+                        ImFont *preview_font, ImFont *preview_fallback_font) {
   if (!is_open_)
     return;
 
@@ -150,44 +150,56 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
       selection_active_ = history.empty() ? -1 : (int)history.size() - 1;
 
     // Day-change detection (simplified for multi-slot - just use system time)
-    int current_yday = -1;
-    int current_year = -1;
-    {
-      std::time_t now = std::time(nullptr);
-      std::tm *now_tm = std::localtime(&now);
-      current_yday = now_tm->tm_yday;
-      current_year = now_tm->tm_year;
-    }
+    int current_yday = current_tm->tm_yday;
+    int current_year = current_tm->tm_year;
 
     bool show_date = false;
-    if (!history.empty()) {
-      std::time_t t = (std::time_t)history.front().timestamp;
-      std::tm *rm_tm = std::localtime(&t);
-      if (rm_tm->tm_yday != current_yday || rm_tm->tm_year != current_year) {
-        show_date = true;
-      }
-    }
 
-    if (ImGui::BeginChild(
-            "ChatScrollingRegion", ImVec2(0, -footer_height_to_reserve),
-            ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar)) {
+    if (ImGui::BeginChild("ChatScrollingRegion",
+                          ImVec2(0, -footer_height_to_reserve),
+                          ImGuiChildFlags_Borders,
+                          ImGuiWindowFlags_HorizontalScrollbar |
+                              ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+      bool was_at_bottom =
+          (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 5.0f);
+      bool history_grew = (history.size() > last_history_size_);
+
       if (custom_font)
         ImGui::PushFont(custom_font);
-      const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
-      int visible_row_idx = 0;
-      for (int i = 0; i < (int)history.size(); ++i) {
-        const auto &rm = history[i];
-        ImGui::PushID(i);
 
-        ImGui::GetWindowDrawList()->ChannelsSplit(2);
-        ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+      ImGui::GetWindowDrawList()->ChannelsSplit(2);
+
+      const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
+
+      if (history.size() != last_history_size_) {
+        row_height_cache_.resize(history.size(), -1.0f);
+      }
+
+      float avg_height = ImGui::GetTextLineHeightWithSpacing();
+
+      ImGuiListClipper clipper;
+      bool use_clipper = (history.size() > 100);
+      if (use_clipper) {
+        clipper.Begin((int)history.size(), avg_height);
+      }
+
+      int pass = 0;
+      while ((use_clipper && clipper.Step()) || (!use_clipper && pass == 0)) {
+        int start = use_clipper ? clipper.DisplayStart : 0;
+        int end = use_clipper ? clipper.DisplayEnd : (int)history.size();
+        pass++;
+
+        for (int i = start; i < end; ++i) {
+          const auto &rm = history[i];
+          ImGui::PushID(i);
+
+          ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
 
         ImVec2 pos_start = ImGui::GetCursorScreenPos();
         ImGui::BeginGroup();
 
         // Timestamp
-        std::time_t t = (std::time_t)rm.timestamp;
-        std::tm *tm_ptr = std::localtime(&t);
+        const std::tm *tm_ptr = &rm.local_time;
         char time_buf[64];
         if (show_date) {
           std::strftime(time_buf, sizeof(time_buf),
@@ -203,7 +215,7 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
         ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
         ImGui::SetCursorScreenPos(pos_start);
 
-        if (settings_.shade_alternating_rows && visible_row_idx % 2 == 1) {
+        if (settings_.shade_alternating_rows && i % 2 == 1) {
           float x_min =
               ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
           float x_max =
@@ -213,6 +225,7 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
               ImVec2(x_max, pos_start.y + item_size.y),
               ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
         }
+        row_height_cache_[i] = item_size.y;
 
         bool is_selected = false;
         if (selection_anchor_ != -1 && selection_active_ != -1) {
@@ -272,8 +285,7 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
                                std::max(selection_anchor_, selection_active_));
             for (int j = start; j <= end && j < (int)history.size(); ++j) {
               const auto &rm_j = history[j];
-              std::time_t t = (std::time_t)rm_j.timestamp;
-              std::tm *tm_ptr = std::localtime(&t);
+              const std::tm *tm_ptr = &rm_j.local_time;
               char time_buf[64];
               if (show_date) {
                 std::strftime(time_buf, sizeof(time_buf),
@@ -298,18 +310,30 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
           ImGui::EndPopup();
         }
 
-        ImGui::GetWindowDrawList()->ChannelsMerge();
         ImGui::PopID();
-        visible_row_idx++;
       }
+      if (!use_clipper)
+        break;
+    }
+    ImGui::GetWindowDrawList()->ChannelsMerge();
 
       if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
           !ImGui::IsAnyItemHovered()) {
-        selection_anchor_ = -1;
         selection_active_ = -1;
       }
-      if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-        ImGui::SetScrollHereY(1.0f);
+
+      float current_scroll_max_y = ImGui::GetScrollMaxY();
+      float current_window_width = ImGui::GetWindowWidth();
+      if (was_at_bottom && (history_grew ||
+                            current_scroll_max_y != last_scroll_max_y_ ||
+                            current_window_width != last_window_width_)) {
+        ImGui::SetScrollY(current_scroll_max_y + 10000.0f);
+      }
+
+      last_history_size_ = (int)history.size();
+      last_scroll_max_y_ = current_scroll_max_y;
+      last_window_width_ = current_window_width;
+
       if (custom_font)
         ImGui::PopFont();
     }

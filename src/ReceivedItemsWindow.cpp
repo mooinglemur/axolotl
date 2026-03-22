@@ -14,7 +14,8 @@ ReceivedItemsWindow::ReceivedItemsWindow(ArchipelagoNetwork &ap_network,
   collapse_ = settings_.collapse_received_items;
 }
 
-void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
+void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
+                                 ImFont *preview_font,
                                  ImFont *preview_fallback_font) {
   if (!is_open_)
     return;
@@ -39,41 +40,47 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     ImGui::Separator();
 
-    auto history = ap_network_.GetAggregatedReceivedItems();
+    auto const &history = ap_network_.GetAggregatedReceivedItems();
+    uint64_t current_version = ap_network_.GetDataVersion();
+    if (history.size() != last_history_count_ || collapse_ != last_collapse_ ||
+        current_version != last_data_version_ || force_rebuild_) {
+      last_data_version_ = current_version;
+      display_rows_.clear();
 
-    struct DisplayRow {
-      RichMessage rm;
-      int count = 1;
-      std::string text_cache;
-    };
-    std::vector<DisplayRow> display_rows;
+      if (collapse_) {
+        std::map<std::pair<std::string, std::string>, DisplayRow> groups;
+        for (const auto &rm : history) {
+          std::string text;
+          for (const auto &p : rm.parts)
+            text += p.text;
 
-    if (collapse_) {
-      std::map<std::pair<std::string, std::string>, DisplayRow> groups;
-      for (const auto &rm : history) {
-        std::string text;
-        for (const auto &p : rm.parts)
-          text += p.text;
-
-        auto key = std::make_pair(rm.source_slot, text);
-        if (groups.find(key) == groups.end()) {
-          groups[key] = {rm, 1, text};
-        } else {
-          groups[key].count++;
-          if (rm.timestamp > groups[key].rm.timestamp) {
-            groups[key].rm.timestamp = rm.timestamp;
+          auto key = std::make_pair(rm.source_slot, text);
+          if (groups.find(key) == groups.end()) {
+            groups[key] = {rm, 1, text, ""};
+          } else {
+            groups[key].count++;
+            if (rm.timestamp > groups[key].rm.timestamp) {
+              groups[key].rm.timestamp = rm.timestamp;
+            }
           }
         }
+        for (auto const &[key, dr] : groups)
+          display_rows_.push_back(dr);
+      } else {
+        for (const auto &rm : history) {
+          std::string text;
+          for (const auto &p : rm.parts)
+            text += p.text;
+          display_rows_.push_back({rm, 1, text, ""});
+        }
       }
-      for (auto const &[key, dr] : groups)
-        display_rows.push_back(dr);
-    } else {
-      for (const auto &rm : history) {
-        std::string text;
-        for (const auto &p : rm.parts)
-          text += p.text;
-        display_rows.push_back({rm, 1, text});
+
+      for (auto &row : display_rows_) {
+        row.text_lower_cache = row.text_cache;
+        std::transform(row.text_lower_cache.begin(), row.text_lower_cache.end(),
+                       row.text_lower_cache.begin(), ::tolower);
       }
+      force_rebuild_ = false;
     }
 
     if (ImGui::BeginTable(
@@ -89,60 +96,91 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
       ImGui::TableHeadersRow();
 
       if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {
-        if (specs->SpecsCount > 0 && display_rows.size() > 1) {
-          const auto *spec = &specs->Specs[0];
-          std::sort(
-              display_rows.begin(), display_rows.end(),
-              [&](const DisplayRow &a, const DisplayRow &b) {
-                if (spec->ColumnIndex == 0) {
+        if (specs->SpecsDirty || history.size() != last_history_count_ ||
+            collapse_ != last_collapse_ ||
+            current_version != last_data_version_ || force_rebuild_) {
+          if (specs->SpecsCount > 0 && display_rows_.size() > 1) {
+            const auto *spec = &specs->Specs[0];
+            std::stable_sort(
+                display_rows_.begin(), display_rows_.end(),
+                [&](const DisplayRow &a, const DisplayRow &b) {
+                  if (spec->ColumnIndex == 0) {
+                    if (a.rm.timestamp != b.rm.timestamp)
+                      return (spec->SortDirection ==
+                              ImGuiSortDirection_Ascending)
+                                 ? (a.rm.timestamp < b.rm.timestamp)
+                                 : (a.rm.timestamp > b.rm.timestamp);
+                  } else if (spec->ColumnIndex == 1) {
+                    int delta = a.rm.source_slot.compare(b.rm.source_slot);
+                    if (delta != 0)
+                      return (spec->SortDirection ==
+                              ImGuiSortDirection_Ascending)
+                                 ? (delta < 0)
+                                 : (delta > 0);
+                  } else if (spec->ColumnIndex == 2) {
+                    int delta = a.text_cache.compare(b.text_cache);
+                    if (delta != 0)
+                      return (spec->SortDirection ==
+                              ImGuiSortDirection_Ascending)
+                                 ? (delta < 0)
+                                 : (delta > 0);
+                  }
+
+                  // Consistent tie-breakers
                   if (a.rm.timestamp != b.rm.timestamp)
-                    return (spec->SortDirection == ImGuiSortDirection_Ascending)
-                               ? (a.rm.timestamp < b.rm.timestamp)
-                               : (a.rm.timestamp > b.rm.timestamp);
-                } else if (spec->ColumnIndex == 1) {
-                  int delta = a.rm.source_slot.compare(b.rm.source_slot);
-                  if (delta != 0)
-                    return (spec->SortDirection == ImGuiSortDirection_Ascending)
-                               ? (delta < 0)
-                               : (delta > 0);
-                } else if (spec->ColumnIndex == 2) {
-                  int delta = a.text_cache.compare(b.text_cache);
-                  if (delta != 0)
-                    return (spec->SortDirection == ImGuiSortDirection_Ascending)
-                               ? (delta < 0)
-                               : (delta > 0);
-                }
-                return false;
-              });
+                    return a.rm.timestamp < b.rm.timestamp;
+                  int s_delta = a.rm.source_slot.compare(b.rm.source_slot);
+                  if (s_delta != 0)
+                    return s_delta < 0;
+                  return a.text_cache < b.text_cache;
+                });
+          }
+          specs->SpecsDirty = false;
+          last_history_count_ = history.size();
+          last_collapse_ = collapse_;
+          last_data_version_ = current_version;
         }
       }
 
       if (custom_font)
         ImGui::PushFont(custom_font);
 
-      std::time_t now = std::time(nullptr);
-      std::tm *now_tm = std::localtime(&now);
-      int current_yday = now_tm->tm_yday;
-      int current_year = now_tm->tm_year;
+      int current_yday = current_tm->tm_yday;
+      int current_year = current_tm->tm_year;
 
       const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
-      if (selection_anchor_ >= (int)display_rows.size())
-        selection_anchor_ = display_rows.empty() ? -1 : (int)display_rows.size() - 1;
-      if (selection_active_ >= (int)display_rows.size())
-        selection_active_ = display_rows.empty() ? -1 : (int)display_rows.size() - 1;
+      if (selection_anchor_ >= (int)display_rows_.size())
+        selection_anchor_ =
+            display_rows_.empty() ? -1 : (int)display_rows_.size() - 1;
+      if (selection_active_ >= (int)display_rows_.size())
+        selection_active_ =
+            display_rows_.empty() ? -1 : (int)display_rows_.size() - 1;
 
-      for (int i = 0; i < (int)display_rows.size(); ++i) {
-        const auto &row = display_rows[i];
+      std::string l_filter = filter_text_;
+      std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
+                     ::tolower);
+
+      show_long_dates_ = false;
+      if (!l_filter.empty()) {
+        int current_yday = current_tm->tm_yday;
+        int current_year = current_tm->tm_year;
+        for (const auto &row_check : display_rows_) {
+          if (row_check.text_lower_cache.find(l_filter) != std::string::npos) {
+            if (row_check.rm.local_time.tm_yday != current_yday ||
+                row_check.rm.local_time.tm_year != current_year) {
+              show_long_dates_ = true;
+              break;
+            }
+          }
+        }
+      }
+
+      for (int i = 0; i < (int)display_rows_.size(); ++i) {
+        const auto &row = display_rows_[i];
         const auto &rm = row.rm;
 
-        if (!filter_text_.empty()) {
-          std::string l_text = row.text_cache;
-          std::string l_filter = filter_text_;
-          std::transform(l_text.begin(), l_text.end(), l_text.begin(),
-                         ::tolower);
-          std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
-                         ::tolower);
-          if (l_text.find(l_filter) == std::string::npos)
+        if (!l_filter.empty()) {
+          if (row.text_lower_cache.find(l_filter) == std::string::npos)
             continue;
         }
 
@@ -194,9 +232,9 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
               if (ImGui::MenuItem("Copy Selection")) {
                 std::string selected_text;
                 int start_sel = std::max(0, std::min(selection_anchor_, selection_active_));
-                int end_sel = std::min((int)display_rows.size() - 1,
+                int end_sel = std::min((int)display_rows_.size() - 1,
                                        std::max(selection_anchor_, selection_active_));
-                if (start_sel != -1 && start_sel < (int)display_rows.size()) {
+                if (start_sel != -1 && start_sel < (int)display_rows_.size()) {
                   if (table) {
                     struct ColumnOrder {
                       int index;
@@ -216,17 +254,15 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
                               });
 
                     for (int j = start_sel; j <= end_sel; ++j) {
-                      const auto &row_j = display_rows[j];
+                      const auto &row_j = display_rows_[j];
                       for (size_t c_idx = 0; c_idx < visible_cols.size();
                            ++c_idx) {
                         int c_num = visible_cols[c_idx].index;
                         if (c_num == 0) {
                           // Timestamp column
-                          std::time_t t_j = (std::time_t)row_j.rm.timestamp;
-                          std::tm *tm_ptr_j = std::localtime(&t_j);
+                          const std::tm *tm_ptr_j = &row_j.rm.local_time;
                           char t_buf[64];
-                          if (tm_ptr_j->tm_yday != current_yday ||
-                              tm_ptr_j->tm_year != current_year) {
+                          if (show_long_dates_) {
                             std::strftime(
                                 t_buf, sizeof(t_buf),
                                 settings_.timestamp_format_long.c_str(),
@@ -278,11 +314,9 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
           ImGui::SameLine(0, 0);
         }
 
-        std::time_t t = (std::time_t)rm.timestamp;
-        std::tm *tm_ptr = std::localtime(&t);
+        const std::tm *tm_ptr = &row.rm.local_time;
         char time_buf[64];
-        if (tm_ptr->tm_yday != current_yday ||
-            tm_ptr->tm_year != current_year) {
+        if (show_long_dates_) {
           std::strftime(time_buf, sizeof(time_buf),
                         settings_.timestamp_format_long.c_str(), tm_ptr);
         } else {

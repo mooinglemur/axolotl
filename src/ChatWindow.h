@@ -9,7 +9,8 @@ class ChatWindow : public Window {
 public:
   ChatWindow(ArchipelagoNetwork &ap_network, ConnectionSettings &settings,
              const std::string &name = "Chat");
-  void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
+  void Render(std::tm *current_tm, ImFont *custom_font = nullptr,
+              ImFont *preview_font = nullptr,
               ImFont *preview_fallback_font = nullptr) override;
 
 private:
@@ -39,4 +40,9 @@ private:
 
   static int TextEditCallbackStub(ImGuiInputTextCallbackData *data);
   int TextEditCallback(ImGuiInputTextCallbackData *data);
+
+  std::vector<float> row_height_cache_;
+  size_t last_history_size_ = 0;
+  float last_scroll_max_y_ = 0;
+  float last_window_width_ = 0;
 };

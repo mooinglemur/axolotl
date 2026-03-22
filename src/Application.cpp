@@ -614,7 +614,15 @@ void Application::Run() {
       ImGui::EndPopup();
     }
 
-    RenderUI();
+    std::time_t now = std::time(nullptr);
+    std::tm current_tm;
+#ifdef _WIN32
+    localtime_s(&current_tm, &now);
+#else
+    localtime_r(&now, &current_tm);
+#endif
+
+    RenderUI(&current_tm);
 
     ImGui::Render();
 #ifdef __APPLE__
@@ -663,9 +671,10 @@ void Application::AddWindow(std::unique_ptr<Window> window) {
   windows_.push_back(std::move(window));
 }
 
-void Application::RenderUI() {
+void Application::RenderUI(std::tm *current_tm) {
   for (auto &window : windows_) {
-    window->Render(content_font_, preview_font_, preview_fallback_font_);
+    window->Render(current_tm, content_font_, preview_font_,
+                   preview_fallback_font_);
   }
 }
 

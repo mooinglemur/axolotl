@@ -1,5 +1,6 @@
 #pragma once
 #include "ArchipelagoNetwork.h"
+#include <ctime>
 #include <imgui.h>
 #include <set>
 #include <string>
@@ -69,7 +70,7 @@ public:
   Window(const std::string &name) : name_(name) {}
   virtual ~Window() = default;
 
-  virtual void Render(ImFont *custom_font = nullptr,
+  virtual void Render(std::tm *current_tm, ImFont *custom_font = nullptr,
                       ImFont *preview_font = nullptr,
                       ImFont *preview_fallback_font = nullptr) = 0;
 

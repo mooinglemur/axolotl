@@ -172,6 +172,7 @@ bool ArchipelagoSession::Update() {
       Disconnect();
       RichMessage rm;
       rm.timestamp = GetCurrentTimestamp();
+      rm.populate_local_time();
       rm.parts.push_back(
           {"[System][" + name_ +
                "] Reconnection attempts timed out after 5 minutes.",
@@ -194,6 +195,7 @@ bool ArchipelagoSession::Update() {
     local_status.pop();
     RichMessage rm;
     rm.timestamp = q_status.timestamp;
+    rm.populate_local_time();
     rm.parts.push_back(
         {"[System][" + name_ + "] " + q_status.message, 0xFFAAAAAA});
     manager_->OnGlobalMessage(this, rm, false);
@@ -259,6 +261,7 @@ bool ArchipelagoSession::Update() {
 
       RichMessage rm;
       rm.timestamp = msg_time;
+      rm.populate_local_time();
       rm.parts.push_back(
           {name_ + " connected (Slot " + std::to_string(local_slot_) + ")",
            0xFF00FF00});
@@ -296,6 +299,7 @@ bool ArchipelagoSession::Update() {
         connection_error_time_ = GetCurrentTimestamp();
       RichMessage rm;
       rm.timestamp = msg_time;
+      rm.populate_local_time();
       rm.parts.push_back(
           {"Connection refused for " + name_ + ": " + packet.dump(),
            0xFF0000FF});
@@ -303,6 +307,7 @@ bool ArchipelagoSession::Update() {
     } else if (cmd == "PrintJSON") {
       RichMessage rm;
       rm.timestamp = msg_time;
+      rm.populate_local_time();
       rm.source_slot = name_;
       bool is_item_event = false;
       if (packet.contains("type")) {
@@ -448,6 +453,7 @@ bool ArchipelagoSession::Update() {
 
         RichMessage rm;
         rm.timestamp = msg_time;
+        rm.populate_local_time();
         rm.source_slot = name_;
         uint32_t color = 0xFFFFFF00;
         if (flags & 0x01)
@@ -572,6 +578,10 @@ void ArchipelagoSession::SendGetHints() {
                          std::to_string(local_slot_);
   packet.push_back({{"cmd", "Get"}, {"keys", {hint_key}}});
   webSocket_.send(packet.dump());
+}
+
+void ArchipelagoSession::ReResolveHistory() {
+  manager_->ReResolveHistoryVector(received_items_history_);
 }
 
 std::string ArchipelagoSession::ResolveItemName(int64_t id, int slot) {
@@ -752,7 +762,7 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
     return;
 
   if (is_item_feed) {
-    aggregated_items_dirty_ = true;
+    SetItemsDirty(); // Replaced aggregated_items_dirty_ = true;
     CheckDayChange(item_history_, msg.timestamp, last_item_day_);
     item_history_.push_back(msg);
   } else {
@@ -815,6 +825,7 @@ void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
                                          const std::string &msg) {
   RichMessage rm;
   rm.timestamp = GetCurrentTimestamp();
+  rm.populate_local_time();
 
   std::string final_msg = msg;
   if (settings_ && settings_->streamer_mode) {
@@ -925,54 +936,71 @@ const std::vector<Hint> &ArchipelagoNetwork::GetAggregatedHints() const {
 
 void ArchipelagoNetwork::CheckDayChange(std::vector<RichMessage> &history,
                                         double timestamp, int64_t &last_day) {
+  struct tm tm_info;
   time_t t = (time_t)timestamp;
-  struct tm *tm_info = localtime(&t);
+#ifdef _WIN32
+  localtime_s(&tm_info, &t);
+#else
+  localtime_r(&t, &tm_info);
+#endif
 
-  int64_t current_day = (int64_t)(tm_info->tm_year + 1900) * 10000 +
-                        (int64_t)(tm_info->tm_mon + 1) * 100 +
-                        (int64_t)tm_info->tm_mday;
+  int64_t current_day = (int64_t)(tm_info.tm_year + 1900) * 10000 +
+                        (int64_t)(tm_info.tm_mon + 1) * 100 +
+                        (int64_t)tm_info.tm_mday;
 
   if (last_day != -1 && current_day != last_day) {
     RichMessage dm;
-    struct tm day_start = *tm_info;
+    struct tm day_start = tm_info;
     day_start.tm_hour = 0;
     day_start.tm_min = 0;
     day_start.tm_sec = 0;
     dm.timestamp = (double)mktime(&day_start);
+    dm.populate_local_time();
 
     char buf[64];
-    strftime(buf, sizeof(buf), "Day changed to %Y-%m-%d", tm_info);
+    strftime(buf, sizeof(buf), "Day changed to %Y-%m-%d", &tm_info);
     dm.parts.push_back({buf, 0xFFAAAAAA});
     history.push_back(dm);
   }
   last_day = current_day;
 }
 
-void ArchipelagoNetwork::ReResolveHistory() {
-  auto reresolve = [&](std::vector<RichMessage> &history) {
-    for (auto &rm : history) {
-      for (auto &part : rm.parts) {
-        if (part.text.find("Unknown Item ") == 0) {
-          try {
-            int64_t id = std::stoll(part.text.substr(13));
-            std::string name = ResolveItemName(id, rm.receiver_slot);
-            if (!name.empty())
-              part.text = name;
-          } catch (...) {
-          }
+void ArchipelagoNetwork::ReResolveHistoryVector(
+    std::vector<RichMessage> &history) {
+  for (auto &rm : history) {
+    for (auto &part : rm.parts) {
+      if (part.text.find("Unknown Item ") == 0) {
+        try {
+          int64_t id = std::stoll(part.text.substr(13));
+          std::string name = ResolveItemName(id, rm.receiver_slot);
+          if (!name.empty())
+            part.text = name;
+        } catch (...) {
         }
-        if (part.text.find("Unknown Location ") == 0) {
-          try {
-            int64_t id = std::stoll(part.text.substr(17));
-            std::string name = ResolveLocationName(id, rm.sender_slot);
-            if (!name.empty())
-              part.text = name;
-          } catch (...) {
-          }
+      }
+      if (part.text.find("Unknown Location ") == 0) {
+        try {
+          int64_t id = std::stoll(part.text.substr(17));
+          std::string name = ResolveLocationName(id, rm.sender_slot);
+          if (!name.empty())
+            part.text = name;
+        } catch (...) {
         }
       }
     }
-  };
-  reresolve(chat_history_);
-  reresolve(item_history_);
+  }
+}
+
+void ArchipelagoNetwork::ReResolveHistory() {
+  ReResolveHistoryVector(chat_history_);
+  ReResolveHistoryVector(item_history_);
+  for (auto &s : sessions_) {
+    s->ReResolveHistory();
+  }
+  data_version_++;
+}
+
+void ArchipelagoNetwork::SetItemsDirty() {
+  aggregated_items_dirty_ = true;
+  data_version_++;
 }

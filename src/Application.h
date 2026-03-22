@@ -34,7 +34,7 @@ public:
   ArchipelagoNetwork &GetNetwork() { return ap_network_; }
 
 private:
-  void RenderUI();
+  void RenderUI(std::tm *current_tm);
 
   GLFWwindow *window_ = nullptr;
 

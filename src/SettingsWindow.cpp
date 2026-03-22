@@ -24,7 +24,8 @@ SettingsWindow::SettingsWindow(
   }
 }
 
-void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
+void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
+                            ImFont *preview_font,
                             ImFont *preview_fallback_font) {
   bool opening = !was_open_ && is_open_;
   bool closing = was_open_ && !is_open_;

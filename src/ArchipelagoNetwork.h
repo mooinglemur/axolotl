@@ -14,7 +14,7 @@
 #include <nlohmann/json.hpp>
 #include <queue>
 #include <set>
-#include <string>
+#include <ctime>
 #include <vector>
 
 struct MessagePart {
@@ -29,6 +29,16 @@ struct RichMessage {
   int sender_slot = -1;
   int receiver_slot = -1;
   std::string source_slot; // Name of the slot that received this
+  struct tm local_time;    // Cached local time to avoid redundant syscalls
+
+  void populate_local_time() {
+    time_t t = (time_t)timestamp;
+#ifdef _WIN32
+    localtime_s(&local_time, &t);
+#else
+    localtime_r(&t, &local_time);
+#endif
+  }
 };
 
 struct Hint {
@@ -64,6 +74,7 @@ public:
   void Disconnect();
   bool Update();
   void SendChat(const std::string &message);
+  void ReResolveHistory();
 
   State GetState() const;
   bool IsConnected() const { return GetState() == State::Connected; }
@@ -189,7 +200,7 @@ public:
   bool IsAnySessionActive() const;
 
   void SetHintsDirty() { aggregated_hints_dirty_ = true; }
-  void SetItemsDirty() { aggregated_items_dirty_ = true; }
+  void SetItemsDirty();
 
   // Callbacks
   std::function<void()> on_history_updated;
@@ -207,6 +218,8 @@ public:
   static std::string MaskURL(const std::string &url);
   bool IsMasterSession(ArchipelagoSession *session) const;
   void ReResolveHistory();
+  void ReResolveHistoryVector(std::vector<RichMessage> &history);
+  uint64_t GetDataVersion() const { return data_version_; }
 
 private:
   std::function<void()> wake_up_callback_;
@@ -231,4 +244,5 @@ private:
   mutable std::vector<Hint> aggregated_hints_cache_;
   mutable bool aggregated_items_dirty_ = true;
   mutable bool aggregated_hints_dirty_ = true;
+  uint64_t data_version_ = 0;
 };

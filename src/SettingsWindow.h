@@ -12,7 +12,8 @@ public:
                  std::function<void(const std::string &)> on_preview,
                  std::function<void(const std::string &)> on_fallback_preview,
                  const std::string &name = "Settings");
-  void Render(ImFont *custom_font = nullptr, ImFont *preview_font = nullptr,
+  void Render(std::tm *current_tm, ImFont *custom_font = nullptr,
+              ImFont *preview_font = nullptr,
               ImFont *preview_fallback_font = nullptr) override;
 
 private:
