@@ -818,14 +818,19 @@ void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
   if (settings_ && settings_->streamer_mode) {
     static const std::vector<std::string> keywords = {
         "Connecting to ", "WebSocket connected to ",
-        "WebSocket disconnected from "};
+        "WebSocket disconnected from ", "Unable to connect to ",
+        "Executing deferred fallback to "};
 
     for (const auto &kw : keywords) {
       size_t pos = final_msg.find(kw);
       if (pos != std::string::npos) {
         size_t start = pos + kw.length();
-        // Mask until space or end of string (preserving the trailing "...")
         size_t end = final_msg.find_first_of(" \n", start);
+        if (end != std::string::npos && final_msg.compare(end, 9, " on port ") == 0) {
+          size_t port_end = final_msg.find_first_of(" \n", end + 9);
+          end = port_end;
+        }
+
         bool has_dots = false;
         if (end == std::string::npos) {
           end = final_msg.length();
