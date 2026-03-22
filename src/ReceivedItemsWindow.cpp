@@ -126,6 +126,11 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
       int current_year = now_tm->tm_year;
 
       const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
+      if (selection_anchor_ >= (int)display_rows.size())
+        selection_anchor_ = display_rows.empty() ? -1 : (int)display_rows.size() - 1;
+      if (selection_active_ >= (int)display_rows.size())
+        selection_active_ = display_rows.empty() ? -1 : (int)display_rows.size() - 1;
+
       for (int i = 0; i < (int)display_rows.size(); ++i) {
         const auto &row = display_rows[i];
         const auto &rm = row.rm;
@@ -165,8 +170,13 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
               if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
                 selection_active_ = i;
               else {
-                selection_anchor_ = i;
-                selection_active_ = i;
+                if (selection_anchor_ == i && selection_active_ == i) {
+                  selection_anchor_ = -1;
+                  selection_active_ = -1;
+                } else {
+                  selection_anchor_ = i;
+                  selection_active_ = i;
+                }
               }
             }
             if (ImGui::IsItemHovered(
@@ -177,11 +187,16 @@ void ReceivedItemsWindow::Render(ImFont *custom_font, ImFont *preview_font,
             ImGuiTable *table = ImGui::GetCurrentTable();
             if (ImGui::BeginPopupContextItem(
                     "ReceivedLineCtx", ImGuiPopupFlags_MouseButtonRight)) {
+              if (selection_anchor_ == -1) {
+                selection_anchor_ = i;
+                selection_active_ = i;
+              }
               if (ImGui::MenuItem("Copy Selection")) {
                 std::string selected_text;
-                int start_sel = std::min(selection_anchor_, selection_active_);
-                int end_sel = std::max(selection_anchor_, selection_active_);
-                if (start_sel != -1) {
+                int start_sel = std::max(0, std::min(selection_anchor_, selection_active_));
+                int end_sel = std::min((int)display_rows.size() - 1,
+                                       std::max(selection_anchor_, selection_active_));
+                if (start_sel != -1 && start_sel < (int)display_rows.size()) {
                   if (table) {
                     struct ColumnOrder {
                       int index;

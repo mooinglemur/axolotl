@@ -132,6 +132,11 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
       const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
 
+      if (selection_anchor_ >= (int)hints.size())
+        selection_anchor_ = hints.empty() ? -1 : (int)hints.size() - 1;
+      if (selection_active_ >= (int)hints.size())
+        selection_active_ = hints.empty() ? -1 : (int)hints.size() - 1;
+
       for (int i = 0; i < (int)hints.size(); ++i) {
         const auto &h = hints[i];
         std::string item =
@@ -175,8 +180,13 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
               if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
                 selection_active_ = i;
               else {
-                selection_anchor_ = i;
-                selection_active_ = i;
+                if (selection_anchor_ == i && selection_active_ == i) {
+                  selection_anchor_ = -1;
+                  selection_active_ = -1;
+                } else {
+                  selection_anchor_ = i;
+                  selection_active_ = i;
+                }
               }
             }
             if (ImGui::IsItemHovered(
@@ -204,11 +214,16 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
             if (ImGui::BeginPopupContextItem("HintCtx",
                                              ImGuiPopupFlags_MouseButtonRight)) {
+              if (selection_anchor_ == -1) {
+                selection_anchor_ = i;
+                selection_active_ = i;
+              }
               if (ImGui::MenuItem("Copy selection (with markdown)")) {
                 std::string selected_text;
-                int start = std::min(selection_anchor_, selection_active_);
-                int end = std::max(selection_anchor_, selection_active_);
-                for (int j = start; j <= end; ++j) {
+                int start = std::max(0, std::min(selection_anchor_, selection_active_));
+                int end = std::min((int)hints.size() - 1,
+                                   std::max(selection_anchor_, selection_active_));
+                for (int j = start; j <= end && j < (int)hints.size(); ++j) {
                   const auto &h_j = hints[j];
                   std::string item_j = ap_network_.ResolveItemName(
                       h_j.item_id, h_j.receiver_slot);
@@ -247,12 +262,13 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
               }
               if (ImGui::MenuItem("Copy selection (tab-delimited)")) {
                 std::string selected_text;
-                int start = std::min(selection_anchor_, selection_active_);
-                int end = std::max(selection_anchor_, selection_active_);
-                if (start == -1)
+                int start = std::max(0, std::min(selection_anchor_, selection_active_));
+                int end = std::min((int)hints.size() - 1,
+                                   std::max(selection_anchor_, selection_active_));
+                if (start == -1 || start >= (int)hints.size())
                   return;
 
-                for (int j = start; j <= end; ++j) {
+                for (int j = start; j <= end && j < (int)hints.size(); ++j) {
                   const auto &h_j = hints[j];
                   std::string item_j = ap_network_.ResolveItemName(
                       h_j.item_id, h_j.receiver_slot);

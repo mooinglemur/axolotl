@@ -144,6 +144,11 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
 
+    if (selection_anchor_ >= (int)history.size())
+      selection_anchor_ = history.empty() ? -1 : (int)history.size() - 1;
+    if (selection_active_ >= (int)history.size())
+      selection_active_ = history.empty() ? -1 : (int)history.size() - 1;
+
     // Day-change detection (simplified for multi-slot - just use system time)
     int current_yday = -1;
     int current_year = -1;
@@ -227,8 +232,13 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
           if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
             selection_active_ = i;
           else {
-            selection_anchor_ = i;
-            selection_active_ = i;
+            if (selection_anchor_ == i && selection_active_ == i) {
+              selection_anchor_ = -1;
+              selection_active_ = -1;
+            } else {
+              selection_anchor_ = i;
+              selection_active_ = i;
+            }
           }
         }
         if (ImGui::IsItemHovered(
@@ -238,11 +248,16 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
         if (ImGui::BeginPopupContextItem("ChatLineCtx",
                                          ImGuiPopupFlags_MouseButtonRight)) {
+          if (selection_anchor_ == -1) {
+            selection_anchor_ = i;
+            selection_active_ = i;
+          }
           if (ImGui::MenuItem("Copy selection")) {
             std::string selected_text;
-            int start = std::min(selection_anchor_, selection_active_);
-            int end = std::max(selection_anchor_, selection_active_);
-            for (int j = start; j <= end; ++j) {
+            int start = std::max(0, std::min(selection_anchor_, selection_active_));
+            int end = std::min((int)history.size() - 1,
+                               std::max(selection_anchor_, selection_active_));
+            for (int j = start; j <= end && j < (int)history.size(); ++j) {
               for (const auto &p : history[j].parts)
                 selected_text += p.text;
               if (j < end)
@@ -252,9 +267,10 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
           }
           if (ImGui::MenuItem("Copy selection (with timestamps)")) {
             std::string selected_text;
-            int start = std::min(selection_anchor_, selection_active_);
-            int end = std::max(selection_anchor_, selection_active_);
-            for (int j = start; j <= end; ++j) {
+            int start = std::max(0, std::min(selection_anchor_, selection_active_));
+            int end = std::min((int)history.size() - 1,
+                               std::max(selection_anchor_, selection_active_));
+            for (int j = start; j <= end && j < (int)history.size(); ++j) {
               const auto &rm_j = history[j];
               std::time_t t = (std::time_t)rm_j.timestamp;
               std::tm *tm_ptr = std::localtime(&t);

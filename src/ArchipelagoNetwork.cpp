@@ -82,6 +82,8 @@ void ArchipelagoSession::Connect(const std::string &url,
 }
 
 void ArchipelagoSession::Disconnect() {
+  if (!user_wants_connection_)
+    return;
   webSocket_.stop();
   is_connected_ = false;
   user_wants_connection_ = false;
