@@ -27,6 +27,7 @@ struct ConnectionSettings {
   int window_x = -1; // -1 means center on monitor
   int window_y = -1;
   bool collapse_received_items = true;
+  bool streamer_mode = false;
   std::map<std::string, bool> show_windows;
 };
 

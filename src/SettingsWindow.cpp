@@ -95,6 +95,12 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
       ImGui::SetTooltip("Maximum number of lines to retain in the Item feed (0 "
                         "= Unlimited).");
 
+    ImGui::Checkbox("Streamer Mode", &settings_.streamer_mode);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip(
+          "Hide server name and port number unless the cursor is focused in "
+          "the field editing the URL");
+
     // ImGui::Spacing();
     ImGui::Dummy(ImVec2(0.0f, 20.0f));
 

@@ -17,6 +17,7 @@ private:
   ConnectionSettings &settings_;
 
   char server_url_[256] = "archipelago.gg:0";
+  char masked_url_[256] = "";
   std::string selected_send_slot_name_;
 
   std::string input_text_;
@@ -33,6 +34,7 @@ private:
 
   int selection_anchor_ = -1;
   int selection_active_ = -1;
+  bool wants_focus_url_ = false;
   bool focus_input_ = false;
 
   static int TextEditCallbackStub(ImGuiInputTextCallbackData *data);

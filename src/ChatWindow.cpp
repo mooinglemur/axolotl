@@ -4,6 +4,7 @@
 #include <cstring>
 #include <ctime>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <set>
 
 ChatWindow::ChatWindow(ArchipelagoNetwork &ap_network,
@@ -29,8 +30,38 @@ void ChatWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     ImGui::SetNextItemWidth(server_width);
     ImGui::BeginDisabled(ap_network_.IsAnySessionActive());
-    if (ImGui::InputText("Server URL", server_url_, sizeof(server_url_))) {
-      settings_.server_url = server_url_;
+
+    char *input_buf = server_url_;
+    ImGuiID url_id = ImGui::GetID("Server URL");
+    // We show the real URL if focused OR if streamer mode is OFF
+    bool show_real = !settings_.streamer_mode || (ImGui::GetActiveID() == url_id) ||
+                     (ImGui::GetFocusID() == url_id) || wants_focus_url_;
+
+    if (!show_real) {
+      std::string masked = ArchipelagoNetwork::MaskURL(server_url_);
+      memset(masked_url_, 0, sizeof(masked_url_));
+      strncpy(masked_url_, masked.c_str(), sizeof(masked_url_) - 1);
+      input_buf = masked_url_;
+    }
+
+    if (show_real && wants_focus_url_) {
+      ImGui::SetKeyboardFocusHere();
+      wants_focus_url_ = false;
+    }
+
+    const char *label = (input_buf == server_url_) ? "Server URL" : "Server URL##Masked";
+    ImGuiInputTextFlags flags =
+        (input_buf == server_url_) ? 0 : ImGuiInputTextFlags_ReadOnly;
+    if (ImGui::InputText(label, input_buf,
+                         (input_buf == server_url_) ? sizeof(server_url_)
+                                                    : strlen(input_buf) + 1,
+                         flags)) {
+      if (input_buf == server_url_) {
+        settings_.server_url = server_url_;
+      }
+    }
+    if (input_buf != server_url_ && ImGui::IsItemClicked()) {
+      wants_focus_url_ = true;
     }
     ImGui::EndDisabled();
     ImGui::SameLine();

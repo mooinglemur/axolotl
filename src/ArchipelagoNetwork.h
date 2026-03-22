@@ -145,6 +145,8 @@ private:
   int64_t last_received_day_ = -1;
 };
 
+struct ConnectionSettings;
+
 class ArchipelagoNetwork {
 public:
   using State = ArchipelagoSession::State;
@@ -201,6 +203,8 @@ public:
   void OnGlobalMessage(ArchipelagoSession *session, const RichMessage &msg,
                        bool is_item_feed);
   void OnStatusMessage(ArchipelagoSession *session, const std::string &msg);
+  void SetSettings(const ConnectionSettings *settings) { settings_ = settings; }
+  static std::string MaskURL(const std::string &url);
   bool IsMasterSession(ArchipelagoSession *session) const;
   void ReResolveHistory();
 
@@ -217,6 +221,7 @@ private:
   std::vector<RichMessage> chat_history_;
   std::vector<RichMessage> item_history_;
   int max_history_size_ = 0;
+  const ConnectionSettings *settings_ = nullptr;
   std::map<std::string, std::shared_ptr<ServerMetadata>> url_to_metadata_;
 
   std::set<int> connected_slots_cache_;

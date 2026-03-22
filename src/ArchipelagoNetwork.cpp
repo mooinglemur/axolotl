@@ -78,6 +78,7 @@ void ArchipelagoSession::Connect(const std::string &url,
 
   webSocket_.start();
   user_wants_connection_ = true;
+  manager_->OnStatusMessage(this, "Connecting to " + full_url + "...");
 }
 
 void ArchipelagoSession::Disconnect() {
@@ -634,6 +635,15 @@ void ArchipelagoSession::ResolvePendingItems() {
 // --- ArchipelagoNetwork (Manager) ---
 
 ArchipelagoNetwork::ArchipelagoNetwork() {}
+
+std::string ArchipelagoNetwork::MaskURL(const std::string &url) {
+  size_t protocol_pos = url.find("://");
+  if (protocol_pos != std::string::npos) {
+    std::string protocol = url.substr(0, protocol_pos + 3);
+    return protocol + std::string(url.length() - protocol.length(), '*');
+  }
+  return std::string(url.length(), '*');
+}
 ArchipelagoNetwork::~ArchipelagoNetwork() {
   sessions_.clear(); // This will destroy sessions and stop their websockets
 }
@@ -801,8 +811,54 @@ std::string ArchipelagoNetwork::ResolvePlayerName(int slot) {
 
 void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
                                          const std::string &msg) {
-  // Always log status messages? Or only from master?
-  // Let's log them from all for now, but prefixed.
+  RichMessage rm;
+  rm.timestamp = GetCurrentTimestamp();
+
+  std::string final_msg = msg;
+  if (settings_ && settings_->streamer_mode) {
+    static const std::vector<std::string> keywords = {
+        "Connecting to ", "WebSocket connected to ",
+        "WebSocket disconnected from "};
+
+    for (const auto &kw : keywords) {
+      size_t pos = final_msg.find(kw);
+      if (pos != std::string::npos) {
+        size_t start = pos + kw.length();
+        // Mask until space or end of string (preserving the trailing "...")
+        size_t end = final_msg.find_first_of(" \n", start);
+        bool has_dots = false;
+        if (end == std::string::npos) {
+          end = final_msg.length();
+          if (final_msg.length() >= 3 &&
+              final_msg.substr(final_msg.length() - 3) == "...") {
+            end -= 3;
+            has_dots = true;
+          }
+        }
+
+        std::string url = final_msg.substr(start, end - start);
+        final_msg.replace(start, end - start, MaskURL(url));
+        break;
+      }
+    }
+  }
+
+  MessagePart p;
+  p.text = "[System] " + final_msg;
+  p.color = 0xFFAAAAAA; // Light Gray
+  rm.parts.push_back(p);
+
+  CheckDayChange(chat_history_, rm.timestamp, last_chat_day_);
+  chat_history_.push_back(rm);
+
+  if (max_history_size_ > 0 && (int)chat_history_.size() > max_history_size_) {
+    chat_history_.erase(chat_history_.begin(),
+                        chat_history_.begin() +
+                            (chat_history_.size() - max_history_size_));
+  }
+
+  if (on_history_updated)
+    on_history_updated();
 }
 
 bool ArchipelagoNetwork::IsMasterSession(ArchipelagoSession *session) const {

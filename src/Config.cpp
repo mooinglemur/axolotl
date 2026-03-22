@@ -133,6 +133,8 @@ ConnectionSettings Config::Load() {
     if (config["collapse_received_items"])
       settings.collapse_received_items =
           config["collapse_received_items"].as<bool>();
+    if (config["streamer_mode"])
+      settings.streamer_mode = config["streamer_mode"].as<bool>();
     if (config["show_windows"]) {
       for (const auto &kv : config["show_windows"]) {
         settings.show_windows[kv.first.as<std::string>()] =
@@ -174,6 +176,7 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::Key << "window_y" << YAML::Value << settings.window_y;
   out << YAML::Key << "collapse_received_items" << YAML::Value
       << settings.collapse_received_items;
+  out << YAML::Key << "streamer_mode" << YAML::Value << settings.streamer_mode;
 
   out << YAML::Key << "show_windows" << YAML::Value << YAML::BeginMap;
   for (const auto &kv : settings.show_windows) {

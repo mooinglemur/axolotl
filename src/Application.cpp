@@ -40,6 +40,7 @@
 Application::Application()
     : current_config_(Config::Load()), pending_config_(current_config_) {
   is_first_launch_ = !std::filesystem::exists(Config::GetConfigPath());
+  ap_network_.SetSettings(&current_config_);
   ap_network_.on_history_updated = [this]() {};
   for (const auto &slot : current_config_.slots) {
     ap_network_.AddSession(slot.name);
