@@ -64,7 +64,8 @@ void HintWindow::Render(ImFont *custom_font, ImFont *preview_font,
 
     if (ImGui::BeginTable(
             "HintTable", 6,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+            ImGuiTableFlags_Borders |
+                (settings_.shade_alternating_rows ? ImGuiTableFlags_RowBg : 0) |
                 ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
                 ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable |
                 ImGuiTableFlags_ScrollY)) {

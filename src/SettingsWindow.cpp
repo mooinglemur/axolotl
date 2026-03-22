@@ -101,6 +101,10 @@ void SettingsWindow::Render(ImFont *custom_font, ImFont *preview_font,
           "Hide server name and port number unless the cursor is focused in "
           "the field editing the URL");
 
+    ImGui::Checkbox("Shade alternating rows", &settings_.shade_alternating_rows);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Toggle alternating row shading on all tables.");
+
     // ImGui::Spacing();
     ImGui::Dummy(ImVec2(0.0f, 20.0f));
 

@@ -141,6 +141,9 @@ ConnectionSettings Config::Load() {
             kv.second.as<bool>();
       }
     }
+    if (config["shade_alternating_rows"])
+      settings.shade_alternating_rows =
+          config["shade_alternating_rows"].as<bool>();
   } catch (const std::exception &e) {
     std::cerr << "Error loading config: " << e.what() << std::endl;
   }
@@ -177,7 +180,8 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::Key << "collapse_received_items" << YAML::Value
       << settings.collapse_received_items;
   out << YAML::Key << "streamer_mode" << YAML::Value << settings.streamer_mode;
-
+  out << YAML::Key << "shade_alternating_rows" << YAML::Value
+      << settings.shade_alternating_rows;
   out << YAML::Key << "show_windows" << YAML::Value << YAML::BeginMap;
   for (const auto &kv : settings.show_windows) {
     out << YAML::Key << kv.first << YAML::Value << kv.second;

@@ -96,7 +96,7 @@ void ItemFeedWindow::Render(ImFont *custom_font, ImFont *preview_font,
         ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
         ImGui::SetCursorScreenPos(pos_start);
 
-        if (visible_row_idx % 2 == 1) {
+        if (settings_.shade_alternating_rows && visible_row_idx % 2 == 1) {
           float x_min =
               ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
           float x_max =

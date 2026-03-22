@@ -28,6 +28,7 @@ struct ConnectionSettings {
   int window_y = -1;
   bool collapse_received_items = true;
   bool streamer_mode = false;
+  bool shade_alternating_rows = true;
   std::map<std::string, bool> show_windows;
 };
 
