@@ -19,8 +19,8 @@ private:
   bool personal_only_;
   std::string filter_text_;
 
-  int selection_anchor_ = -1;
-  int selection_active_ = -1;
+  int selection_anchor_idx_ = -1;
+  int selection_active_idx_ = -1;
 
   std::vector<float> row_height_cache_;
   std::vector<int> display_indices_;

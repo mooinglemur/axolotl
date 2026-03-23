@@ -92,10 +92,10 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       bool history_grew =
           ((int)display_indices_.size() > last_display_indices_size_);
 
-      if (selection_anchor_ >= (int)history.size())
-        selection_anchor_ = history.empty() ? -1 : (int)history.size() - 1;
-      if (selection_active_ >= (int)history.size())
-        selection_active_ = history.empty() ? -1 : (int)history.size() - 1;
+      if (selection_anchor_idx_ >= (int)display_indices_.size())
+        selection_anchor_idx_ = display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
+      if (selection_active_idx_ >= (int)display_indices_.size())
+        selection_active_idx_ = display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
 
       float measured_avg =
           (measured_rows_count_ > 0)
@@ -118,6 +118,146 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           force_bottom_render ? std::max(0, (int)display_indices_.size() - 200)
                               : (int)display_indices_.size();
 
+      auto render_row = [&](int row_idx) {
+        int i = display_indices_[row_idx];
+        const auto &rm = history[i];
+        ImGui::PushID(i);
+
+        ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+
+        ImVec2 pos_start = ImGui::GetCursorScreenPos();
+        ImGui::BeginGroup();
+
+        // Timestamp
+        const std::tm *tm_ptr = &rm.local_time;
+        char time_buf[64];
+        if (show_long_dates_) {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_long.c_str(), tm_ptr);
+        } else {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_short.c_str(), tm_ptr);
+        }
+
+        RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
+        ImGui::EndGroup();
+        ImVec2 item_size = ImGui::GetItemRectSize();
+        ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
+        ImGui::SetCursorScreenPos(pos_start);
+
+        if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
+          float x_min =
+              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+          float x_max =
+              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+          ImGui::GetWindowDrawList()->AddRectFilled(
+              ImVec2(x_min, pos_start.y),
+              ImVec2(x_max, pos_start.y + item_size.y),
+              ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+        }
+        float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+        if (row_height_cache_[i] < 0) {
+          measured_height_sum_ += h;
+          measured_rows_count_++;
+        }
+        row_height_cache_[i] = h;
+
+        bool is_selected = false;
+        if (selection_anchor_idx_ != -1 && selection_active_idx_ != -1) {
+          int s_start = std::min(selection_anchor_idx_, selection_active_idx_);
+          int s_end = std::max(selection_anchor_idx_, selection_active_idx_);
+          is_selected = (row_idx >= s_start && row_idx <= s_end);
+        }
+
+        char label[32];
+        snprintf(label, sizeof(label), "##row_%d", i);
+        if (ImGui::Selectable(label, is_selected,
+                              ImGuiSelectableFlags_SpanAllColumns |
+                                  ImGuiSelectableFlags_AllowOverlap,
+                              ImVec2(0, item_size.y))) {
+        }
+        if (ImGui::IsItemClicked(0)) {
+          if (ImGui::GetIO().KeyShift && selection_anchor_idx_ != -1)
+            selection_active_idx_ = row_idx;
+          else {
+            if (selection_anchor_idx_ == row_idx &&
+                selection_active_idx_ == row_idx) {
+              selection_anchor_idx_ = -1;
+              selection_active_idx_ = -1;
+            } else {
+              selection_anchor_idx_ = row_idx;
+              selection_active_idx_ = row_idx;
+            }
+          }
+        }
+        if (ImGui::IsItemHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            ImGui::IsMouseDown(0))
+          selection_active_idx_ = row_idx;
+
+        if (ImGui::BeginPopupContextItem("FeedLineCtx",
+                                         ImGuiPopupFlags_MouseButtonRight)) {
+          if (selection_anchor_idx_ == -1) {
+            selection_anchor_idx_ = row_idx;
+            selection_active_idx_ = row_idx;
+          }
+          if (ImGui::MenuItem("Copy selection")) {
+            std::string selected_text;
+            int s_start = std::max(
+                0, std::min(selection_anchor_idx_, selection_active_idx_));
+            int s_end = std::min(
+                (int)display_indices_.size() - 1,
+                std::max(selection_anchor_idx_, selection_active_idx_));
+            for (int k = s_start; k <= s_end; ++k) {
+              int hist_idx = display_indices_[k];
+              const auto &rm_k = history[hist_idx];
+              for (const auto &p : rm_k.parts)
+                selected_text += p.text;
+              if (k < s_end)
+                selected_text += "\n";
+            }
+            ImGui::SetClipboardText(selected_text.c_str());
+          }
+          if (ImGui::MenuItem("Copy selection (with timestamps)")) {
+            std::string selected_text;
+            int s_start = std::max(
+                0, std::min(selection_anchor_idx_, selection_active_idx_));
+            int s_end = std::min(
+                (int)display_indices_.size() - 1,
+                std::max(selection_anchor_idx_, selection_active_idx_));
+            for (int k = s_start; k <= s_end; ++k) {
+              int hist_idx = display_indices_[k];
+              const auto &rm_k = history[hist_idx];
+              const std::tm *tm_ptr_k = &rm_k.local_time;
+              char t_buf[64];
+              if (tm_ptr_k->tm_yday != current_yday ||
+                  tm_ptr_k->tm_year != current_year) {
+                std::strftime(t_buf, sizeof(t_buf),
+                              settings_.timestamp_format_long.c_str(), tm_ptr_k);
+              } else {
+                std::strftime(
+                    t_buf, sizeof(t_buf),
+                    settings_.timestamp_format_short.c_str(), tm_ptr_k);
+              }
+              selected_text += t_buf;
+              selected_text += " ";
+              for (const auto &p : rm_k.parts)
+                selected_text += p.text;
+              if (k < s_end)
+                selected_text += "\n";
+            }
+            ImGui::SetClipboardText(selected_text.c_str());
+          }
+          if (ImGui::MenuItem("Clear Selection")) {
+            selection_anchor_idx_ = -1;
+            selection_active_idx_ = -1;
+          }
+          ImGui::EndPopup();
+        }
+
+        ImGui::PopID();
+      };
+
       int pass = 0;
       float max_y = ImGui::GetCursorPosY();
       while ((use_clipper && clipper.Step()) || (!use_clipper && pass == 0)) {
@@ -130,141 +270,7 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           if (force_bottom_render && row_idx >= manual_tail_start)
             break; // Handled by manual tail
 
-          int i = display_indices_[row_idx];
-          const auto &rm = history[i];
-          ImGui::PushID(i);
-
-          ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
-
-          ImVec2 pos_start = ImGui::GetCursorScreenPos();
-          ImGui::BeginGroup();
-
-          // Timestamp
-          const std::tm *tm_ptr = &rm.local_time;
-          char time_buf[64];
-          if (show_long_dates_) {
-            std::strftime(time_buf, sizeof(time_buf),
-                          settings_.timestamp_format_long.c_str(), tm_ptr);
-          } else {
-            std::strftime(time_buf, sizeof(time_buf),
-                          settings_.timestamp_format_short.c_str(), tm_ptr);
-          }
-
-          RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
-          ImGui::EndGroup();
-          ImVec2 item_size = ImGui::GetItemRectSize();
-          ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
-          ImGui::SetCursorScreenPos(pos_start);
-
-          if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
-            float x_min =
-                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            float x_max =
-                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(x_min, pos_start.y),
-                ImVec2(x_max, pos_start.y + item_size.y),
-                ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
-          }
-          float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
-          if (row_height_cache_[i] < 0) {
-            measured_height_sum_ += h;
-            measured_rows_count_++;
-          }
-          row_height_cache_[i] = h;
-
-          bool is_selected = false;
-          if (selection_anchor_ != -1 && selection_active_ != -1) {
-            int start = std::min(selection_anchor_, selection_active_);
-            int end = std::max(selection_anchor_, selection_active_);
-            is_selected = (i >= start && i <= end);
-          }
-
-          char label[32];
-          snprintf(label, sizeof(label), "##row_%d", i);
-          if (ImGui::Selectable(label, is_selected,
-                                ImGuiSelectableFlags_SpanAllColumns |
-                                    ImGuiSelectableFlags_AllowOverlap,
-                                ImVec2(0, item_size.y))) {
-          }
-          if (ImGui::IsItemClicked(0)) {
-            if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
-              selection_active_ = i;
-            else {
-              if (selection_anchor_ == i && selection_active_ == i) {
-                selection_anchor_ = -1;
-                selection_active_ = -1;
-              } else {
-                selection_anchor_ = i;
-                selection_active_ = i;
-              }
-            }
-          }
-          if (ImGui::IsItemHovered(
-                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-              ImGui::IsMouseDown(0))
-            selection_active_ = i;
-
-          if (ImGui::BeginPopupContextItem("FeedLineCtx",
-                                           ImGuiPopupFlags_MouseButtonRight)) {
-            if (selection_anchor_ == -1) {
-              selection_anchor_ = i;
-              selection_active_ = i;
-            }
-            if (ImGui::MenuItem("Copy selection")) {
-              std::string selected_text;
-              int start =
-                  std::max(0, std::min(selection_anchor_, selection_active_));
-              int end =
-                  std::min((int)history.size() - 1,
-                           std::max(selection_anchor_, selection_active_));
-              for (int j = start; j <= end && j < (int)history.size(); ++j) {
-                const auto &rm_j = history[j];
-                for (const auto &p : rm_j.parts)
-                  selected_text += p.text;
-                if (j < end)
-                  selected_text += "\n";
-              }
-              ImGui::SetClipboardText(selected_text.c_str());
-            }
-            if (ImGui::MenuItem("Copy selection (with timestamps)")) {
-              std::string selected_text;
-              int start =
-                  std::max(0, std::min(selection_anchor_, selection_active_));
-              int end =
-                  std::min((int)history.size() - 1,
-                           std::max(selection_anchor_, selection_active_));
-              for (int j = start; j <= end && j < (int)history.size(); ++j) {
-                const auto &rm_j = history[j];
-                const std::tm *tm_ptr = &rm_j.local_time;
-                char time_buf[64];
-                if (tm_ptr->tm_yday != current_yday ||
-                    tm_ptr->tm_year != current_year) {
-                  std::strftime(time_buf, sizeof(time_buf),
-                                settings_.timestamp_format_long.c_str(),
-                                tm_ptr);
-                } else {
-                  std::strftime(time_buf, sizeof(time_buf),
-                                settings_.timestamp_format_short.c_str(),
-                                tm_ptr);
-                }
-                selected_text += time_buf;
-                selected_text += " ";
-                for (const auto &p : rm_j.parts)
-                  selected_text += p.text;
-                if (j < end)
-                  selected_text += "\n";
-              }
-              ImGui::SetClipboardText(selected_text.c_str());
-            }
-            if (ImGui::MenuItem("Clear Selection")) {
-              selection_anchor_ = -1;
-              selection_active_ = -1;
-            }
-            ImGui::EndPopup();
-          }
-
-          ImGui::PopID();
+          render_row(row_idx);
         }
         if (!use_clipper)
           break;
@@ -281,56 +287,13 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         ImGui::SetCursorPosY((float)manual_tail_start * clipper_height);
         for (int row_idx = manual_tail_start;
              row_idx < (int)display_indices_.size(); ++row_idx) {
-          int i = display_indices_[row_idx];
-          const auto &rm = history[i];
-          ImGui::PushID(i);
-          ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
-          ImVec2 pos_start = ImGui::GetCursorScreenPos();
-          ImGui::BeginGroup();
-          const std::tm *tm_ptr = &rm.local_time;
-          char time_buf[64];
-          if (show_long_dates_) {
-            std::strftime(time_buf, sizeof(time_buf),
-                          settings_.timestamp_format_long.c_str(), tm_ptr);
-          } else {
-            std::strftime(time_buf, sizeof(time_buf),
-                          settings_.timestamp_format_short.c_str(), tm_ptr);
-          }
-          RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
-          ImGui::EndGroup();
-          ImVec2 item_size = ImGui::GetItemRectSize();
-          ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
-          ImGui::SetCursorScreenPos(pos_start);
-          if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
-            float x_min =
-                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            float x_max =
-                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(x_min, pos_start.y),
-                ImVec2(x_max, pos_start.y + item_size.y),
-                ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
-          }
-          float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
-          if (row_height_cache_[i] < 0) {
-            measured_height_sum_ += h;
-            measured_rows_count_++;
-          }
-          row_height_cache_[i] = h;
-          char label[32];
-          snprintf(label, sizeof(label), "##row_%d", i);
-          ImGui::Selectable(label, false,
-                            ImGuiSelectableFlags_SpanAllColumns |
-                                ImGuiSelectableFlags_AllowOverlap,
-                            ImVec2(0, item_size.y));
-          max_y = std::max(max_y, ImGui::GetCursorPosY());
-          ImGui::PopID();
+          render_row(row_idx);
         }
       }
       if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
           !ImGui::IsAnyItemHovered()) {
-        selection_active_ = -1;
-        selection_anchor_ = -1;
+        selection_active_idx_ = -1;
+        selection_anchor_idx_ = -1;
       }
 
       float current_scroll_max_y = ImGui::GetScrollMaxY();

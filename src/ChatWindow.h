@@ -33,8 +33,8 @@ private:
   std::string ac_match_string_;
   std::vector<std::string> ac_matches_;
 
-  int selection_anchor_ = -1;
-  int selection_active_ = -1;
+  int selection_anchor_idx_ = -1;
+  int selection_active_idx_ = -1;
   bool wants_focus_url_ = false;
   bool focus_input_ = false;
 

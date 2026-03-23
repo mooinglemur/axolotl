@@ -100,8 +100,10 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
       if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {
         if (specs->SpecsDirty || history.size() != last_history_count_ ||
             collapse_ != last_collapse_ ||
-            current_version != last_data_version_ || force_rebuild_) {
+            current_version != last_data_version_ || filter_changed ||
+            force_rebuild_) {
           if (specs->SpecsCount > 0 && display_rows_.size() > 1) {
+            // ... (rest of sorting logic)
             const auto *spec = &specs->Specs[0];
             std::stable_sort(
                 display_rows_.begin(), display_rows_.end(),
@@ -141,6 +143,7 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
           last_history_count_ = history.size();
           last_collapse_ = collapse_;
           last_data_version_ = current_version;
+          last_filter_text_ = filter_text_;
         }
       }
 
