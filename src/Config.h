@@ -6,8 +6,13 @@
 
 struct SlotSettings {
   std::string name = "Player1";
+  std::string last_name = "Player1";
   std::string password = "";
-  bool connect_on_launch = false; // Internal helper for future use?
+  bool connect_on_launch = false;
+
+  SlotSettings() = default;
+  SlotSettings(const std::string &n, const std::string &p, bool col)
+      : name(n), last_name(n), password(p), connect_on_launch(col) {}
 };
 
 struct ConnectionSettings {

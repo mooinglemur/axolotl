@@ -29,6 +29,9 @@ struct RichMessage {
   int sender_slot = -1;
   int receiver_slot = -1;
   std::string source_slot; // Name of the slot that received this
+  int64_t item_id = -1;
+  int item_flags = 0;
+  bool is_reconciled = false;
   struct tm local_time;    // Cached local time to avoid redundant syscalls
 
   void populate_local_time() {

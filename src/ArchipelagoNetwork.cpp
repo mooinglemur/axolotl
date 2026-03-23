@@ -223,7 +223,6 @@ bool ArchipelagoSession::Update() {
       connection_error_time_ = -1.0;
       local_slot_ = packet["slot"].get<int>();
       team_ = packet.contains("team") ? packet["team"].get<int>() : 0;
-      received_items_history_.clear();
       last_received_day_ = -1;
 
       if (packet.contains("players") && metadata_) {
@@ -451,34 +450,74 @@ bool ArchipelagoSession::Update() {
       }
     } else if (cmd == "ReceivedItems") {
       int index = packet.contains("index") ? packet["index"].get<int>() : 0;
-      if (index == 0)
-        received_items_history_.clear();
+      if (index == 0) {
+        for (auto &rm : received_items_history_)
+          rm.is_reconciled = false;
+      }
+
+      int last_match_idx = 0;
       for (const auto &item : packet["items"]) {
         int64_t iid = get_as_id(item["item"]);
         int flags = item.contains("flags") ? item["flags"].get<int>() : 0;
         int sid = item.contains("player") ? item["player"].get<int>() : -1;
         std::string name = ResolveItemName(iid, local_slot_);
 
-        RichMessage rm;
-        rm.timestamp = msg_time;
-        rm.populate_local_time();
-        rm.source_slot = name_;
-        uint32_t color = 0xFFFFFF00;
-        if (flags & 0x01)
-          color = 0xFFFF5FAF;
-        else if (flags & 0x02)
-          color = 0xFFED9564;
-        else if (flags & 0x04)
-          color = 0xFF0045FF;
-
-        if (name.empty()) {
-          pending_items_.push_back({iid, sid, local_slot_, flags, true});
-          rm.parts.push_back({"Unknown Item " + std::to_string(iid), color});
-        } else {
-          rm.parts.push_back({name, color});
+        // Try to reconcile with existing item
+        bool found = false;
+        for (int j = last_match_idx; j < (int)received_items_history_.size();
+             ++j) {
+          auto &existing = received_items_history_[j];
+          if (!existing.is_reconciled && existing.item_id == iid &&
+              existing.sender_slot == ((team_ << 16) | sid) &&
+              existing.item_flags == flags) {
+            existing.is_reconciled = true;
+            last_match_idx = j + 1;
+            found = true;
+            break;
+          }
         }
-        received_items_history_.push_back(rm);
+
+        if (!found) {
+          RichMessage rm;
+          rm.timestamp = msg_time;
+          rm.populate_local_time();
+          rm.source_slot = name_;
+          rm.item_id = iid;
+          rm.item_flags = flags;
+          rm.sender_slot = (sid != -1) ? ((team_ << 16) | sid) : -1;
+          rm.is_reconciled = true;
+
+          uint32_t color = 0xFFFFFF00;
+          if (flags & 0x01)
+            color = 0xFFFF5FAF;
+          else if (flags & 0x02)
+            color = 0xFFED9564;
+          else if (flags & 0x04)
+            color = 0xFF0045FF;
+
+          if (name.empty()) {
+            pending_items_.push_back({iid, sid, local_slot_, flags, true});
+            rm.parts.push_back({"Unknown Item " + std::to_string(iid), color});
+          } else {
+            rm.parts.push_back({name, color});
+          }
+          // Insert at current match position to maintain order
+          received_items_history_.insert(
+              received_items_history_.begin() + last_match_idx, rm);
+          last_match_idx++;
+        }
         manager_->SetItemsDirty();
+      }
+
+      // Prune unreconciled items that were supposed to be in this range
+      if (index == 0) {
+        received_items_history_.erase(
+            std::remove_if(received_items_history_.begin(),
+                           received_items_history_.end(),
+                           [](const RichMessage &rm) {
+                             return !rm.is_reconciled;
+                           }),
+            received_items_history_.end());
       }
     } else if (cmd == "Retrieved") {
       if (packet.contains("keys") && packet["keys"].is_object()) {
@@ -681,6 +720,8 @@ void ArchipelagoNetwork::RemoveSession(const std::string &name) {
     if ((*it)->GetName() == name) {
       sessions_.erase(it);
       slots_dirty_ = true;
+      SetItemsDirty();
+      SetHintsDirty();
       if (on_history_updated)
         on_history_updated();
       return;

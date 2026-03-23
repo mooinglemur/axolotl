@@ -68,7 +68,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Add Slot")) {
-      settings_.slots.push_back({"NewPlayer", "", false});
+      settings_.slots.push_back(SlotSettings("NewPlayer", "", false));
       ap_network_.AddSession(settings_.slots.back().name);
       Config::Save(settings_);
     }
@@ -79,18 +79,42 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       ImGui::PushID(i);
       auto &slot = settings_.slots[i];
       auto session = ap_network_.GetSession(slot.name);
+      if (session && session->GetName() != slot.last_name) {
+        // This session belongs to another slot
+        session = nullptr;
+      }
       auto state = session ? session->GetState()
                            : ArchipelagoNetwork::State::Disconnected;
+
+      bool name_is_duplicate = false;
+      for (int j = 0; j < (int)settings_.slots.size(); ++j) {
+        if (i != j && settings_.slots[j].name == slot.name) {
+          name_is_duplicate = true;
+          break;
+        }
+      }
+      bool name_is_empty = slot.name.empty();
+      bool name_invalid =
+          name_is_empty || (name_is_duplicate &&
+                            state == ArchipelagoNetwork::State::Disconnected);
 
       ImGui::BeginDisabled(state != ArchipelagoNetwork::State::Disconnected);
       ImGui::SetNextItemWidth(slot_width);
       char s_buf[64];
       strncpy(s_buf, slot.name.c_str(), sizeof(s_buf) - 1);
+      if (name_invalid)
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
       if (ImGui::InputText("##SlotName", s_buf, sizeof(s_buf))) {
         // Need careful rename handling if we wanted to be robust
         slot.name = s_buf;
       }
-      ImGui::SetItemTooltip("Slot Name / Player Name");
+      if (name_invalid) {
+        ImGui::PopStyleColor();
+        ImGui::SetItemTooltip(name_is_empty ? "Slot name cannot be empty"
+                                            : "Duplicate slot name");
+      } else {
+        ImGui::SetItemTooltip("Slot Name / Player Name");
+      }
       ImGui::SameLine();
       ImGui::SetNextItemWidth(pw_width);
       char p_buf[64];
@@ -105,12 +129,19 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       ImGui::SameLine();
       if (state == ArchipelagoNetwork::State::Disconnected) {
+        ImGui::BeginDisabled(name_invalid);
         if (ImGui::Button("Connect")) {
+          if (slot.name != slot.last_name) {
+            ap_network_.RemoveSession(slot.last_name);
+            slot.last_name = slot.name;
+            session = nullptr;
+          }
           Config::Save(settings_); // Save before connecting
           if (!session)
             session = ap_network_.AddSession(slot.name);
           session->Connect(settings_.server_url, slot.password);
         }
+        ImGui::EndDisabled();
       } else if (state == ArchipelagoNetwork::State::Connecting) {
         if (ImGui::Button("Cancel")) {
           if (session)

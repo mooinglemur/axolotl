@@ -97,6 +97,7 @@ ConnectionSettings Config::Load() {
         SlotSettings slot;
         if (slot_node["name"])
           slot.name = slot_node["name"].as<std::string>();
+        slot.last_name = slot.name;
         if (slot_node["password"])
           slot.password = slot_node["password"].as<std::string>();
         if (slot_node["connect_on_launch"])
@@ -107,6 +108,7 @@ ConnectionSettings Config::Load() {
       // Migration
       SlotSettings slot;
       slot.name = config["slot_name"].as<std::string>();
+      slot.last_name = slot.name;
       if (config["password"])
         slot.password = config["password"].as<std::string>();
       settings.slots.push_back(slot);
