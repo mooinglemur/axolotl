@@ -94,6 +94,7 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
       ImGui::TableSetupColumn("Timestamp", ImGuiTableColumnFlags_DefaultSort);
       ImGui::TableSetupColumn("Slot");
       ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupScrollFreeze(0, 1);
       ImGui::TableHeadersRow();
 
       if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {

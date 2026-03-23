@@ -107,6 +107,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
                               100.0f);
       ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed,
                               80.0f);
+      ImGui::TableSetupScrollFreeze(0, 1);
       ImGui::TableHeadersRow();
 
       if (ImGuiTableSortSpecs *sorts_specs = ImGui::TableGetSortSpecs()) {
