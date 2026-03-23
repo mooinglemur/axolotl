@@ -10,6 +10,7 @@ struct ConnectionSettings;
 
 inline void RenderRichMessageWrapped(const char *timestamp_str,
                                      const std::vector<MessagePart> &parts,
+                                     ArchipelagoNetwork *ap_network,
                                      const std::set<int> *my_slots = nullptr) {
   if (timestamp_str && timestamp_str[0] != '\0') {
     ImGui::TextDisabled("%s", timestamp_str);
@@ -51,6 +52,14 @@ inline void RenderRichMessageWrapped(const char *timestamp_str,
       }
 
       ImGui::TextUnformatted(word_start, word_end);
+      if (part.player_id != -1 && ap_network &&
+          ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                               ImGuiHoveredFlags_AllowWhenOverlapped)) {
+        std::string game = ap_network->ResolvePlayerGame(part.player_id);
+        if (!game.empty()) {
+          ImGui::SetTooltip("Game: %s", game.c_str());
+        }
+      }
 
       if (word_end < text_end && *word_end == '\n') {
         ImGui::NewLine();

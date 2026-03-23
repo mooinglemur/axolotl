@@ -233,44 +233,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         const auto &rm = history[row_idx];
         ImGui::PushID(row_idx);
 
-        ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
-
         ImVec2 pos_start = ImGui::GetCursorScreenPos();
-        ImGui::BeginGroup();
-
-        // Timestamp
-        const std::tm *tm_ptr = &rm.local_time;
-        char time_buf[64];
-        if (show_date) {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_long.c_str(), tm_ptr);
-        } else {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_short.c_str(), tm_ptr);
-        }
-
-        RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
-        ImGui::EndGroup();
-        ImVec2 item_size = ImGui::GetItemRectSize();
-        ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
-        ImGui::SetCursorScreenPos(pos_start);
-
-        if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
-          float x_min =
-              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-          float x_max =
-              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-          ImGui::GetWindowDrawList()->AddRectFilled(
-              ImVec2(x_min, pos_start.y),
-              ImVec2(x_max, pos_start.y + item_size.y),
-              ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
-        }
-        float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
-        if (row_height_cache_[row_idx] < 0) {
-          measured_height_sum_ += h;
-          measured_rows_count_++;
-        }
-        row_height_cache_[row_idx] = h;
 
         bool is_selected = false;
         if (selection_anchor_idx_ != -1 && selection_active_idx_ != -1) {
@@ -279,12 +242,25 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           is_selected = (row_idx >= sel_start && row_idx <= sel_end);
         }
 
+        float row_h = row_height_cache_[row_idx];
+        if (row_h < 0)
+          row_h = ImGui::GetTextLineHeightWithSpacing();
+
         char label[32];
         snprintf(label, sizeof(label), "##row_%d", row_idx);
         if (ImGui::Selectable(label, is_selected,
                               ImGuiSelectableFlags_SpanAllColumns |
                                   ImGuiSelectableFlags_AllowOverlap,
-                              ImVec2(0, item_size.y))) {
+                              ImVec2(0, row_h))) {
+        }
+        if (rm.sender_slot != -1 &&
+            ImGui::IsItemHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                ImGuiHoveredFlags_AllowWhenOverlapped)) {
+          std::string game = ap_network_.ResolvePlayerGame(rm.sender_slot);
+          if (!game.empty()) {
+            ImGui::SetTooltip("Game: %s", game.c_str());
+          }
         }
         if (ImGui::IsItemClicked(0)) {
           if (ImGui::GetIO().KeyShift && selection_anchor_idx_ != -1)
@@ -304,6 +280,43 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
                 ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
             ImGui::IsMouseDown(0))
           selection_active_idx_ = row_idx;
+
+        ImGui::SetCursorScreenPos(pos_start);
+        ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+        ImGui::BeginGroup();
+
+        // Timestamp
+        const std::tm *tm_ptr = &rm.local_time;
+        char time_buf[64];
+        if (show_date) {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_long.c_str(), tm_ptr);
+        } else {
+          std::strftime(time_buf, sizeof(time_buf),
+                        settings_.timestamp_format_short.c_str(), tm_ptr);
+        }
+
+        RenderRichMessageWrapped(time_buf, rm.parts, &ap_network_, &my_slots);
+        ImGui::EndGroup();
+        ImVec2 item_size = ImGui::GetItemRectSize();
+        ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
+
+        if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
+          float x_min =
+              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+          float x_max =
+              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+          ImGui::GetWindowDrawList()->AddRectFilled(
+              ImVec2(x_min, pos_start.y),
+              ImVec2(x_max, pos_start.y + item_size.y),
+              ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+        }
+        float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+        if (row_height_cache_[row_idx] < 0) {
+          measured_height_sum_ += h;
+          measured_rows_count_++;
+        }
+        row_height_cache_[row_idx] = h;
 
         if (ImGui::BeginPopupContextItem("ChatLineCtx",
                                          ImGuiPopupFlags_MouseButtonRight)) {

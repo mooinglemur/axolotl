@@ -199,6 +199,7 @@ public:
   std::string ResolveLocationName(int64_t id, int slot = -1);
   std::string ResolveEntranceName(int64_t id, int slot = -1);
   std::string ResolvePlayerName(int slot);
+  std::string ResolvePlayerGame(int slot);
   const std::set<int> &GetConnectedSlots();
   bool IsAnySessionActive() const;
 

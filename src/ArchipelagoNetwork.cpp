@@ -329,14 +329,24 @@ bool ArchipelagoSession::Update() {
 
         if (type == "player_id") {
           try {
-            int pid = (int)get_as_id(content);
+            int pid = part.contains("player") ? (int)get_as_id(part["player"])
+                                              : (int)get_as_id(content);
             int global_id = -1;
             if (metadata_) {
-              global_id = (metadata_->player_names.count(pid))
-                              ? pid
-                              : ((team_ << 16) | pid);
-              if (metadata_->player_names.count(global_id))
+              if (pid == -1) {
+                // If we don't have an ID, try to find it by name
+                for (auto const &[id, name] : metadata_->player_names) {
+                  if (name == content) {
+                    pid = id;
+                    break;
+                  }
+                }
+              }
+
+              global_id = (pid != -1) ? ((team_ << 16) | pid) : -1;
+              if (global_id != -1 && metadata_->player_names.count(global_id)) {
                 content = metadata_->player_names[global_id];
+              }
             }
             color = (pid == local_slot_) ? 0xFFFF00FF : 0xFFCCCCCC;
             rm.parts.push_back({content, color, global_id});
@@ -376,6 +386,12 @@ bool ArchipelagoSession::Update() {
           }
         }
         rm.parts.push_back({content, color});
+      }
+
+      if (packet.contains("slot")) {
+        int s_slot = (int)get_as_id(packet["slot"]);
+        if (s_slot != -1)
+          rm.sender_slot = (team_ << 16) | s_slot;
       }
 
       if (is_item_event) {
@@ -485,6 +501,7 @@ bool ArchipelagoSession::Update() {
           rm.item_id = iid;
           rm.item_flags = flags;
           rm.sender_slot = (sid != -1) ? ((team_ << 16) | sid) : -1;
+          rm.receiver_slot = (team_ << 16) | local_slot_;
           rm.is_reconciled = true;
 
           uint32_t color = 0xFFFFFF00;
@@ -868,6 +885,14 @@ std::string ArchipelagoNetwork::ResolvePlayerName(int slot) {
       return names.at(slot);
   }
   return "Unknown Player " + std::to_string(slot);
+}
+
+std::string ArchipelagoNetwork::ResolvePlayerGame(int slot) {
+  for (auto const &[url, metadata] : url_to_metadata_) {
+    if (metadata->slot_to_game.count(slot))
+      return metadata->slot_to_game.at(slot);
+  }
+  return "";
 }
 
 void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,

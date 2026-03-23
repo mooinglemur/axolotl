@@ -350,6 +350,14 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
         ImGui::TableSetColumnIndex(1);
         ImGui::Text("%s", rm.source_slot.c_str());
+        if (ImGui::IsItemHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                ImGuiHoveredFlags_AllowWhenOverlapped)) {
+          std::string game = ap_network_.ResolvePlayerGame(rm.receiver_slot);
+          if (!game.empty()) {
+            ImGui::SetTooltip("Game: %s", game.c_str());
+          }
+        }
 
         ImGui::TableSetColumnIndex(2);
         if (rm.parts.empty()) {
@@ -363,6 +371,14 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
             }
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(use_color), "%s",
                                p.text.c_str());
+            if (p.player_id != -1 &&
+                ImGui::IsItemHovered(
+                    ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+              std::string game = ap_network_.ResolvePlayerGame(p.player_id);
+              if (!game.empty()) {
+                ImGui::SetTooltip("Game: %s", game.c_str());
+              }
+            }
             if (p_idx < rm.parts.size() - 1)
               ImGui::SameLine(0, 0);
           }

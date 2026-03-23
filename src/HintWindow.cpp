@@ -360,6 +360,14 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
         else
           ImGui::Text("%s", receiver.c_str());
 
+        if (ImGui::IsItemHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+          std::string game = ap_network_.ResolvePlayerGame(h.receiver_slot);
+          if (!game.empty()) {
+            ImGui::SetTooltip("Game: %s", game.c_str());
+          }
+        }
+
         // Location column: Green
         ImGui::TableSetColumnIndex(2);
         ImGui::TextColored(ImColor(0, 255, 0), "%s", location.c_str());
@@ -374,6 +382,14 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
           ImGui::TextColored(ImColor(255, 0, 255), "%s", finder.c_str());
         else
           ImGui::Text("%s", finder.c_str());
+
+        if (ImGui::IsItemHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+          std::string game = ap_network_.ResolvePlayerGame(h.finder_slot);
+          if (!game.empty()) {
+            ImGui::SetTooltip("Game: %s", game.c_str());
+          }
+        }
 
         // Status column: Green if found, Red if not, Yellow if unknown
         ImGui::TableSetColumnIndex(5);
