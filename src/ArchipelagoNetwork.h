@@ -199,8 +199,10 @@ public:
   const std::set<int> &GetConnectedSlots();
   bool IsAnySessionActive() const;
 
-  void SetHintsDirty() { aggregated_hints_dirty_ = true; }
+  void SetHintsDirty();
   void SetItemsDirty();
+  void ClearChatHistory();
+  void ClearItemHistory();
 
   // Callbacks
   std::function<void()> on_history_updated;

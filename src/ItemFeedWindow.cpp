@@ -35,8 +35,8 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
     auto const &history = ap_network_.GetItemHistory();
     const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
 
-    if (history.size() != last_history_size_ ||
-        filter_text_ != last_filter_text_) {
+    bool filter_changed = (filter_text_ != last_filter_text_);
+    if (history.size() != last_history_data_size_ || filter_changed) {
       display_indices_.clear();
       std::string l_filter = filter_text_;
       std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
@@ -72,8 +72,7 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         display_indices_.push_back(i);
       }
       row_height_cache_.resize(history.size(), -1.0f);
-      last_history_size_ = history.size();
-      last_filter_text_ = filter_text_;
+      last_history_data_size_ = history.size();
     }
 
     if (ImGui::BeginChild("FeedScrollingRegion", ImVec2(0, 0),
@@ -88,24 +87,39 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       int current_yday = current_tm->tm_yday;
       int current_year = current_tm->tm_year;
 
-      bool was_at_bottom =
-          (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 5.0f);
-      bool history_grew = (display_indices_.size() > last_history_size_);
+      bool was_at_bottom = (last_scroll_max_y_ <= 0.0f ||
+                            ImGui::GetScrollY() >= last_scroll_max_y_ - 5.0f);
+      bool history_grew =
+          ((int)display_indices_.size() > last_display_indices_size_);
 
       if (selection_anchor_ >= (int)history.size())
         selection_anchor_ = history.empty() ? -1 : (int)history.size() - 1;
       if (selection_active_ >= (int)history.size())
         selection_active_ = history.empty() ? -1 : (int)history.size() - 1;
 
-      float avg_height = ImGui::GetTextLineHeightWithSpacing();
-
+      float measured_avg =
+          (measured_rows_count_ > 0)
+              ? (float)(measured_height_sum_ / measured_rows_count_)
+              : ImGui::GetTextLineHeightWithSpacing();
+      float clipper_height =
+          std::min(measured_avg, ImGui::GetTextLineHeightWithSpacing() * 1.5f);
       ImGuiListClipper clipper;
       bool use_clipper = (display_indices_.size() > 100);
       if (use_clipper) {
-        clipper.Begin((int)display_indices_.size(), avg_height);
+        clipper.Begin((int)display_indices_.size(), clipper_height);
       }
 
+      bool in_bottom_zone =
+          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 500.0f);
+      bool force_bottom_render =
+          (use_clipper && (was_at_bottom || history_grew || in_bottom_zone) &&
+           !display_indices_.empty());
+      int manual_tail_start =
+          force_bottom_render ? std::max(0, (int)display_indices_.size() - 200)
+                              : (int)display_indices_.size();
+
       int pass = 0;
+      float max_y = ImGui::GetCursorPosY();
       while ((use_clipper && clipper.Step()) || (!use_clipper && pass == 0)) {
         int start = use_clipper ? clipper.DisplayStart : 0;
         int end =
@@ -113,6 +127,9 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         pass++;
 
         for (int row_idx = start; row_idx < end; ++row_idx) {
+          if (force_bottom_render && row_idx >= manual_tail_start)
+            break; // Handled by manual tail
+
           int i = display_indices_[row_idx];
           const auto &rm = history[i];
           ImGui::PushID(i);
@@ -149,7 +166,12 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
                 ImVec2(x_max, pos_start.y + item_size.y),
                 ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
           }
-          row_height_cache_[i] = item_size.y;
+          float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+          if (row_height_cache_[i] < 0) {
+            measured_height_sum_ += h;
+            measured_rows_count_++;
+          }
+          row_height_cache_[i] = h;
 
           bool is_selected = false;
           if (selection_anchor_ != -1 && selection_active_ != -1) {
@@ -247,25 +269,97 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         if (!use_clipper)
           break;
       }
-      ImGui::GetWindowDrawList()->ChannelsMerge();
+      if (use_clipper) {
+        ImGui::SetCursorPosY(max_y);
+        ImGui::Dummy(ImVec2(0.0f, 1e-6f)); // satisfy ImGui assertion about
+                                           // growing window via SetCursorPos
+      }
 
+      // Safe Bottom: Manually render the tail if needed to eliminate ghost
+      // space
+      if (force_bottom_render) {
+        ImGui::SetCursorPosY((float)manual_tail_start * clipper_height);
+        for (int row_idx = manual_tail_start;
+             row_idx < (int)display_indices_.size(); ++row_idx) {
+          int i = display_indices_[row_idx];
+          const auto &rm = history[i];
+          ImGui::PushID(i);
+          ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+          ImVec2 pos_start = ImGui::GetCursorScreenPos();
+          ImGui::BeginGroup();
+          const std::tm *tm_ptr = &rm.local_time;
+          char time_buf[64];
+          if (show_long_dates_) {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_long.c_str(), tm_ptr);
+          } else {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_short.c_str(), tm_ptr);
+          }
+          RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
+          ImGui::EndGroup();
+          ImVec2 item_size = ImGui::GetItemRectSize();
+          ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
+          ImGui::SetCursorScreenPos(pos_start);
+          if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
+            float x_min =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            float x_max =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(x_min, pos_start.y),
+                ImVec2(x_max, pos_start.y + item_size.y),
+                ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+          }
+          float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+          if (row_height_cache_[i] < 0) {
+            measured_height_sum_ += h;
+            measured_rows_count_++;
+          }
+          row_height_cache_[i] = h;
+          char label[32];
+          snprintf(label, sizeof(label), "##row_%d", i);
+          ImGui::Selectable(label, false,
+                            ImGuiSelectableFlags_SpanAllColumns |
+                                ImGuiSelectableFlags_AllowOverlap,
+                            ImVec2(0, item_size.y));
+          max_y = std::max(max_y, ImGui::GetCursorPosY());
+          ImGui::PopID();
+        }
+      }
       if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
           !ImGui::IsAnyItemHovered()) {
         selection_active_ = -1;
+        selection_anchor_ = -1;
       }
 
       float current_scroll_max_y = ImGui::GetScrollMaxY();
       float current_window_width = ImGui::GetWindowWidth();
-      if (was_at_bottom &&
-          (history_grew || current_scroll_max_y != last_scroll_max_y_ ||
-           current_window_width != last_window_width_)) {
-        ImGui::SetScrollY(current_scroll_max_y + 10000.0f);
+      if ((was_at_bottom &&
+           (history_grew || current_scroll_max_y != last_scroll_max_y_ ||
+            current_window_width != last_window_width_)) ||
+          filter_changed) {
+        // Idempotency check: only snap if we are NOT already at the bottom
+        float gap = current_scroll_max_y - ImGui::GetScrollY();
+        if (gap > 1.0f || filter_changed) {
+          ImGui::SetScrollY(
+              current_scroll_max_y); // Use SetScrollY for absolute pixel target
+        }
       }
 
-      last_history_size_ = (int)display_indices_.size();
+      if (current_window_width != last_window_width_) {
+        std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0f);
+        last_avg_height_ = -1.0f;
+        measured_height_sum_ = 0;
+        measured_rows_count_ = 0;
+      }
+
+      last_display_indices_size_ = (int)display_indices_.size();
       last_scroll_max_y_ = current_scroll_max_y;
       last_window_width_ = current_window_width;
+      last_filter_text_ = filter_text_;
 
+      ImGui::GetWindowDrawList()->ChannelsMerge();
       if (custom_font)
         ImGui::PopFont();
     }

@@ -310,18 +310,23 @@ bool ArchipelagoSession::Update() {
       rm.populate_local_time();
       rm.source_slot = name_;
       bool is_item_event = false;
+      bool is_status_msg = false;
       if (packet.contains("type")) {
-        std::string type = packet["type"];
-        is_item_event =
-            (type == "ItemSend" || type == "ItemCheat" || type == "Hint");
+        std::string type_str = packet["type"];
+        is_item_event = (type_str == "ItemSend" || type_str == "ItemCheat" ||
+                         type_str == "Hint");
+        is_status_msg = (type_str == "Join" || type_str == "Part" ||
+                         type_str == "TagsChanged" ||
+                         type_str == "CommandResult");
       }
 
       for (auto &part : packet["data"]) {
-        std::string type =
-            part.contains("type") ? part["type"].get<std::string>() : "text";
-        std::string content =
-            part.contains("text") ? part["text"].get<std::string>() : "";
-        uint32_t color = 0xFFFFFFFF;
+          std::string type =
+              part.contains("type") ? part["type"].get<std::string>() : "text";
+          std::string content =
+              part.contains("text") ? part["text"].get<std::string>() : "";
+          uint32_t color = (is_status_msg && !is_item_event) ? 0xFFAAAAAA
+                                                             : 0xFFFFFFFF;
 
         if (type == "player_id") {
           try {
@@ -396,8 +401,10 @@ bool ArchipelagoSession::Update() {
               int64_t loc_id = get_as_id(packet["item"]["location"]);
               for (auto &hint : hints_) {
                 if (hint.location_id == loc_id &&
-                    hint.finder_slot == rm.sender_slot)
+                    hint.finder_slot == rm.sender_slot) {
                   hint.found = true;
+                  manager_->SetHintsDirty();
+                }
               }
             }
           } else if (type == "Hint") {
@@ -430,6 +437,7 @@ bool ArchipelagoSession::Update() {
                                  : 0;
               h.source_slot = name_;
               hints_.push_back(h);
+              manager_->SetHintsDirty();
 
               rm.receiver_slot = h.receiver_slot;
               rm.sender_slot = h.finder_slot;
@@ -863,7 +871,7 @@ void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
 
   MessagePart p;
   p.text = "[System] " + final_msg;
-  p.color = 0xFFAAAAAA; // Light Gray
+  p.color = 0xFFC0A5A5; // Dim Blue-Gray
   rm.parts.push_back(p);
 
   CheckDayChange(chat_history_, rm.timestamp, last_chat_day_);
@@ -880,6 +888,8 @@ void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
 }
 
 bool ArchipelagoNetwork::IsMasterSession(ArchipelagoSession *session) const {
+  if (!session)
+    return true; // Local/debug messages are always allowed
   if (sessions_.empty())
     return false;
   // Simple rule: first session connected to a specific URL is the master for
@@ -1003,4 +1013,23 @@ void ArchipelagoNetwork::ReResolveHistory() {
 void ArchipelagoNetwork::SetItemsDirty() {
   aggregated_items_dirty_ = true;
   data_version_++;
+}
+
+void ArchipelagoNetwork::SetHintsDirty() {
+  aggregated_hints_dirty_ = true;
+  data_version_++;
+}
+
+void ArchipelagoNetwork::ClearChatHistory() {
+  chat_history_.clear();
+  last_chat_day_ = -1;
+  if (on_history_updated)
+    on_history_updated();
+}
+
+void ArchipelagoNetwork::ClearItemHistory() {
+  item_history_.clear();
+  last_item_day_ = -1;
+  if (on_history_updated)
+    on_history_updated();
 }

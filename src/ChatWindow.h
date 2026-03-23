@@ -40,9 +40,14 @@ private:
 
   static int TextEditCallbackStub(ImGuiInputTextCallbackData *data);
   int TextEditCallback(ImGuiInputTextCallbackData *data);
+  bool HandleCommand(const std::string &line);
 
   std::vector<float> row_height_cache_;
   size_t last_history_size_ = 0;
   float last_scroll_max_y_ = 0;
   float last_window_width_ = 0;
+  int last_display_end_ = 0;
+  float last_avg_height_ = -1.0f;
+  double measured_height_sum_ = 0;
+  int measured_rows_count_ = 0;
 };

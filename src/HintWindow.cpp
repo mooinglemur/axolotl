@@ -50,15 +50,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
   const auto &hints = ap_network_.GetAggregatedHints();
   uint64_t current_version = ap_network_.GetDataVersion();
-  bool sort_dirty = false;
-  if (ImGuiTableSortSpecs *sort_specs =
-          ImGui::TableGetSortSpecs()) { // Use TableGetSortSpecs to check if
-                                        // sorting changed
-    if (sort_specs->SpecsDirty) {
-      sort_dirty = true;
-      sort_specs->SpecsDirty = false;
-    }
-  }
+
 
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
@@ -72,9 +64,8 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
     ImGui::Separator();
 
-    if (hints.size() != last_hint_count_ || sort_dirty ||
+    if (hints.size() != last_hint_count_ ||
         current_version != last_data_version_ || force_rebuild_) {
-      last_data_version_ = current_version;
       resolved_hints_.clear();
       for (const auto &h : hints) {
         ResolvedHint rh;

@@ -42,9 +42,10 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
     auto const &history = ap_network_.GetAggregatedReceivedItems();
     uint64_t current_version = ap_network_.GetDataVersion();
+    bool filter_changed = (filter_text_ != last_filter_text_);
     if (history.size() != last_history_count_ || collapse_ != last_collapse_ ||
-        current_version != last_data_version_ || force_rebuild_) {
-      last_data_version_ = current_version;
+        current_version != last_data_version_ || filter_changed ||
+        force_rebuild_) {
       display_rows_.clear();
 
       if (collapse_) {
@@ -60,7 +61,7 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
           } else {
             groups[key].count++;
             if (rm.timestamp > groups[key].rm.timestamp) {
-              groups[key].rm.timestamp = rm.timestamp;
+              groups[key].rm = rm;
             }
           }
         }
@@ -156,6 +157,22 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
         selection_active_ =
             display_rows_.empty() ? -1 : (int)display_rows_.size() - 1;
 
+      bool timestamp_sorted = false;
+      bool sort_descending = false;
+      if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {
+        if (specs->SpecsCount > 0 && specs->Specs[0].ColumnIndex == 0) {
+          timestamp_sorted = true;
+          sort_descending =
+              (specs->Specs[0].SortDirection == ImGuiSortDirection_Descending);
+        }
+      }
+
+      bool was_at_bottom =
+          (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f);
+      bool history_grew = ((int)display_rows_.size() > last_display_row_count_);
+      float current_scroll_max_y = ImGui::GetScrollMaxY();
+      float current_window_width = ImGui::GetWindowWidth();
+
       std::string l_filter = filter_text_;
       std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
                      ::tolower);
@@ -231,9 +248,11 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
               }
               if (ImGui::MenuItem("Copy Selection")) {
                 std::string selected_text;
-                int start_sel = std::max(0, std::min(selection_anchor_, selection_active_));
-                int end_sel = std::min((int)display_rows_.size() - 1,
-                                       std::max(selection_anchor_, selection_active_));
+                int start_sel =
+                    std::max(0, std::min(selection_anchor_, selection_active_));
+                int end_sel =
+                    std::min((int)display_rows_.size() - 1,
+                             std::max(selection_anchor_, selection_active_));
                 if (start_sel != -1 && start_sel < (int)display_rows_.size()) {
                   if (table) {
                     struct ColumnOrder {
@@ -359,8 +378,25 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
       if (custom_font)
         ImGui::PopFont();
 
-      if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-        ImGui::SetScrollHereY(1.0f);
+      if (timestamp_sorted) {
+        if (sort_descending) {
+          if (history_grew || filter_changed) {
+            ImGui::SetScrollY(0.0f);
+          }
+        } else {
+          if ((was_at_bottom &&
+               (history_grew || current_scroll_max_y != last_scroll_max_y_ ||
+                current_window_width != last_window_width_)) ||
+              filter_changed) {
+            ImGui::SetScrollHereY(1.0f);
+          }
+        }
+      }
+
+      last_display_row_count_ = (int)display_rows_.size();
+      last_scroll_max_y_ = ImGui::GetScrollMaxY();
+      last_window_width_ = current_window_width;
+      last_filter_text_ = filter_text_;
 
       ImGui::EndTable();
     }

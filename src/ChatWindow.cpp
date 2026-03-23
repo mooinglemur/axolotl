@@ -34,7 +34,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     char *input_buf = server_url_;
     ImGuiID url_id = ImGui::GetID("Server URL");
     // We show the real URL if focused OR if streamer mode is OFF
-    bool show_real = !settings_.streamer_mode || (ImGui::GetActiveID() == url_id) ||
+    bool show_real = !settings_.streamer_mode ||
+                     (ImGui::GetActiveID() == url_id) ||
                      (ImGui::GetFocusID() == url_id) || wants_focus_url_;
 
     if (!show_real) {
@@ -49,7 +50,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       wants_focus_url_ = false;
     }
 
-    const char *label = (input_buf == server_url_) ? "Server URL" : "Server URL##Masked";
+    const char *label =
+        (input_buf == server_url_) ? "Server URL" : "Server URL##Masked";
     ImGuiInputTextFlags flags =
         (input_buf == server_url_) ? 0 : ImGuiInputTextFlags_ReadOnly;
     if (ImGui::InputText(label, input_buf,
@@ -160,8 +162,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
                           ImGuiChildFlags_Borders,
                           ImGuiWindowFlags_HorizontalScrollbar |
                               ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
-      bool was_at_bottom =
-          (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 5.0f);
+      bool was_at_bottom = (last_scroll_max_y_ <= 0.0f ||
+                            ImGui::GetScrollY() >= last_scroll_max_y_ - 5.0f);
       bool history_grew = (history.size() > last_history_size_);
 
       if (custom_font)
@@ -175,159 +177,339 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         row_height_cache_.resize(history.size(), -1.0f);
       }
 
-      float avg_height = ImGui::GetTextLineHeightWithSpacing();
-
+      float measured_avg =
+          (measured_rows_count_ > 0)
+              ? (float)(measured_height_sum_ / measured_rows_count_)
+              : ImGui::GetTextLineHeightWithSpacing();
+      float clipper_height =
+          std::min(measured_avg, ImGui::GetTextLineHeightWithSpacing() * 1.5f);
       ImGuiListClipper clipper;
       bool use_clipper = (history.size() > 100);
       if (use_clipper) {
-        clipper.Begin((int)history.size(), avg_height);
+        clipper.Begin((int)history.size(), clipper_height);
       }
 
+      bool in_bottom_zone =
+          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 500.0f);
+      bool force_bottom_render =
+          (use_clipper && (was_at_bottom || history_grew || in_bottom_zone) &&
+           !history.empty());
+      int manual_tail_start = force_bottom_render
+                                  ? std::max(0, (int)history.size() - 200)
+                                  : (int)history.size();
+
       int pass = 0;
+      float max_y = ImGui::GetCursorPosY();
       while ((use_clipper && clipper.Step()) || (!use_clipper && pass == 0)) {
         int start = use_clipper ? clipper.DisplayStart : 0;
         int end = use_clipper ? clipper.DisplayEnd : (int)history.size();
         pass++;
 
-        for (int i = start; i < end; ++i) {
-          const auto &rm = history[i];
-          ImGui::PushID(i);
+        for (int row_idx = start; row_idx < end; ++row_idx) {
+          if (force_bottom_render && row_idx >= manual_tail_start)
+            break;
+
+          const auto &rm = history[row_idx];
+          ImGui::PushID(row_idx);
 
           ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
 
-        ImVec2 pos_start = ImGui::GetCursorScreenPos();
-        ImGui::BeginGroup();
+          ImVec2 pos_start = ImGui::GetCursorScreenPos();
+          ImGui::BeginGroup();
 
-        // Timestamp
-        const std::tm *tm_ptr = &rm.local_time;
-        char time_buf[64];
-        if (show_date) {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_long.c_str(), tm_ptr);
-        } else {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_short.c_str(), tm_ptr);
-        }
+          // Timestamp
+          const std::tm *tm_ptr = &rm.local_time;
+          char time_buf[64];
+          if (show_date) {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_long.c_str(), tm_ptr);
+          } else {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_short.c_str(), tm_ptr);
+          }
 
-        RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
-        ImGui::EndGroup();
-        ImVec2 item_size = ImGui::GetItemRectSize();
-        ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
-        ImGui::SetCursorScreenPos(pos_start);
+          RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
+          ImGui::EndGroup();
+          ImVec2 item_size = ImGui::GetItemRectSize();
+          ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
+          ImGui::SetCursorScreenPos(pos_start);
 
-        if (settings_.shade_alternating_rows && i % 2 == 1) {
-          float x_min =
-              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-          float x_max =
-              ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-          ImGui::GetWindowDrawList()->AddRectFilled(
-              ImVec2(x_min, pos_start.y),
-              ImVec2(x_max, pos_start.y + item_size.y),
-              ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
-        }
-        row_height_cache_[i] = item_size.y;
+          if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
+            float x_min =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            float x_max =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(x_min, pos_start.y),
+                ImVec2(x_max, pos_start.y + item_size.y),
+                ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+          }
+          float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+          if (row_height_cache_[row_idx] < 0) {
+            measured_height_sum_ += h;
+            measured_rows_count_++;
+          }
+          row_height_cache_[row_idx] = h;
 
-        bool is_selected = false;
-        if (selection_anchor_ != -1 && selection_active_ != -1) {
-          int start = std::min(selection_anchor_, selection_active_);
-          int end = std::max(selection_anchor_, selection_active_);
-          is_selected = (i >= start && i <= end);
-        }
+          bool is_selected = false;
+          if (selection_anchor_ != -1 && selection_active_ != -1) {
+            int sel_start = std::min(selection_anchor_, selection_active_);
+            int sel_end = std::max(selection_anchor_, selection_active_);
+            is_selected = (row_idx >= sel_start && row_idx <= sel_end);
+          }
 
-        char label[32];
-        snprintf(label, sizeof(label), "##row_%d", i);
-        if (ImGui::Selectable(label, is_selected,
-                              ImGuiSelectableFlags_SpanAllColumns |
-                                  ImGuiSelectableFlags_AllowOverlap,
-                              ImVec2(0, item_size.y))) {
-        }
-        if (ImGui::IsItemClicked(0)) {
-          if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
-            selection_active_ = i;
-          else {
-            if (selection_anchor_ == i && selection_active_ == i) {
+          char label[32];
+          snprintf(label, sizeof(label), "##row_%d", row_idx);
+          if (ImGui::Selectable(label, is_selected,
+                                ImGuiSelectableFlags_SpanAllColumns |
+                                    ImGuiSelectableFlags_AllowOverlap,
+                                ImVec2(0, item_size.y))) {
+          }
+          if (ImGui::IsItemClicked(0)) {
+            if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
+              selection_active_ = row_idx;
+            else {
+              if (selection_anchor_ == row_idx &&
+                  selection_active_ == row_idx) {
+                selection_anchor_ = -1;
+                selection_active_ = -1;
+              } else {
+                selection_anchor_ = row_idx;
+                selection_active_ = row_idx;
+              }
+            }
+          }
+          if (ImGui::IsItemHovered(
+                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+              ImGui::IsMouseDown(0))
+            selection_active_ = row_idx;
+
+          if (ImGui::BeginPopupContextItem("ChatLineCtx",
+                                           ImGuiPopupFlags_MouseButtonRight)) {
+            if (selection_anchor_ == -1) {
+              selection_anchor_ = row_idx;
+              selection_active_ = row_idx;
+            }
+            if (ImGui::MenuItem("Copy selection")) {
+              std::string selected_text;
+              int sel_start =
+                  std::max(0, std::min(selection_anchor_, selection_active_));
+              int sel_end =
+                  std::min((int)history.size() - 1,
+                           std::max(selection_anchor_, selection_active_));
+              for (int j = sel_start; j <= sel_end && j < (int)history.size();
+                   ++j) {
+                for (const auto &p : history[j].parts)
+                  selected_text += p.text;
+                if (j < sel_end)
+                  selected_text += "\n";
+              }
+              ImGui::SetClipboardText(selected_text.c_str());
+            }
+            if (ImGui::MenuItem("Copy selection (with timestamps)")) {
+              std::string selected_text;
+              int sel_start =
+                  std::max(0, std::min(selection_anchor_, selection_active_));
+              int sel_end =
+                  std::min((int)history.size() - 1,
+                           std::max(selection_anchor_, selection_active_));
+              for (int j = sel_start; j <= sel_end && j < (int)history.size();
+                   ++j) {
+                const auto &rm_j = history[j];
+                const std::tm *tm_ptr = &rm_j.local_time;
+                char time_buf[64];
+                if (show_date) {
+                  std::strftime(time_buf, sizeof(time_buf),
+                                settings_.timestamp_format_long.c_str(),
+                                tm_ptr);
+                } else {
+                  std::strftime(time_buf, sizeof(time_buf),
+                                settings_.timestamp_format_short.c_str(),
+                                tm_ptr);
+                }
+                selected_text += time_buf;
+                selected_text += " ";
+                for (const auto &p : rm_j.parts)
+                  selected_text += p.text;
+                if (j < sel_end)
+                  selected_text += "\n";
+              }
+              ImGui::SetClipboardText(selected_text.c_str());
+            }
+            if (ImGui::MenuItem("Clear Selection")) {
               selection_anchor_ = -1;
               selection_active_ = -1;
-            } else {
-              selection_anchor_ = i;
-              selection_active_ = i;
             }
+            ImGui::EndPopup();
           }
-        }
-        if (ImGui::IsItemHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-            ImGui::IsMouseDown(0))
-          selection_active_ = i;
 
-        if (ImGui::BeginPopupContextItem("ChatLineCtx",
-                                         ImGuiPopupFlags_MouseButtonRight)) {
-          if (selection_anchor_ == -1) {
-            selection_anchor_ = i;
-            selection_active_ = i;
+          ImGui::PopID();
+        }
+        if (!use_clipper)
+          break;
+      }
+      if (use_clipper) {
+        ImGui::SetCursorPosY(max_y);
+        ImGui::Dummy(ImVec2(0.0f, 1e-6f)); // satisfy ImGui assertion about
+                                           // growing window via SetCursorPos
+      }
+
+      // Safe Bottom: Manually render the tail if needed
+      if (force_bottom_render) {
+        // Set cursor to where the manual tail rendering should begin
+        // This is an approximation, but should be close enough to avoid visual
+        // glitches
+        ImGui::SetCursorPosY((float)manual_tail_start * clipper_height);
+        for (int row_idx = manual_tail_start; row_idx < (int)history.size();
+             ++row_idx) {
+          const auto &rm = history[row_idx];
+          ImGui::PushID(row_idx);
+          ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+          ImVec2 pos_start = ImGui::GetCursorScreenPos();
+          ImGui::BeginGroup();
+          const std::tm *tm_ptr = &rm.local_time;
+          char time_buf[64];
+          if (show_date) {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_long.c_str(), tm_ptr);
+          } else {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_short.c_str(), tm_ptr);
           }
-          if (ImGui::MenuItem("Copy selection")) {
-            std::string selected_text;
-            int start = std::max(0, std::min(selection_anchor_, selection_active_));
-            int end = std::min((int)history.size() - 1,
-                               std::max(selection_anchor_, selection_active_));
-            for (int j = start; j <= end && j < (int)history.size(); ++j) {
-              for (const auto &p : history[j].parts)
-                selected_text += p.text;
-              if (j < end)
-                selected_text += "\n";
-            }
-            ImGui::SetClipboardText(selected_text.c_str());
+          RenderRichMessageWrapped(time_buf, rm.parts, &my_slots);
+          ImGui::EndGroup();
+          ImVec2 item_size = ImGui::GetItemRectSize();
+          ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
+          ImGui::SetCursorScreenPos(pos_start);
+          if (settings_.shade_alternating_rows && row_idx % 2 == 1) {
+            float x_min =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            float x_max =
+                ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(x_min, pos_start.y),
+                ImVec2(x_max, pos_start.y + item_size.y),
+                ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
           }
-          if (ImGui::MenuItem("Copy selection (with timestamps)")) {
-            std::string selected_text;
-            int start = std::max(0, std::min(selection_anchor_, selection_active_));
-            int end = std::min((int)history.size() - 1,
-                               std::max(selection_anchor_, selection_active_));
-            for (int j = start; j <= end && j < (int)history.size(); ++j) {
-              const auto &rm_j = history[j];
-              const std::tm *tm_ptr = &rm_j.local_time;
-              char time_buf[64];
-              if (show_date) {
-                std::strftime(time_buf, sizeof(time_buf),
-                              settings_.timestamp_format_long.c_str(), tm_ptr);
+          float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+          row_height_cache_[row_idx] = h;
+
+          bool is_selected = false;
+          if (selection_anchor_ != -1 && selection_active_ != -1) {
+            int sel_start = std::min(selection_anchor_, selection_active_);
+            int sel_end = std::max(selection_anchor_, selection_active_);
+            is_selected = (row_idx >= sel_start && row_idx <= sel_end);
+          }
+
+          char label[32];
+          snprintf(label, sizeof(label), "##row_%d", row_idx);
+          if (ImGui::Selectable(label, is_selected,
+                                ImGuiSelectableFlags_SpanAllColumns |
+                                    ImGuiSelectableFlags_AllowOverlap,
+                                ImVec2(0, item_size.y))) {
+          }
+          if (ImGui::IsItemClicked(0)) {
+            if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
+              selection_active_ = row_idx;
+            else {
+              if (selection_anchor_ == row_idx &&
+                  selection_active_ == row_idx) {
+                selection_anchor_ = -1;
+                selection_active_ = -1;
               } else {
-                std::strftime(time_buf, sizeof(time_buf),
-                              settings_.timestamp_format_short.c_str(), tm_ptr);
+                selection_anchor_ = row_idx;
+                selection_active_ = row_idx;
               }
-              selected_text += time_buf;
-              selected_text += " ";
-              for (const auto &p : rm_j.parts)
-                selected_text += p.text;
-              if (j < end)
-                selected_text += "\n";
             }
-            ImGui::SetClipboardText(selected_text.c_str());
           }
-          if (ImGui::MenuItem("Clear Selection")) {
-            selection_anchor_ = -1;
-            selection_active_ = -1;
+          if (ImGui::IsItemHovered(
+                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+              ImGui::IsMouseDown(0))
+            selection_active_ = row_idx;
+
+          if (ImGui::BeginPopupContextItem("ChatLineCtx",
+                                           ImGuiPopupFlags_MouseButtonRight)) {
+            if (selection_anchor_ == -1) {
+              selection_anchor_ = row_idx;
+              selection_active_ = row_idx;
+            }
+            if (ImGui::MenuItem("Copy selection")) {
+              std::string selected_text;
+              int sel_start =
+                  std::max(0, std::min(selection_anchor_, selection_active_));
+              int sel_end =
+                  std::min((int)history.size() - 1,
+                           std::max(selection_anchor_, selection_active_));
+              for (int j = sel_start; j <= sel_end && j < (int)history.size();
+                   ++j) {
+                for (const auto &p : history[j].parts)
+                  selected_text += p.text;
+                if (j < sel_end)
+                  selected_text += "\n";
+              }
+              ImGui::SetClipboardText(selected_text.c_str());
+            }
+            if (ImGui::MenuItem("Copy selection (with timestamps)")) {
+              std::string selected_text;
+              int sel_start =
+                  std::max(0, std::min(selection_anchor_, selection_active_));
+              int sel_end =
+                  std::min((int)history.size() - 1,
+                           std::max(selection_anchor_, selection_active_));
+              for (int j = sel_start; j <= sel_end && j < (int)history.size();
+                   ++j) {
+                const auto &rm_j = history[j];
+                const std::tm *tm_ptr = &rm_j.local_time;
+                char time_buf[64];
+                if (show_date) {
+                  std::strftime(time_buf, sizeof(time_buf),
+                                settings_.timestamp_format_long.c_str(),
+                                tm_ptr);
+                } else {
+                  std::strftime(time_buf, sizeof(time_buf),
+                                settings_.timestamp_format_short.c_str(),
+                                tm_ptr);
+                }
+                selected_text += time_buf;
+                selected_text += " ";
+                for (const auto &p : rm_j.parts)
+                  selected_text += p.text;
+                if (j < sel_end)
+                  selected_text += "\n";
+              }
+              ImGui::SetClipboardText(selected_text.c_str());
+            }
+            if (ImGui::MenuItem("Clear Selection")) {
+              selection_anchor_ = -1;
+              selection_active_ = -1;
+            }
+            ImGui::EndPopup();
           }
-          ImGui::EndPopup();
+          max_y = std::max(max_y, ImGui::GetCursorPosY());
+          ImGui::PopID();
         }
-
-        ImGui::PopID();
-      }
-      if (!use_clipper)
-        break;
-    }
-    ImGui::GetWindowDrawList()->ChannelsMerge();
-
-      if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
-          !ImGui::IsAnyItemHovered()) {
-        selection_active_ = -1;
-      }
+        ImGui::GetWindowDrawList()->ChannelsMerge();
+      } // Update status is no longer needed here as it's done during row
+        // rendering
 
       float current_scroll_max_y = ImGui::GetScrollMaxY();
       float current_window_width = ImGui::GetWindowWidth();
-      if (was_at_bottom && (history_grew ||
-                            current_scroll_max_y != last_scroll_max_y_ ||
-                            current_window_width != last_window_width_)) {
-        ImGui::SetScrollY(current_scroll_max_y + 10000.0f);
+      if (was_at_bottom &&
+          (history_grew || current_scroll_max_y != last_scroll_max_y_ ||
+           current_window_width != last_window_width_)) {
+        // Idempotency check: only snap if we are NOT already at the bottom
+        float gap = current_scroll_max_y - ImGui::GetScrollY();
+        if (gap > 1.0f) {
+          ImGui::SetScrollY(
+              current_scroll_max_y); // Use SetScrollY for absolute pixel target
+        }
+      }
+
+      if (current_window_width != last_window_width_) {
+        std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0f);
+        last_avg_height_ = -1.0f;
+        measured_height_sum_ = 0;
+        measured_rows_count_ = 0;
       }
 
       last_history_size_ = (int)history.size();
@@ -434,7 +616,9 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       send = true;
 
     if (send && input_buf_[0] != '\0' && !connected_slots.empty()) {
-      ap_network_.SendChat(selected_send_slot_name_, input_buf_);
+      if (!HandleCommand(input_buf_)) {
+        ap_network_.SendChat(selected_send_slot_name_, input_buf_);
+      }
       if (input_history_.empty() || input_history_.back() != input_buf_)
         input_history_.push_back(input_buf_);
       history_pos_ = -1;
@@ -557,4 +741,115 @@ int ChatWindow::TextEditCallback(ImGuiInputTextCallbackData *data) {
     }
   }
   return 0;
+}
+
+bool ChatWindow::HandleCommand(const std::string &line) {
+  if (line.empty() || line[0] != '/')
+    return false;
+
+  std::string full_cmd = line.substr(1);
+  size_t space = full_cmd.find(' ');
+  std::string cmd =
+      (space == std::string::npos) ? full_cmd : full_cmd.substr(0, space);
+  std::string args =
+      (space == std::string::npos) ? "" : full_cmd.substr(space + 1);
+
+  std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
+
+  if (cmd == "help") {
+    ap_network_.OnStatusMessage(nullptr, "Local commands:");
+    ap_network_.OnStatusMessage(nullptr, "  /help          - Show this help");
+    ap_network_.OnStatusMessage(nullptr,
+                                "  /clear         - Clear chat history");
+    ap_network_.OnStatusMessage(nullptr,
+                                "  /disconnect    - Disconnect selected slot");
+    ap_network_.OnStatusMessage(nullptr,
+                                "  /disconnectall - Disconnect all slots");
+    ap_network_.OnStatusMessage(nullptr,
+                                "  /say <message> - Send a message in chat");
+    return true;
+  } else if (cmd == "clear") {
+    ap_network_.ClearChatHistory();
+    ap_network_.OnStatusMessage(nullptr, "Chat history cleared.");
+    return true;
+  } else if (cmd == "disconnect") {
+    if (!selected_send_slot_name_.empty()) {
+      auto s = ap_network_.GetSession(selected_send_slot_name_);
+      if (s) {
+        s->Disconnect();
+        ap_network_.OnStatusMessage(nullptr, "Disconnected slot: " +
+                                                 selected_send_slot_name_);
+      }
+    } else {
+      ap_network_.OnStatusMessage(nullptr, "No slot selected to disconnect.");
+    }
+    return true;
+  } else if (cmd == "disconnectall") {
+    ap_network_.DisconnectAll();
+    ap_network_.OnStatusMessage(nullptr, "Disconnected all slots.");
+    return true;
+  } else if (cmd == "say") {
+    if (!args.empty()) {
+      ap_network_.SendChat(selected_send_slot_name_, args);
+    }
+    return true;
+  } else if (cmd == "debug") {
+    std::string subcmd;
+    size_t sub_space = args.find(' ');
+    if (sub_space != std::string::npos) {
+      subcmd = args.substr(0, sub_space);
+      args = args.substr(sub_space + 1);
+    } else {
+      subcmd = args;
+      args = "";
+    }
+    std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::tolower);
+
+    int n = 0;
+    try {
+      n = std::stoi(args);
+    } catch (...) {
+      n = 1;
+    }
+
+    if (subcmd == "fillchat") {
+      for (int i = 0; i < n; ++i) {
+        ap_network_.OnStatusMessage(nullptr,
+                                    "debug filler " + std::to_string(i + 1));
+      }
+      return true;
+    } else if (subcmd == "fillfeed") {
+      std::string slot_name = selected_send_slot_name_.empty()
+                                  ? "Player"
+                                  : selected_send_slot_name_;
+      for (int i = 0; i < n; ++i) {
+        RichMessage rm;
+        rm.timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count() /
+                       1000000.0;
+        rm.populate_local_time();
+        rm.source_slot = slot_name;
+
+        rm.parts.push_back({slot_name, 0xFFFF00FF}); // Player color (Magenta)
+        rm.parts.push_back({" found their ", 0xFFFFFFFF});
+        rm.parts.push_back(
+            {"Item " + std::to_string(i + 1), 0xFFFFFF00}); // Item color (Cyan)
+        rm.parts.push_back({" (", 0xFFFFFFFF});
+        rm.parts.push_back({"Location " + std::to_string(i + 1),
+                            0xFF00FF00}); // Location color (Green)
+        rm.parts.push_back({")", 0xFFFFFFFF});
+
+        ap_network_.OnGlobalMessage(nullptr, rm, true);
+      }
+      return true;
+    }
+    return true; // Handle all /debug subcommands locally
+  }
+
+  ap_network_.OnStatusMessage(nullptr, "Unrecognized command: /" + cmd);
+  ap_network_.OnStatusMessage(
+      nullptr, "Use /help to see local commands, or /say <msg> to send a "
+               "message starting with /");
+  return true;
 }

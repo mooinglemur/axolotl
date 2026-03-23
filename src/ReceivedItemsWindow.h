@@ -35,5 +35,9 @@ private:
   size_t last_history_count_ = 0;
   bool last_collapse_ = false;
   uint64_t last_data_version_ = 0;
+  int last_display_row_count_ = 0;
+  float last_scroll_max_y_ = 0;
+  float last_window_width_ = 0;
   bool show_long_dates_ = false;
+  std::string last_filter_text_;
 };
