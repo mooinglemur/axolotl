@@ -110,35 +110,18 @@ if (APPLE)
     set_source_files_properties(src/Application.cpp PROPERTIES LANGUAGE OBJCXX)
 endif()
 
-# Get git hash
-execute_process(
-    COMMAND git rev-parse --short HEAD
+# Dynamic version generation
+add_custom_target(UpdateVersion ALL
+    COMMAND ${CMAKE_COMMAND} -DS_DIR=${CMAKE_SOURCE_DIR} -DAXOLOTL_IGNORE_DIRTY=${AXOLOTL_IGNORE_DIRTY} -P ${CMAKE_SOURCE_DIR}/tools/generate_version.cmake
+    BYPRODUCTS ${CMAKE_SOURCE_DIR}/src/version.h
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    RESULT_VARIABLE GIT_RESULT
-    OUTPUT_VARIABLE GIT_HASH
-    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMENT "Updating version.h with current git hash"
 )
 
-if (NOT GIT_RESULT EQUAL 0)
-    set(GIT_HASH "nogit")
-else()
-    if (NOT AXOLOTL_IGNORE_DIRTY)
-        # Check if repo is dirty
-        execute_process(
-            COMMAND git status --porcelain
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-            OUTPUT_VARIABLE GIT_STATUS
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
-        if (NOT "${GIT_STATUS}" STREQUAL "")
-            set(GIT_HASH "${GIT_HASH}+")
-        endif()
-    endif()
-endif()
-
 add_executable(axolotl-apclient WIN32 ${SRC_FILES})
+add_dependencies(axolotl-apclient UpdateVersion)
 target_include_directories(axolotl-apclient PRIVATE src)
-target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32 GIT_HASH="${GIT_HASH}")
+target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32)
 
 if (AXOLOTL_OFFICIAL_RELEASE)
     target_compile_definitions(axolotl-apclient PRIVATE AXOLOTL_OFFICIAL_RELEASE)

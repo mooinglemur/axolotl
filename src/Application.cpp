@@ -6,16 +6,12 @@
 #include "Platform.h"
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
-#include "version.h"
 #include <chrono>
 #include <iostream>
 #include <thread>
-
-#ifndef GIT_HASH
-#define GIT_HASH "unknown"
-#endif
-
 #include <GLFW/glfw3.h>
+#include <GL/gl.h>
+#include "version.h"
 #include <backends/imgui_impl_glfw.h>
 #if defined(__APPLE__) && defined(__OBJC__)
 #define GLFW_EXPOSE_NATIVE_COCOA
@@ -31,9 +27,7 @@
 #else
 #include <backends/imgui_impl_opengl3.h>
 #endif
-#ifdef _WIN32
 #include <ixwebsocket/IXNetSystem.h>
-#endif
 #include <imgui.h>
 #include <imgui_internal.h>
 

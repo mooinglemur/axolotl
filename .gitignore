@@ -12,6 +12,7 @@ install_manifest.txt
 Makefile
 *.cmake
 !Toolchain-mingw.cmake
+!tools/*.cmake
 
 # Compiled files
 *.o
@@ -47,3 +48,4 @@ Thumbs.db
 .cache/
 build_error.txt
 compile_commands.json
+src/version.h
