@@ -77,5 +77,7 @@ private:
   ArchipelagoNetwork ap_network_;
   std::vector<std::unique_ptr<Window>> windows_;
   bool show_about_ = false;
+  bool show_exit_confirmation_ = false;
+  int frames_to_render_ = 0;
   bool first_render_ = true;
 };

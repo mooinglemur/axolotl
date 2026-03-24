@@ -193,8 +193,11 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
                           ImGuiChildFlags_Borders,
                           ImGuiWindowFlags_HorizontalScrollbar |
                               ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
-      bool was_at_bottom = (last_scroll_max_y_ <= 0.0f ||
-                            ImGui::GetScrollY() >= last_scroll_max_y_ - 5.0f);
+      float threshold = 4.0f * ImGui::GetTextLineHeightWithSpacing();
+      bool was_at_bottom =
+          (last_scroll_max_y_ <= 0.0f ||
+           ImGui::GetScrollY() >= last_scroll_max_y_ - threshold ||
+           ImGui::GetScrollY() >= ImGui::GetScrollMaxY());
       bool history_grew = (history.size() > last_history_size_);
 
       if (custom_font)
@@ -237,7 +240,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
         bool is_selected = false;
         if (selection_anchor_idx_ != -1 && selection_active_idx_ != -1) {
-          int sel_start = std::min(selection_anchor_idx_, selection_active_idx_);
+          int sel_start =
+              std::min(selection_anchor_idx_, selection_active_idx_);
           int sel_end = std::max(selection_anchor_idx_, selection_active_idx_);
           is_selected = (row_idx >= sel_start && row_idx <= sel_end);
         }
@@ -425,10 +429,12 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           (history_grew || current_scroll_max_y != last_scroll_max_y_ ||
            current_window_width != last_window_width_)) {
         // Idempotency check: only snap if we are NOT already at the bottom
+        // Use a small threshold to account for floating point inaccuracies
         float gap = current_scroll_max_y - ImGui::GetScrollY();
-        if (gap > 1.0f) {
+        if (gap > 5.0f) { // Increased threshold
+          // Clamp scroll target to prevent overscrolling if content shrinks
           ImGui::SetScrollY(
-              current_scroll_max_y); // Use SetScrollY for absolute pixel target
+              std::min(ImGui::GetScrollY() + gap, current_scroll_max_y));
         }
       }
 

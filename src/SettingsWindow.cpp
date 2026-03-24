@@ -106,6 +106,10 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Toggle alternating row shading on all tables.");
 
+    ImGui::Checkbox("Confirm Exit", &settings_.confirm_exit);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Require confirmation when closing the application.");
+
     // ImGui::Spacing();
     ImGui::Dummy(ImVec2(0.0f, 20.0f));
 

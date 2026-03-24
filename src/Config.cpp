@@ -146,6 +146,8 @@ ConnectionSettings Config::Load() {
     if (config["shade_alternating_rows"])
       settings.shade_alternating_rows =
           config["shade_alternating_rows"].as<bool>();
+    if (config["confirm_exit"])
+      settings.confirm_exit = config["confirm_exit"].as<bool>();
   } catch (const std::exception &e) {
     std::cerr << "Error loading config: " << e.what() << std::endl;
   }
@@ -184,6 +186,7 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::Key << "streamer_mode" << YAML::Value << settings.streamer_mode;
   out << YAML::Key << "shade_alternating_rows" << YAML::Value
       << settings.shade_alternating_rows;
+  out << YAML::Key << "confirm_exit" << YAML::Value << settings.confirm_exit;
   out << YAML::Key << "show_windows" << YAML::Value << YAML::BeginMap;
   for (const auto &kv : settings.show_windows) {
     out << YAML::Key << kv.first << YAML::Value << kv.second;

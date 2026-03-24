@@ -190,7 +190,10 @@ bool Application::Initialize() {
   io.IniFilename = imgui_ini_path_.c_str();
 
   ap_network_.SetMaxHistory(current_config_.max_history_size);
-  ap_network_.SetWakeUpCallback([this]() { glfwPostEmptyEvent(); });
+  ap_network_.SetWakeUpCallback([this]() {
+    frames_to_render_ = 3;
+    glfwPostEmptyEvent();
+  });
 
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -219,7 +222,6 @@ bool Application::Initialize() {
   }
   ImGui_ImplDX11_Init(pd3dDevice_, pd3dDeviceContext_);
 
-  glfwSetWindowUserPointer(window_, this);
   glfwSetWindowSizeCallback(
       window_, [](GLFWwindow *window, int width, int height) {
         auto app = static_cast<Application *>(glfwGetWindowUserPointer(window));
@@ -233,6 +235,15 @@ bool Application::Initialize() {
   ImGui_ImplGlfw_InitForOpenGL(window_, true);
   ImGui_ImplOpenGL3_Init(glsl_version_.c_str());
 #endif
+
+  glfwSetWindowUserPointer(window_, this);
+  glfwSetWindowCloseCallback(window_, [](GLFWwindow *w) {
+    auto app = static_cast<Application *>(glfwGetWindowUserPointer(w));
+    if (app->current_config_.confirm_exit) {
+      glfwSetWindowShouldClose(w, GLFW_FALSE);
+      app->show_exit_confirmation_ = true;
+    }
+  });
 
   ReloadFonts();
 
@@ -418,15 +429,22 @@ void Application::Run() {
     double t_after_poll = glfwGetTime();
 
     bool net_changed = ap_network_.Update();
+    if (net_changed)
+      frames_to_render_ = 3;
 
     // Render if network changed OR if we received a real window event (not a
-    // timeout)
-    bool should_render = net_changed || (t_after_poll - t_start < 0.015);
+    // timeout) OR if we are in a settlement period
+    bool should_render =
+        (frames_to_render_ > 0) || (t_after_poll - t_start < 0.015);
+
+    if (frames_to_render_ > 0)
+      frames_to_render_--;
 
     if (fonts_reload_pending_) {
       should_render = true;
       ReloadFonts();
       fonts_reload_pending_ = false;
+      frames_to_render_ = 3;
     }
 
     if (settings_changed_pending_) {
@@ -435,6 +453,7 @@ void Application::Run() {
       fonts_reload_pending_ = true;
       settings_changed_pending_ = false;
       should_render = true;
+      frames_to_render_ = 3;
     }
 
     if (first_render_) {
@@ -509,7 +528,11 @@ void Application::Run() {
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit", "Alt+F4")) {
-          glfwSetWindowShouldClose(window_, true);
+          if (current_config_.confirm_exit) {
+            show_exit_confirmation_ = true;
+          } else {
+            glfwSetWindowShouldClose(window_, true);
+          }
         }
         ImGui::EndMenu();
       }
@@ -609,6 +632,31 @@ void Application::Run() {
       ImGui::Separator();
       if (ImGui::Button("Close", ImVec2(120, 0))) {
         show_about_ = false;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
+    }
+
+    if (show_exit_confirmation_) {
+      ImGui::OpenPopup("Confirm Exit");
+    }
+
+    if (ImGui::BeginPopupModal("Confirm Exit", &show_exit_confirmation_,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+      ImGui::Text("Are you sure you want to exit Axolotl?");
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+
+      if (ImGui::Button("Yes, Exit", ImVec2(120, 0))) {
+        glfwSetWindowShouldClose(window_, true);
+        show_exit_confirmation_ = false;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SetItemDefaultFocus();
+      ImGui::SameLine();
+      if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+        show_exit_confirmation_ = false;
         ImGui::CloseCurrentPopup();
       }
       ImGui::EndPopup();

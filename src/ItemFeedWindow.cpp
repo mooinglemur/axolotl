@@ -87,15 +87,20 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       int current_yday = current_tm->tm_yday;
       int current_year = current_tm->tm_year;
 
-      bool was_at_bottom = (last_scroll_max_y_ <= 0.0f ||
-                            ImGui::GetScrollY() >= last_scroll_max_y_ - 5.0f);
+      float threshold = 4.0f * ImGui::GetTextLineHeightWithSpacing();
+      bool was_at_bottom =
+          (last_scroll_max_y_ <= 0.0f ||
+           ImGui::GetScrollY() >= last_scroll_max_y_ - threshold ||
+           ImGui::GetScrollY() >= ImGui::GetScrollMaxY());
       bool history_grew =
           ((int)display_indices_.size() > last_display_indices_size_);
 
       if (selection_anchor_idx_ >= (int)display_indices_.size())
-        selection_anchor_idx_ = display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
+        selection_anchor_idx_ =
+            display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
       if (selection_active_idx_ >= (int)display_indices_.size())
-        selection_active_idx_ = display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
+        selection_active_idx_ =
+            display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
 
       float measured_avg =
           (measured_rows_count_ > 0)
@@ -237,11 +242,12 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
               if (tm_ptr_k->tm_yday != current_yday ||
                   tm_ptr_k->tm_year != current_year) {
                 std::strftime(t_buf, sizeof(t_buf),
-                              settings_.timestamp_format_long.c_str(), tm_ptr_k);
+                              settings_.timestamp_format_long.c_str(),
+                              tm_ptr_k);
               } else {
-                std::strftime(
-                    t_buf, sizeof(t_buf),
-                    settings_.timestamp_format_short.c_str(), tm_ptr_k);
+                std::strftime(t_buf, sizeof(t_buf),
+                              settings_.timestamp_format_short.c_str(),
+                              tm_ptr_k);
               }
               selected_text += t_buf;
               selected_text += " ";
@@ -309,8 +315,7 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         // Idempotency check: only snap if we are NOT already at the bottom
         float gap = current_scroll_max_y - ImGui::GetScrollY();
         if (gap > 1.0f || filter_changed) {
-          ImGui::SetScrollY(
-              current_scroll_max_y); // Use SetScrollY for absolute pixel target
+          ImGui::SetScrollY(current_scroll_max_y);
         }
       }
 
