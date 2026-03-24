@@ -46,9 +46,16 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (!is_open_)
     return;
 
+  ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
-    ImGui::Text("UI Preferences");
-    ImGui::Separator();
+    if (ImGui::CollapsingHeader("General")) {
+      ImGui::Checkbox("Confirm Exit", &settings_.confirm_exit);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Require confirmation when closing the application.");
+      ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    }
+
+    if (ImGui::CollapsingHeader("Appearance")) {
 
     auto render_scale_slider = [&](const char *label, float *value,
                                    const char *tooltip, bool is_ui_scale) {
@@ -106,12 +113,13 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Toggle alternating row shading on all tables.");
 
-    ImGui::Checkbox("Confirm Exit", &settings_.confirm_exit);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Require confirmation when closing the application.");
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    }
 
-    // ImGui::Spacing();
-    ImGui::Dummy(ImVec2(0.0f, 20.0f));
+    if (ImGui::CollapsingHeader("Timestamps")) {
+    ImGui::Checkbox("Show timestamps in Chat", &settings_.show_chat_timestamps);
+    ImGui::Checkbox("Show timestamps in Item Feed", &settings_.show_feed_timestamps);
+    ImGui::Spacing();
 
     ImGui::Text("Timestamp Formats: see ");
     ImGui::SameLine(0, 0);
@@ -161,8 +169,10 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
     render_timestamp_input("Timestamp Short", settings_.timestamp_format_short,
                            "[%H:%M:%S]");
 
-    ImGui::Dummy(ImVec2(0.0f, 20.0f));
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    }
 
+    if (ImGui::CollapsingHeader("Fonts")) {
     ImGui::Text("Display Fonts");
     ImGui::Separator();
 
@@ -303,9 +313,9 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
     ImGui::EndChild();
     RenderFallbackFontPreview(preview_fallback_font ? preview_fallback_font
                                                     : custom_font);
+    }
 
     ImGui::Spacing();
-    ImGui::Dummy(ImVec2(0.0f, 20.0f));
     ImGui::Separator();
 
     if (ImGui::Button("Save and Apply")) {

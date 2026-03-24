@@ -35,6 +35,8 @@ struct ConnectionSettings {
   bool streamer_mode = false;
   bool shade_alternating_rows = true;
   bool confirm_exit = true;
+  bool show_chat_timestamps = true;
+  bool show_feed_timestamps = true;
   std::map<std::string, bool> show_windows;
 };
 

@@ -52,6 +52,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
   uint64_t current_version = ap_network_.GetDataVersion();
 
 
+  ImGui::SetNextWindowSize(ImVec2(800, 400), ImGuiCond_FirstUseEver);
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
@@ -360,8 +361,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
         else
           ImGui::Text("%s", receiver.c_str());
 
-        if (ImGui::IsItemHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+        if (ImGui::IsItemHovered()) {
           std::string game = ap_network_.ResolvePlayerGame(h.receiver_slot);
           if (!game.empty()) {
             ImGui::SetTooltip("Game: %s", game.c_str());
@@ -383,8 +383,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
         else
           ImGui::Text("%s", finder.c_str());
 
-        if (ImGui::IsItemHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+        if (ImGui::IsItemHovered()) {
           std::string game = ap_network_.ResolvePlayerGame(h.finder_slot);
           if (!game.empty()) {
             ImGui::SetTooltip("Game: %s", game.c_str());

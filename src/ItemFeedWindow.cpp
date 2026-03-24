@@ -17,6 +17,7 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (!is_open_)
     return;
 
+  ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
@@ -174,15 +175,19 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         // Timestamp
         const std::tm *tm_ptr = &rm.local_time;
         char time_buf[64];
-        if (show_long_dates_) {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_long.c_str(), tm_ptr);
-        } else {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_short.c_str(), tm_ptr);
+        char *time_ptr = nullptr;
+        if (settings_.show_feed_timestamps) {
+          if (show_long_dates_) {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_long.c_str(), tm_ptr);
+          } else {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_short.c_str(), tm_ptr);
+          }
+          time_ptr = time_buf;
         }
 
-        RenderRichMessageWrapped(time_buf, rm.parts, &ap_network_, &my_slots);
+        RenderRichMessageWrapped(time_ptr, rm.parts, &ap_network_, &my_slots);
         ImGui::EndGroup();
         ImVec2 item_size = ImGui::GetItemRectSize();
         ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);

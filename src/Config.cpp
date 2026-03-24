@@ -147,7 +147,19 @@ ConnectionSettings Config::Load() {
       settings.shade_alternating_rows =
           config["shade_alternating_rows"].as<bool>();
     if (config["confirm_exit"])
-      settings.confirm_exit = config["confirm_exit"].as<bool>();
+      settings.confirm_exit = config["confirm_exit"].as<bool>(true);
+    if (config["show_chat_timestamps"])
+      settings.show_chat_timestamps =
+          config["show_chat_timestamps"].as<bool>(true);
+    if (config["show_feed_timestamps"])
+      settings.show_feed_timestamps =
+          config["show_feed_timestamps"].as<bool>(true);
+    if (config["timestamp_format_long"])
+      settings.timestamp_format_long =
+          config["timestamp_format_long"].as<std::string>();
+    if (config["timestamp_format_short"])
+      settings.timestamp_format_short =
+          config["timestamp_format_short"].as<std::string>();
   } catch (const std::exception &e) {
     std::cerr << "Error loading config: " << e.what() << std::endl;
   }
@@ -187,6 +199,14 @@ void Config::Save(const ConnectionSettings &settings) {
   out << YAML::Key << "shade_alternating_rows" << YAML::Value
       << settings.shade_alternating_rows;
   out << YAML::Key << "confirm_exit" << YAML::Value << settings.confirm_exit;
+  out << YAML::Key << "show_chat_timestamps" << YAML::Value
+      << settings.show_chat_timestamps;
+  out << YAML::Key << "show_feed_timestamps" << YAML::Value
+      << settings.show_feed_timestamps;
+  out << YAML::Key << "timestamp_format_long" << YAML::Value
+      << settings.timestamp_format_long;
+  out << YAML::Key << "timestamp_format_short" << YAML::Value
+      << settings.timestamp_format_short;
   out << YAML::Key << "show_windows" << YAML::Value << YAML::BeginMap;
   for (const auto &kv : settings.show_windows) {
     out << YAML::Key << kv.first << YAML::Value << kv.second;

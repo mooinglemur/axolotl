@@ -21,6 +21,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (!is_open_)
     return;
 
+  ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     // Multi-slot Connection Controls
     float avail_width = ImGui::GetContentRegionAvail().x;
@@ -257,10 +258,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                   ImGuiSelectableFlags_AllowOverlap,
                               ImVec2(0, row_h))) {
         }
-        if (rm.sender_slot != -1 &&
-            ImGui::IsItemHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
-                ImGuiHoveredFlags_AllowWhenOverlapped)) {
+        if (rm.sender_slot != -1 && ImGui::IsItemHovered()) {
           std::string game = ap_network_.ResolvePlayerGame(rm.sender_slot);
           if (!game.empty()) {
             ImGui::SetTooltip("Game: %s", game.c_str());
@@ -292,15 +290,19 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         // Timestamp
         const std::tm *tm_ptr = &rm.local_time;
         char time_buf[64];
-        if (show_date) {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_long.c_str(), tm_ptr);
-        } else {
-          std::strftime(time_buf, sizeof(time_buf),
-                        settings_.timestamp_format_short.c_str(), tm_ptr);
+        char *time_ptr = nullptr;
+        if (settings_.show_chat_timestamps) {
+          if (show_date) {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_long.c_str(), tm_ptr);
+          } else {
+            std::strftime(time_buf, sizeof(time_buf),
+                          settings_.timestamp_format_short.c_str(), tm_ptr);
+          }
+          time_ptr = time_buf;
         }
 
-        RenderRichMessageWrapped(time_buf, rm.parts, &ap_network_, &my_slots);
+        RenderRichMessageWrapped(time_ptr, rm.parts, &ap_network_, &my_slots);
         ImGui::EndGroup();
         ImVec2 item_size = ImGui::GetItemRectSize();
         ImGui::GetWindowDrawList()->ChannelsSetCurrent(0);
