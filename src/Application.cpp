@@ -10,7 +10,9 @@
 #include <iostream>
 #include <thread>
 #include <GLFW/glfw3.h>
+#if !defined(__APPLE__) && !defined(_WIN32)
 #include <GL/gl.h>
+#endif
 #include "version.h"
 #include <backends/imgui_impl_glfw.h>
 #if defined(__APPLE__) && defined(__OBJC__)
