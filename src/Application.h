@@ -20,9 +20,18 @@ public:
   Application();
   ~Application();
 
-  bool Initialize();
+  bool InitializeNetwork();
+  bool InitializeUI();
+  void CleanupUI();
   void Run();
   void ReloadFonts();
+
+  bool UserRequestedExit() const { return user_requested_exit_ || should_exit_; }
+  bool WasDisconnected() const { return is_disconnected_; }
+  void ResetDisconnected() { is_disconnected_ = false; }
+
+  static void SignalHandler(int signum);
+
   ImFont *GetUIFont() const { return ui_font_; }
   ImFont *GetContentFont() const { return content_font_; }
   ImFont *GetPreviewFont() const { return preview_font_; }
@@ -72,6 +81,8 @@ private:
   void CleanupRenderTarget();
 #endif
 
+  static void glfw_error_callback(int error, const char *description);
+
   std::string glsl_version_;
   std::string imgui_ini_path_;
   ArchipelagoNetwork ap_network_;
@@ -80,4 +91,8 @@ private:
   bool show_exit_confirmation_ = false;
   int frames_to_render_ = 0;
   bool first_render_ = true;
+
+  bool user_requested_exit_ = false;
+  bool is_disconnected_ = false;
+  static std::atomic<bool> should_exit_;
 };

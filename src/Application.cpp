@@ -32,44 +32,47 @@
 #include <ixwebsocket/IXNetSystem.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <csignal>
+
+static Application *s_instance = nullptr;
+std::atomic<bool> Application::should_exit_{false};
+
+void Application::SignalHandler(int signum) { should_exit_ = true; }
 
 Application::Application()
     : current_config_(Config::Load()), pending_config_(current_config_) {
+  s_instance = this;
   is_first_launch_ = !std::filesystem::exists(Config::GetConfigPath());
+}
+
+bool Application::InitializeNetwork() {
+#ifdef _WIN32
+  ix::initNetSystem();
+#endif
   ap_network_.SetSettings(&current_config_);
   ap_network_.on_history_updated = [this]() {};
   for (const auto &slot : current_config_.slots) {
     ap_network_.AddSession(slot.name);
   }
+  return true;
 }
 
-Application::~Application() {
+void Application::CleanupUI() {
+  if (!window_)
+    return;
+
   for (const auto &window : windows_) {
     current_config_.show_windows[window->GetName()] = window->GetOpen();
     window->SaveState(current_config_);
   }
 
-  if (window_) {
-    glfwGetWindowSize(window_, &current_config_.window_width,
-                      &current_config_.window_height);
-    glfwGetWindowPos(window_, &current_config_.window_x,
-                     &current_config_.window_y);
-  }
+  glfwGetWindowSize(window_, &current_config_.window_width,
+                    &current_config_.window_height);
+  glfwGetWindowPos(window_, &current_config_.window_x, &current_config_.window_y);
 
   Config::Save(current_config_);
 
-#ifdef _WIN32
-  ix::uninitNetSystem();
-#endif
-  // Clear all callbacks BEFORE disconnecting to avoid background thread
-  // wake-ups
-  ap_network_.on_history_updated = nullptr;
-  ap_network_.SetWakeUpCallback(nullptr);
-
-  // Explicitly disconnect all sessions
-  ap_network_.DisconnectAll();
-
-  // Clear windows (destroying UI objects)
+  // Clear windows (destroying UI objects) before ImGui shutdown
   windows_.clear();
 
 #ifdef __APPLE__
@@ -86,21 +89,49 @@ Application::~Application() {
   CleanupDeviceD3D();
 #endif
 
-  if (window_) {
-    glfwDestroyWindow(window_);
-  }
-  // Stop logging GLFW errors right before termination
+  glfwDestroyWindow(window_);
+  window_ = nullptr;
+
   glfwSetErrorCallback(nullptr);
   glfwTerminate();
 }
 
-static void glfw_error_callback(int error, const char *description) {
+Application::~Application() {
+  CleanupUI();
+
+#ifdef _WIN32
+  ix::uninitNetSystem();
+#endif
+  // Clear all callbacks BEFORE disconnecting to avoid background thread
+  // wake-ups
+  ap_network_.on_history_updated = nullptr;
+  ap_network_.SetWakeUpCallback(nullptr);
+
+  // Explicitly disconnect all sessions
+  ap_network_.DisconnectAll();
+
+  if (s_instance == this) {
+    s_instance = nullptr;
+  }
+}
+
+void Application::glfw_error_callback(int error, const char *description) {
   // Silently handle Wayland window position error
   if (error == 65548 && description &&
       std::string(description).find("Wayland") != std::string::npos) {
     return;
   }
   std::cerr << "GLFW Error " << error << ": " << description << std::endl;
+
+  // Detect fatal Wayland errors or connection loss
+  if (error == 65544 ||
+      (description &&
+       (std::string(description).find("Wayland") != std::string::npos ||
+        std::string(description).find("Protocol error") != std::string::npos))) {
+    if (s_instance) {
+      s_instance->is_disconnected_ = true;
+    }
+  }
 }
 
 static void RenderLink(const char *label, const char *url) {
@@ -116,7 +147,9 @@ static void RenderLink(const char *label, const char *url) {
   }
 }
 
-bool Application::Initialize() {
+bool Application::InitializeUI() {
+  s_instance = this;
+  is_disconnected_ = false;
   glfwSetErrorCallback(glfw_error_callback);
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW." << std::endl;
@@ -413,7 +446,7 @@ void Application::SetPreviewFallbackFont(const std::string &path) {
 }
 
 void Application::Run() {
-  while (!glfwWindowShouldClose(window_)) {
+  while (!glfwWindowShouldClose(window_) && !is_disconnected_ && !should_exit_) {
     double t_start_frame = glfwGetTime();
 #ifdef __APPLE__
     id<CAMetalDrawable> drawable = nil;
@@ -703,6 +736,10 @@ void Application::Run() {
       std::this_thread::sleep_for(
           std::chrono::duration<double>(0.0166 - frame_dt));
     }
+  }
+
+  if (glfwWindowShouldClose(window_)) {
+    user_requested_exit_ = true;
   }
 
   // Workaround for Wayland segmentation fault on exit:
