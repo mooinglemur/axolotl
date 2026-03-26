@@ -22,7 +22,7 @@ void OpenURL(const std::string &url) {
 #endif
 }
 
-std::string GetOpenFileName(const std::string &filter) {
+std::string PickOpenFileName(const std::string &filter) {
 #ifdef _WIN32
   OPENFILENAMEA ofn;
   char szFile[MAX_PATH] = {0};

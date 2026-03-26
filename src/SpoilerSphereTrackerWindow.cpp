@@ -14,7 +14,7 @@ SpoilerSphereTrackerWindow::SpoilerSphereTrackerWindow(
 }
 
 void SpoilerSphereTrackerWindow::LoadSpoilerLog() {
-  std::string path = Platform::GetOpenFileName("*.txt");
+  std::string path = Platform::PickOpenFileName("*.txt");
   if (!path.empty()) {
     log_path_ = path;
 
