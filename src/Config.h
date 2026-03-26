@@ -24,7 +24,9 @@ struct ConnectionSettings {
   float content_scale = 1.0f;
   std::string font_path = "";
   std::string fallback_font_path = "";
-  int max_history_size = 0;
+  bool show_hints = true;
+  bool show_details_in_sphere_tracker = true;
+  int max_history_size = 1000;
   std::string timestamp_format_long = "[%Y-%m-%d %H:%M:%S]";
   std::string timestamp_format_short = "[%H:%M:%S]";
   int window_width = 1280;

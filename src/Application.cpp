@@ -6,6 +6,7 @@
 #include "Platform.h"
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
+#include "SpoilerSphereTrackerWindow.h"
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -299,6 +300,7 @@ bool Application::InitializeUI() {
                                              "Personal Feed"));
 
   AddWindow(std::make_unique<HintWindow>(ap_network_, current_config_));
+  AddWindow(std::make_unique<SpoilerSphereTrackerWindow>(ap_network_, current_config_));
 
   if (is_first_launch_) {
     current_config_.show_windows["Chat"] = true;

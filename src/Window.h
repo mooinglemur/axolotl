@@ -3,10 +3,43 @@
 #include <ctime>
 #include <imgui.h>
 #include <set>
+#include <cctype>
 #include <string>
 #include <vector>
 
 struct ConnectionSettings;
+
+inline int NaturalCompare(const std::string &a, const std::string &b) {
+  if (a.empty() && b.empty())
+    return 0;
+  if (a.empty())
+    return -1;
+  if (b.empty())
+    return 1;
+
+  auto itA = a.begin(), itB = b.begin();
+  while (itA != a.end() && itB != b.end()) {
+    if (isdigit(*itA) && isdigit(*itB)) {
+      unsigned long numA = 0;
+      while (itA != a.end() && isdigit(*itA))
+        numA = numA * 10 + (*itA - '0'), ++itA;
+      unsigned long numB = 0;
+      while (itB != b.end() && isdigit(*itB))
+        numB = numB * 10 + (*itB - '0'), ++itB;
+      if (numA != numB)
+        return (numA < numB) ? -1 : 1;
+    } else {
+      char cA = (char)tolower(*itA), cB = (char)tolower(*itB);
+      if (cA != cB)
+        return (cA < cB) ? -1 : 1;
+      ++itA;
+      ++itB;
+    }
+  }
+  if (itA == a.end() && itB == b.end())
+    return 0;
+  return (itA == a.end()) ? -1 : 1;
+}
 
 inline void RenderRichMessageWrapped(const char *timestamp_str,
                                      const std::vector<MessagePart> &parts,

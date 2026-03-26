@@ -237,6 +237,16 @@ bool ArchipelagoSession::Update() {
           metadata_->player_names[(p_team << 16) | p_slot] = p_name;
           if (p_team == 0)
             metadata_->player_names[p_slot] = p_name;
+          if (p_team == team_ && p_slot == local_slot_) {
+            // Player status logic removed as per simplification request
+          }
+        }
+      }
+
+      if (packet.contains("checked_locations") &&
+          packet["checked_locations"].is_array()) {
+        for (auto &loc : packet["checked_locations"]) {
+          checked_locations_.insert(get_as_id(loc));
         }
       }
 
@@ -278,9 +288,11 @@ bool ArchipelagoSession::Update() {
           }
           if (game_data.contains("location_name_to_id")) {
             for (auto &[loc_name, loc_id] :
-                 game_data["location_name_to_id"].items())
-              metadata_->location_names[game_name][loc_id.get<int64_t>()] =
-                  loc_name;
+                 game_data["location_name_to_id"].items()) {
+              int64_t lid = loc_id.get<int64_t>();
+              metadata_->location_names[game_name][lid] = loc_name;
+              metadata_->location_name_to_id[game_name][loc_name] = lid;
+            }
           }
           if (game_data.contains("entrance_name_to_id")) {
             for (auto &[ent_name, ent_id] :
@@ -314,18 +326,18 @@ bool ArchipelagoSession::Update() {
         std::string type_str = packet["type"];
         is_item_event = (type_str == "ItemSend" || type_str == "ItemCheat" ||
                          type_str == "Hint");
-        is_status_msg = (type_str == "Join" || type_str == "Part" ||
-                         type_str == "TagsChanged" ||
-                         type_str == "CommandResult");
+        is_status_msg =
+            (type_str == "Join" || type_str == "Part" ||
+             type_str == "TagsChanged" || type_str == "CommandResult");
       }
 
       for (auto &part : packet["data"]) {
-          std::string type =
-              part.contains("type") ? part["type"].get<std::string>() : "text";
-          std::string content =
-              part.contains("text") ? part["text"].get<std::string>() : "";
-          uint32_t color = (is_status_msg && !is_item_event) ? 0xFFAAAAAA
-                                                             : 0xFFFFFFFF;
+        std::string type =
+            part.contains("type") ? part["type"].get<std::string>() : "text";
+        std::string content =
+            part.contains("text") ? part["text"].get<std::string>() : "";
+        uint32_t color =
+            (is_status_msg && !is_item_event) ? 0xFFAAAAAA : 0xFFFFFFFF;
 
         if (type == "player_id") {
           try {
@@ -529,11 +541,9 @@ bool ArchipelagoSession::Update() {
       // Prune unreconciled items that were supposed to be in this range
       if (index == 0) {
         received_items_history_.erase(
-            std::remove_if(received_items_history_.begin(),
-                           received_items_history_.end(),
-                           [](const RichMessage &rm) {
-                             return !rm.is_reconciled;
-                           }),
+            std::remove_if(
+                received_items_history_.begin(), received_items_history_.end(),
+                [](const RichMessage &rm) { return !rm.is_reconciled; }),
             received_items_history_.end());
       }
     } else if (cmd == "Retrieved") {
@@ -594,6 +604,23 @@ bool ArchipelagoSession::Update() {
           }
         }
       }
+    } else if (cmd == "RoomUpdate") {
+      if (packet.contains("players")) {
+        for (auto &player : packet["players"]) {
+          int p_team = player.contains("team") ? player["team"].get<int>() : 0;
+          int p_slot = player["slot"].get<int>();
+          if (p_team == team_ && p_slot == local_slot_) {
+            // Player status logic removed as per simplification request
+          }
+        }
+      }
+      if (packet.contains("checked_locations") &&
+          packet["checked_locations"].is_array()) {
+        for (auto &loc : packet["checked_locations"]) {
+          checked_locations_.insert(get_as_id(loc));
+        }
+        manager_->SetItemsDirty();
+      }
     }
   }
   return changed;
@@ -614,7 +641,7 @@ void ArchipelagoSession::SendConnect() {
        {"version",
         {{"class", "Version"}, {"major", 0}, {"minor", 5}, {"build", 1}}},
        {"items_handling", 7},
-       {"tags", {"TextOnly"}}});
+       {"tags", {"TextOnly", "Tracker"}}});
   webSocket_.send(packet.dump());
 }
 
@@ -676,6 +703,39 @@ std::string ArchipelagoSession::ResolveLocationName(int64_t id, int slot) {
     if (locations.count(id))
       return locations.at(id);
   return "";
+}
+
+int64_t ArchipelagoSession::ResolveLocationID(const std::string &name,
+                                              int slot) {
+  if (!metadata_)
+    return -1;
+
+  if (slot != -1) {
+    if (metadata_->slot_to_game.count(slot)) {
+      std::string game = metadata_->slot_to_game.at(slot);
+      if (metadata_->location_name_to_id.count(game)) {
+        auto &locations = metadata_->location_name_to_id.at(game);
+        if (locations.count(name))
+          return locations.at(name);
+
+        // Prefix-aware fallback for multiworld logs
+        std::string prefix = game + ": ";
+        if (name.find(prefix) == 0) {
+          std::string stripped = name.substr(prefix.length());
+          if (locations.count(stripped))
+            return locations.at(stripped);
+        }
+      }
+    }
+    return -1; // If a specific slot was requested, don't fall back to global
+               // search
+  }
+
+  // Fallback global search for untargeted resolution
+  for (auto const &[gn, locations] : metadata_->location_name_to_id)
+    if (locations.count(name))
+      return locations.at(name);
+  return -1;
 }
 
 std::string ArchipelagoSession::ResolveEntranceName(int64_t id, int slot) {
@@ -869,6 +929,29 @@ std::string ArchipelagoNetwork::ResolveLocationName(int64_t id, int slot) {
   return "";
 }
 
+int64_t ArchipelagoNetwork::ResolveLocationID(const std::string &name,
+                                              int slot) {
+  // 1. Try resolving as-is
+  for (auto &session : sessions_) {
+    int64_t id = session->ResolveLocationID(name, slot);
+    if (id != -1)
+      return id;
+  }
+
+  // 2. Try stripping prefix AND resolving with slot specificity
+  size_t colon_pos = name.find(": ");
+  if (colon_pos != std::string::npos) {
+    std::string stripped_name = name.substr(colon_pos + 2);
+    for (auto &session : sessions_) {
+      int64_t id = session->ResolveLocationID(stripped_name, slot);
+      if (id != -1)
+        return id;
+    }
+  }
+
+  return -1;
+}
+
 std::string ArchipelagoNetwork::ResolveEntranceName(int64_t id, int slot) {
   for (auto &s : sessions_) {
     std::string name = s->ResolveEntranceName(id, slot);
@@ -913,7 +996,8 @@ void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
       if (pos != std::string::npos) {
         size_t start = pos + kw.length();
         size_t end = final_msg.find_first_of(" \n", start);
-        if (end != std::string::npos && final_msg.compare(end, 9, " on port ") == 0) {
+        if (end != std::string::npos &&
+            final_msg.compare(end, 9, " on port ") == 0) {
           size_t port_end = final_msg.find_first_of(" \n", end + 9);
           end = port_end;
         }
@@ -1010,6 +1094,17 @@ const std::vector<Hint> &ArchipelagoNetwork::GetAggregatedHints() const {
   return aggregated_hints_cache_;
 }
 
+ArchipelagoSession *ArchipelagoNetwork::GetSessionBySlot(int slot) {
+  for (auto &session : sessions_) {
+    if (session->IsConnected() &&
+        (session->GetLocalSlot() | (session->GetTeam() << 16)) == slot)
+      return session.get();
+    if (session->IsConnected() && session->GetLocalSlot() == slot)
+      return session.get();
+  }
+  return nullptr;
+}
+
 void ArchipelagoNetwork::CheckDayChange(std::vector<RichMessage> &history,
                                         double timestamp, int64_t &last_day) {
   struct tm tm_info;
@@ -1098,4 +1193,12 @@ void ArchipelagoNetwork::ClearItemHistory() {
   last_item_day_ = -1;
   if (on_history_updated)
     on_history_updated();
+}
+
+bool ArchipelagoNetwork::IsDataPackageReceived() const {
+  for (const auto &session : sessions_) {
+    if (session->IsConnected() && session->IsDataPackageReceived())
+      return true;
+  }
+  return false;
 }

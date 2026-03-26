@@ -58,6 +58,7 @@ struct Hint {
 struct ServerMetadata {
   std::map<std::string, std::map<int64_t, std::string>> item_names;
   std::map<std::string, std::map<int64_t, std::string>> location_names;
+  std::map<std::string, std::map<std::string, int64_t>> location_name_to_id;
   std::map<std::string, std::map<int64_t, std::string>> entrance_names;
   std::map<int, std::string> player_names;
   std::map<int, std::string> slot_to_game;
@@ -90,10 +91,13 @@ public:
     return received_items_history_;
   }
   const std::vector<Hint> &GetHints() const { return hints_; }
+  const std::set<int64_t> &GetCheckedLocations() const { return checked_locations_; }
+  bool IsDataPackageReceived() const { return metadata_ && metadata_->data_package_received; }
 
   // Metadata accessors
   std::string ResolveItemName(int64_t id, int slot = -1);
   std::string ResolveLocationName(int64_t id, int slot = -1);
+  int64_t ResolveLocationID(const std::string &name, int slot = -1);
   std::string ResolveEntranceName(int64_t id, int slot = -1);
   const std::map<int, std::string> &GetPlayerNames() const {
     if (metadata_) {
@@ -146,6 +150,7 @@ private:
   // History buffers (session-specific)
   std::vector<RichMessage> received_items_history_;
   std::vector<Hint> hints_;
+  std::set<int64_t> checked_locations_;
 
   struct PendingItem {
     int64_t id;
@@ -174,6 +179,7 @@ public:
   ArchipelagoSession *AddSession(const std::string &name);
   void RemoveSession(const std::string &name);
   void DisconnectAll();
+  ArchipelagoSession *GetSessionBySlot(int slot);
   const std::vector<std::unique_ptr<ArchipelagoSession>> &GetSessions() const {
     return sessions_;
   }
@@ -191,12 +197,14 @@ public:
   // Aggregated data
   const std::vector<RichMessage> &GetAggregatedReceivedItems() const;
   const std::vector<Hint> &GetAggregatedHints() const;
+  bool IsDataPackageReceived() const;
 
   void SendChat(const std::string &session_name, const std::string &message);
 
   // Global Resolution Helpers
   std::string ResolveItemName(int64_t id, int slot = -1);
   std::string ResolveLocationName(int64_t id, int slot = -1);
+  int64_t ResolveLocationID(const std::string &name, int slot = -1);
   std::string ResolveEntranceName(int64_t id, int slot = -1);
   std::string ResolvePlayerName(int slot);
   std::string ResolvePlayerGame(int slot);
