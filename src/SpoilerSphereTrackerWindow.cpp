@@ -45,10 +45,16 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
     return;
 
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
-    if (ImGui::Button("Load spoiler log")) {
-      LoadSpoilerLog();
-    }
-    if (!log_path_.empty()) {
+    if (log_path_.empty()) {
+      if (ImGui::Button("Load spoiler log")) {
+        LoadSpoilerLog();
+      }
+    } else {
+      if (ImGui::Button("Clear")) {
+        log_path_.clear();
+        log_ = SpoilerLog();
+        last_data_version_ = 0;
+      }
       ImGui::SameLine();
       ImGui::Text("File: %s",
                   std::filesystem::path(log_path_).filename().string().c_str());
@@ -213,8 +219,17 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
       next_slot:;
       }
 
-      // Display progression for each slot
-      for (int slot : my_slots) {
+      // Display progression for each slot (order by login interface)
+      std::set<int> seen_slots;
+      for (const auto &slot_setting : settings_.slots) {
+        auto session = ap_network_.GetSession(slot_setting.name);
+        if (!session || !session->IsConnected())
+          continue;
+        int slot = (session->GetTeam() << 16) | session->GetLocalSlot();
+        if (!progression.count(slot) || seen_slots.count(slot))
+          continue;
+        seen_slots.insert(slot);
+
         std::string playerName = ap_network_.ResolvePlayerName(slot);
         const auto &prog = progression[slot];
 
@@ -240,7 +255,7 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
             ImGui::TextDisabled("Victory is in logic.");
           } else if (prog.current_sphere == -1) {
             ImGui::TextColored(ImVec4(0, 1, 0, 1),
-                               "All progression completed for this slot!");
+                               "No progression found for this slot!");
           } else {
             if (prog.blocked) {
               ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
@@ -277,41 +292,68 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
                 }
                 ImGui::PopStyleColor();
               } else {
+                // Group by player
+                std::map<std::string, std::vector<const SpoilerLocation *>>
+                    grouped;
                 for (const auto &loc : sphere.locations) {
-                  bool checked = false;
+                  grouped[loc.player].push_back(&loc);
+                }
 
-                  // Resolve player ID for this location's owner
-                  int loc_player_id = -1;
-                  for (const auto &s : ap_network_.GetSessions()) {
-                    if (s->IsConnected()) {
-                      for (auto const &[id, name] : s->GetPlayerNames()) {
-                        if (name == loc.player) {
-                          loc_player_id = id;
-                          break;
+                // Collect and sort player names
+                std::vector<std::string> players;
+                for (auto const &[name, locs] : grouped)
+                  players.push_back(name);
+                std::sort(players.begin(), players.end());
+
+                for (const auto &playerName : players) {
+                  auto &locs = grouped[playerName];
+                  // Natural sort check names
+                  std::sort(
+                      locs.begin(), locs.end(),
+                      [](const SpoilerLocation *a, const SpoilerLocation *b) {
+                        return NaturalCompare(a->name, b->name) < 0;
+                      });
+
+                  // Check if this player is connected
+                  bool player_connected = my_player_names.count(playerName);
+
+                  for (const auto *loc_ptr : locs) {
+                    const auto &loc = *loc_ptr;
+                    bool checked = false;
+
+                    // Resolve player ID for this location's owner
+                    int loc_player_id = -1;
+                    for (const auto &s : ap_network_.GetSessions()) {
+                      if (s->IsConnected()) {
+                        for (auto const &[id, name] : s->GetPlayerNames()) {
+                          if (name == loc.player) {
+                            loc_player_id = id;
+                            break;
+                          }
                         }
                       }
+                      if (loc_player_id != -1)
+                        break;
                     }
-                    if (loc_player_id != -1)
-                      break;
-                  }
 
-                  if (loc_player_id != -1) {
-                    int64_t lid =
-                        ap_network_.ResolveLocationID(loc.name, loc_player_id);
-                    if (lid != -1 && slot_checked.count(loc_player_id) &&
-                        slot_checked[loc_player_id].count(lid)) {
-                      checked = true;
+                    if (loc_player_id != -1) {
+                      int64_t lid = ap_network_.ResolveLocationID(
+                          loc.name, loc_player_id);
+                      if (lid != -1 && slot_checked.count(loc_player_id) &&
+                          slot_checked[loc_player_id].count(lid)) {
+                        checked = true;
+                      }
                     }
-                  }
 
-                  if (checked)
-                    ImGui::PushStyleColor(ImGuiCol_Text,
-                                          ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                  ImGui::BulletText("%s (%s) -> %s (%s)", loc.name.c_str(),
-                                    loc.player.c_str(), loc.item.name.c_str(),
-                                    loc.item.player.c_str());
-                  if (checked)
-                    ImGui::PopStyleColor();
+                    if (checked || !player_connected)
+                      ImGui::PushStyleColor(ImGuiCol_Text,
+                                            ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                    ImGui::BulletText("%s (%s) -> %s (%s)", loc.name.c_str(),
+                                      loc.player.c_str(), loc.item.name.c_str(),
+                                      loc.item.player.c_str());
+                    if (checked || !player_connected)
+                      ImGui::PopStyleColor();
+                  }
                 }
               }
               ImGui::TreePop();

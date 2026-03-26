@@ -55,12 +55,16 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         (input_buf == server_url_) ? "Server URL" : "Server URL##Masked";
     ImGuiInputTextFlags flags =
         (input_buf == server_url_) ? 0 : ImGuiInputTextFlags_ReadOnly;
+    std::string old_url = settings_.server_url;
     if (ImGui::InputText(label, input_buf,
                          (input_buf == server_url_) ? sizeof(server_url_)
                                                     : strlen(input_buf) + 1,
                          flags)) {
       if (input_buf == server_url_) {
         settings_.server_url = server_url_;
+        if (settings_.server_url != old_url) {
+          ap_network_.ClearAllData(true);
+        }
       }
     }
     if (input_buf != server_url_ && ImGui::IsItemClicked()) {
@@ -160,8 +164,25 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
                         (state == ArchipelagoNetwork::State::Disconnected);
       ImGui::BeginDisabled(!can_remove);
       if (ImGui::Button("Remove")) {
-        ap_network_.RemoveSession(slot.name);
+        std::string name_to_remove = slot.name;
+        std::string last_name_to_remove = slot.last_name;
         settings_.slots.erase(settings_.slots.begin() + i);
+
+        // Only remove session if no other slot uses these names
+        bool name_still_used = false;
+        bool last_name_still_used = false;
+        for (const auto &s : settings_.slots) {
+          if (s.name == name_to_remove || s.last_name == name_to_remove)
+            name_still_used = true;
+          if (s.name == last_name_to_remove || s.last_name == last_name_to_remove)
+            last_name_still_used = true;
+        }
+
+        if (!name_still_used)
+          ap_network_.RemoveSession(name_to_remove);
+        if (!last_name_still_used && last_name_to_remove != name_to_remove)
+          ap_network_.RemoveSession(last_name_to_remove);
+
         Config::Save(settings_);
         ImGui::EndDisabled();
         ImGui::PopID();

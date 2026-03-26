@@ -671,6 +671,12 @@ void ArchipelagoSession::SendGetHints() {
   webSocket_.send(packet.dump());
 }
 
+void ArchipelagoSession::ClearData() {
+  received_items_history_.clear();
+  hints_.clear();
+  checked_locations_.clear();
+}
+
 void ArchipelagoSession::ReResolveHistory() {
   manager_->ReResolveHistoryVector(received_items_history_);
 }
@@ -976,6 +982,26 @@ std::string ArchipelagoNetwork::ResolvePlayerGame(int slot) {
       return metadata->slot_to_game.at(slot);
   }
   return "";
+}
+
+void ArchipelagoNetwork::ClearAllData(bool keep_chat) {
+  if (!keep_chat) {
+    ClearChatHistory();
+  }
+  ClearItemHistory();
+
+  for (auto &session : sessions_) {
+    session->ClearData();
+  }
+
+  aggregated_items_cache_.clear();
+  aggregated_hints_cache_.clear();
+  aggregated_items_dirty_ = true;
+  aggregated_hints_dirty_ = true;
+  data_version_++;
+
+  if (on_history_updated)
+    on_history_updated();
 }
 
 void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,

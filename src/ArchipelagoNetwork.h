@@ -79,6 +79,7 @@ public:
   bool Update();
   void SendChat(const std::string &message);
   void ReResolveHistory();
+  void ClearData();
 
   State GetState() const;
   bool IsConnected() const { return GetState() == State::Connected; }
@@ -200,6 +201,7 @@ public:
   bool IsDataPackageReceived() const;
 
   void SendChat(const std::string &session_name, const std::string &message);
+  void ClearAllData(bool keep_chat = true);
 
   // Global Resolution Helpers
   std::string ResolveItemName(int64_t id, int slot = -1);
