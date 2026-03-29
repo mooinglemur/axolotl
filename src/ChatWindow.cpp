@@ -196,6 +196,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     ImGui::Separator();
 
     // History
+    std::lock_guard<std::recursive_mutex> history_lock(ap_network_.GetHistoryMutex());
     const auto &history = ap_network_.GetChatHistory();
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();

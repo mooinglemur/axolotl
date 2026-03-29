@@ -228,7 +228,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
                         "[UI] Requesting UpdateHint (Priority) for loc %lld, "
                         "player %d\n",
                         (long long)h.location_id, h.receiver_slot);
-              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 30);
+              session_h->SendUpdateHint(h.location_id, h.finder_slot, 30);
             }
           }
           if (ImGui::MenuItem("Set Avoid", NULL, h.status == 20)) {
@@ -238,7 +238,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
                         "[UI] Requesting UpdateHint (Avoid) for loc %lld, "
                         "player %d\n",
                         (long long)h.location_id, h.receiver_slot);
-              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 20);
+              session_h->SendUpdateHint(h.location_id, h.finder_slot, 20);
             }
           }
           if (ImGui::MenuItem("Set Not Needed", NULL, h.status == 10)) {
@@ -248,7 +248,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
                         "[UI] Requesting UpdateHint (Not Needed) for loc "
                         "%lld, player %d\n",
                         (long long)h.location_id, h.receiver_slot);
-              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 10);
+              session_h->SendUpdateHint(h.location_id, h.finder_slot, 10);
             }
           }
           if (ImGui::MenuItem("Set Unspecified", NULL, h.status == 0)) {
@@ -258,7 +258,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
                         "[UI] Requesting UpdateHint (Unspecified) for loc "
                         "%lld, player %d\n",
                         (long long)h.location_id, h.receiver_slot);
-              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 0);
+              session_h->SendUpdateHint(h.location_id, h.finder_slot, 0);
             }
           }
           ImGui::EndPopup();

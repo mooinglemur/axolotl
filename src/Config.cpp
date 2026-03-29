@@ -77,8 +77,46 @@ std::filesystem::path Config::GetBundleDir() {
   return std::filesystem::current_path();
 }
 
-std::filesystem::path Config::GetCaBundlePath() {
-  return GetBundleDir() / "cacert.pem";
+std::filesystem::path Config::GetCaBundlePath() { return GetBundleDir() / "cacert.pem"; }
+
+std::filesystem::path Config::GetCacheDir() {
+  std::filesystem::path cache_dir;
+#ifdef __APPLE__
+  const char *home = getenv("HOME");
+  if (home) {
+    cache_dir = std::filesystem::path(home) / "Library" / "Caches" /
+                "axolotl-apclient";
+  }
+#elif defined(_WIN32)
+  char path[MAX_PATH];
+  if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, path))) {
+    cache_dir = std::filesystem::path(path) / "axolotl-apclient" / "cache";
+  }
+#else
+  const char *xdg_cache_home = getenv("XDG_CACHE_HOME");
+  if (xdg_cache_home) {
+    cache_dir = std::filesystem::path(xdg_cache_home) / "axolotl-apclient";
+  } else {
+    const char *home = getenv("HOME");
+    if (home) {
+      cache_dir = std::filesystem::path(home) / ".cache" / "axolotl-apclient";
+    }
+  }
+#endif
+
+  if (!cache_dir.empty() && !std::filesystem::exists(cache_dir)) {
+    std::filesystem::create_directories(cache_dir);
+  }
+
+  return cache_dir;
+}
+
+std::filesystem::path Config::GetDataPackageCacheDir() {
+  auto dir = GetCacheDir() / "datapackages";
+  if (!std::filesystem::exists(dir)) {
+    std::filesystem::create_directories(dir);
+  }
+  return dir;
 }
 
 ConnectionSettings Config::Load() {

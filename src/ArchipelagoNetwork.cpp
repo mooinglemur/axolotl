@@ -1,5 +1,6 @@
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
+#include "DataPackageCache.h"
 #include "version.h"
 #include <algorithm>
 #include <chrono>
@@ -219,6 +220,11 @@ bool ArchipelagoSession::Update() {
     std::string cmd = packet["cmd"];
 
     if (cmd == "RoomInfo") {
+      if (packet.contains("datapackage_checksums") && metadata_) {
+        for (auto &[game, checksum] : packet["datapackage_checksums"].items()) {
+          metadata_->datapackage_checksums[game] = checksum.get<std::string>();
+        }
+      }
       SendConnect();
     } else if (cmd == "Connected") {
       is_connected_ = true;
@@ -277,7 +283,49 @@ bool ArchipelagoSession::Update() {
         }
       }
 
-      SendGetDataPackage();
+      if (metadata_) {
+        std::vector<std::string> games_to_request;
+        bool all_cached = true;
+        for (auto &[game, checksum] : metadata_->datapackage_checksums) {
+          nlohmann::json cached =
+              DataPackageCache::LoadGameData(game, checksum);
+          if (!cached.is_null()) {
+            // Load from cache
+            if (cached.contains("item_name_to_id")) {
+              for (auto &[item_name, item_id] :
+                   cached["item_name_to_id"].items())
+                metadata_->item_names[game][item_id.get<int64_t>()] = item_name;
+            }
+            if (cached.contains("location_name_to_id")) {
+              for (auto &[loc_name, loc_id] :
+                   cached["location_name_to_id"].items()) {
+                int64_t lid = loc_id.get<int64_t>();
+                metadata_->location_names[game][lid] = loc_name;
+                metadata_->location_name_to_id[game][loc_name] = lid;
+              }
+            }
+            if (cached.contains("entrance_name_to_id")) {
+              for (auto &[ent_name, ent_id] :
+                   cached["entrance_name_to_id"].items())
+                metadata_->entrance_names[game][ent_id.get<int64_t>()] =
+                    ent_name;
+            }
+          } else {
+            games_to_request.push_back(game);
+            all_cached = false;
+          }
+        }
+
+        if (!all_cached) {
+          SendGetDataPackage(games_to_request);
+        } else {
+          metadata_->data_package_received = true;
+          ResolvePendingItems();
+          manager_->ReResolveHistory();
+        }
+      } else {
+        SendGetDataPackage();
+      }
       SendSync();
       SendGetHints();
 
@@ -293,6 +341,13 @@ bool ArchipelagoSession::Update() {
       auto &dp = packet["data"];
       if (dp.contains("games")) {
         for (auto &[game_name, game_data] : dp["games"].items()) {
+          // Save to cache if we have a checksum
+          if (metadata_->datapackage_checksums.count(game_name)) {
+            DataPackageCache::SaveGameData(
+                game_name, metadata_->datapackage_checksums[game_name],
+                game_data);
+          }
+
           if (game_data.contains("item_name_to_id")) {
             for (auto &[item_name, item_id] :
                  game_data["item_name_to_id"].items())
@@ -329,6 +384,20 @@ bool ArchipelagoSession::Update() {
            0xFF0000FF});
       manager_->OnGlobalMessage(this, rm, false);
     } else if (cmd == "PrintJSON") {
+      size_t msg_hash = 0;
+      bool always_show = false;
+      if (packet.contains("type")) {
+        std::string t = packet["type"];
+        if (t == "CommandResult" || t == "Tutorial" ||
+            t == "AdminCommandResult") {
+          always_show = true;
+        }
+      }
+
+      if (!always_show && packet.contains("data")) {
+        msg_hash = std::hash<std::string>{}(packet["data"].dump());
+      }
+
       RichMessage rm;
       rm.timestamp = msg_time;
       rm.populate_local_time();
@@ -341,7 +410,8 @@ bool ArchipelagoSession::Update() {
                          type_str == "Hint");
         is_status_msg =
             (type_str == "Join" || type_str == "Part" ||
-             type_str == "TagsChanged" || type_str == "CommandResult");
+             type_str == "TagsChanged" || type_str == "CommandResult" ||
+             type_str == "Tutorial" || type_str == "AdminCommandResult");
       }
 
       int extracted_hint_status = -1;
@@ -483,11 +553,11 @@ bool ArchipelagoSession::Update() {
               h.item_flags = packet["item"].contains("flags")
                                  ? packet["item"]["flags"].get<int>()
                                  : 0;
-              h.status = packet["item"].contains("status")
-                             ? packet["item"]["status"].get<int>()
-                             : (extracted_hint_status != -1
-                                    ? extracted_hint_status
-                                    : 0);
+              h.status =
+                  packet["item"].contains("status")
+                      ? packet["item"]["status"].get<int>()
+                      : (extracted_hint_status != -1 ? extracted_hint_status
+                                                     : 0);
               if (h.found && h.status < 40)
                 h.status = 40;
               h.source_slot = name_;
@@ -499,9 +569,9 @@ bool ArchipelagoSession::Update() {
             }
           }
         }
-        manager_->OnGlobalMessage(this, rm, true);
+        manager_->OnGlobalMessage(this, rm, true, msg_hash, always_show);
       } else {
-        manager_->OnGlobalMessage(this, rm, false);
+        manager_->OnGlobalMessage(this, rm, false, msg_hash, always_show);
       }
     } else if (cmd == "ReceivedItems") {
       int index = packet.contains("index") ? packet["index"].get<int>() : 0;
@@ -678,9 +748,14 @@ void ArchipelagoSession::SendChat(const std::string &message) {
   SendPacket(packet);
 }
 
-void ArchipelagoSession::SendGetDataPackage() {
+void ArchipelagoSession::SendGetDataPackage(
+    const std::vector<std::string> &games) {
   json packet = json::array();
-  packet.push_back({{"cmd", "GetDataPackage"}});
+  json cmd = {{"cmd", "GetDataPackage"}};
+  if (!games.empty()) {
+    cmd["games"] = games;
+  }
+  packet.push_back(cmd);
   SendPacket(packet);
 }
 
@@ -699,17 +774,17 @@ void ArchipelagoSession::SendGetHints() {
   SendPacket(packet);
 }
 
-void ArchipelagoSession::SendUpdateHint(int64_t location_id, int receiver_slot,
+void ArchipelagoSession::SendUpdateHint(int64_t location_id, int finder_slot,
                                         int status) {
   json packet = json::array();
   packet.push_back({{"cmd", "UpdateHint"},
-                    {"player", receiver_slot},
+                    {"player", finder_slot},
                     {"location", location_id},
                     {"status", status}});
   SendPacket(packet);
 
   // Update local view across all sessions as the server doesn't echo this back
-  manager_->OnLocalHintStatusUpdated(location_id, receiver_slot, status);
+  manager_->OnLocalHintStatusUpdated(location_id, finder_slot, status);
 }
 
 void ArchipelagoSession::SendPacket(const json &packet) {
@@ -719,10 +794,10 @@ void ArchipelagoSession::SendPacket(const json &packet) {
   webSocket_.send(dump);
 }
 
-void ArchipelagoSession::UpdateHintStatus(int64_t location_id, int receiver_slot,
-                                          int status) {
+void ArchipelagoSession::UpdateHintStatus(int64_t location_id,
+                                          int finder_slot, int status) {
   for (auto &h : hints_) {
-    if (h.location_id == location_id && h.receiver_slot == receiver_slot) {
+    if (h.location_id == location_id && h.finder_slot == finder_slot) {
       h.status = status;
     }
   }
@@ -934,10 +1009,9 @@ ArchipelagoSession *ArchipelagoNetwork::GetSession(const std::string &name) {
 }
 
 void ArchipelagoNetwork::OnLocalHintStatusUpdated(int64_t location_id,
-                                                   int receiver_slot,
-                                                   int status) {
+                                                  int finder_slot, int status) {
   for (auto &session : sessions_) {
-    session->UpdateHintStatus(location_id, receiver_slot, status);
+    session->UpdateHintStatus(location_id, finder_slot, status);
   }
   SetHintsDirty();
 }
@@ -999,16 +1073,46 @@ void ArchipelagoNetwork::SendChat(const std::string &session_name,
 
 void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
                                          const RichMessage &msg,
-                                         bool is_item_feed) {
+                                         bool is_item_feed, size_t message_hash,
+                                         bool always_show) {
   // Always allow status messages (not attributed to a game event) through
   bool is_status =
-      !is_item_feed && !msg.parts.empty() &&
-      (msg.parts[0].text.find("[System]") != std::string::npos ||
-       msg.parts[0].text.find(" connected (Slot ") != std::string::npos ||
-       msg.parts[0].text.find("Connection refused") != std::string::npos);
+      always_show ||
+      (!is_item_feed && !msg.parts.empty() &&
+       (msg.parts[0].text.find("[System]") != std::string::npos ||
+        msg.parts[0].text.find(" connected (Slot ") != std::string::npos ||
+        msg.parts[0].text.find("Connection refused") != std::string::npos));
 
-  if (!is_status && !IsMasterSession(session))
-    return;
+  if (!is_status) {
+    if (message_hash != 0) {
+      if (message_hash_history_.count(message_hash)) {
+        auto &entry = message_hash_history_[message_hash];
+        if (entry.first_session_name != session->GetName()) {
+          return; // Duplicate from another session
+        }
+        // Same session, refresh age
+        auto it = std::find(message_hash_queue_.begin(),
+                            message_hash_queue_.end(), message_hash);
+        if (it != message_hash_queue_.end()) {
+          message_hash_queue_.erase(it);
+          message_hash_queue_.push_back(message_hash);
+        }
+      } else {
+        // New hash
+        message_hash_history_[message_hash] = {session->GetName()};
+        message_hash_queue_.push_back(message_hash);
+        if (message_hash_queue_.size() > 1000) {
+          size_t old_hash = message_hash_queue_.front();
+          message_hash_queue_.pop_front();
+          message_hash_history_.erase(old_hash);
+        }
+      }
+    } else if (!IsMasterSession(session)) {
+      return;
+    }
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
 
   if (is_item_feed) {
     SetItemsDirty(); // Replaced aggregated_items_dirty_ = true;
@@ -1054,6 +1158,7 @@ std::string ArchipelagoNetwork::ResolvePlayerGame(int slot) {
 }
 
 void ArchipelagoNetwork::ClearAllData(bool keep_chat) {
+  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
   if (!keep_chat) {
     ClearChatHistory();
   }
@@ -1075,6 +1180,7 @@ void ArchipelagoNetwork::ClearAllData(bool keep_chat) {
 
 void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
                                          const std::string &msg) {
+  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
   RichMessage rm;
   rm.timestamp = GetCurrentTimestamp();
   rm.populate_local_time();
@@ -1281,6 +1387,7 @@ void ArchipelagoNetwork::SetHintsDirty() {
 }
 
 void ArchipelagoNetwork::ClearChatHistory() {
+  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
   chat_history_.clear();
   last_chat_day_ = -1;
   if (on_history_updated)

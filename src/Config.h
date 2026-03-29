@@ -50,6 +50,8 @@ public:
   static std::filesystem::path GetImguiIniPath();
   static std::filesystem::path GetBundleDir();
   static std::filesystem::path GetCaBundlePath();
+  static std::filesystem::path GetCacheDir();
+  static std::filesystem::path GetDataPackageCacheDir();
   static ConnectionSettings Load();
   static void Save(const ConnectionSettings &settings);
   static std::string GenerateUUID();

@@ -7,6 +7,7 @@
 #include <ws2tcpip.h>
 #endif
 #include <ctime>
+#include <deque>
 #include <functional>
 #include <ixwebsocket/IXWebSocket.h>
 #include <map>
@@ -15,6 +16,7 @@
 #include <nlohmann/json.hpp>
 #include <queue>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 struct MessagePart {
@@ -63,6 +65,7 @@ struct ServerMetadata {
   std::map<std::string, std::map<int64_t, std::string>> entrance_names;
   std::map<int, std::string> player_names;
   std::map<int, std::string> slot_to_game;
+  std::map<std::string, std::string> datapackage_checksums;
   bool data_package_received = false;
 };
 
@@ -83,8 +86,8 @@ public:
   void ReResolveHistory();
   void ClearData();
   void UpdateOrAddHint(const Hint &hint);
-  void UpdateHintStatus(int64_t location_id, int receiver_slot, int status);
-  void SendUpdateHint(int64_t location_id, int receiver_slot, int status);
+  void UpdateHintStatus(int64_t location_id, int finder_slot, int status);
+  void SendUpdateHint(int64_t location_id, int finder_slot, int status);
   void SendPacket(const nlohmann::json &packet);
 
   State GetState() const;
@@ -136,7 +139,7 @@ public:
 private:
   void HandleMessage(const ix::WebSocketMessagePtr &msg);
   void SendConnect();
-  void SendGetDataPackage();
+  void SendGetDataPackage(const std::vector<std::string> &games = {});
   void SendSync();
   void SendGetHints();
   void ResolvePendingItems();
@@ -213,9 +216,11 @@ public:
   }
   ArchipelagoSession *GetSession(const std::string &name);
   ArchipelagoSession *GetSessionByGlobalSlot(int global_slot);
-  void OnLocalHintStatusUpdated(int64_t location_id, int receiver_slot,
-                                int status);
+  void OnLocalHintStatusUpdated(int64_t location_id, int finder_slot,
+                                 int status);
   std::shared_ptr<ServerMetadata> GetOrCreateMetadata(const std::string &url);
+
+  std::recursive_mutex &GetHistoryMutex() const { return history_mutex_; }
 
   // Global history
   const std::vector<RichMessage> &GetChatHistory() const {
@@ -254,7 +259,8 @@ public:
 
   // Internal use by sessions
   void OnGlobalMessage(ArchipelagoSession *session, const RichMessage &msg,
-                       bool is_item_feed);
+                       bool is_item_feed, size_t message_hash = 0,
+                       bool always_show = false);
   void OnStatusMessage(ArchipelagoSession *session, const std::string &msg);
   void SetSettings(const ConnectionSettings *settings) { settings_ = settings; }
   static std::string MaskURL(const std::string &url);
@@ -295,4 +301,11 @@ private:
   mutable bool aggregated_items_dirty_ = true;
   mutable bool aggregated_hints_dirty_ = true;
   uint64_t data_version_ = 0;
+
+  struct MessageHashEntry {
+    std::string first_session_name;
+  };
+  std::unordered_map<size_t, MessageHashEntry> message_hash_history_;
+  std::deque<size_t> message_hash_queue_;
+  mutable std::recursive_mutex history_mutex_;
 };
