@@ -102,6 +102,8 @@ ArchipelagoSession::State ArchipelagoSession::GetState() const {
 
 void ArchipelagoSession::HandleMessage(const ix::WebSocketMessagePtr &msg) {
   if (msg->type == ix::WebSocketMessageType::Message) {
+    if (manager_->IsDebugMode())
+      fprintf(stderr, "[RECV][%s] %s\n", name_.c_str(), msg->str.c_str());
     std::lock_guard<std::mutex> lock(queue_mutex_);
     try {
       auto j = json::parse(msg->str);
@@ -250,6 +252,17 @@ bool ArchipelagoSession::Update() {
         }
       }
 
+      if (packet.contains("missing_locations") &&
+          packet["missing_locations"].is_array()) {
+        for (auto &loc : packet["missing_locations"]) {
+          missing_locations_.insert(get_as_id(loc));
+        }
+      }
+
+      if (packet.contains("slot_data")) {
+        slot_data_ = packet["slot_data"];
+      }
+
       if (packet.contains("slot_info") && metadata_) {
         for (auto &[slot_str, slot_data] : packet["slot_info"].items()) {
           try {
@@ -331,6 +344,7 @@ bool ArchipelagoSession::Update() {
              type_str == "TagsChanged" || type_str == "CommandResult");
       }
 
+      int extracted_hint_status = -1;
       for (auto &part : packet["data"]) {
         std::string type =
             part.contains("type") ? part["type"].get<std::string>() : "text";
@@ -338,6 +352,13 @@ bool ArchipelagoSession::Update() {
             part.contains("text") ? part["text"].get<std::string>() : "";
         uint32_t color =
             (is_status_msg && !is_item_event) ? 0xFFAAAAAA : 0xFFFFFFFF;
+
+        if (type == "hint_status") {
+          if (part.contains("hint_status")) {
+            extracted_hint_status = part["hint_status"].get<int>();
+          }
+          color = 0xFF00FFFF; // Cyan/Yellow for status
+        }
 
         if (type == "player_id") {
           try {
@@ -462,9 +483,15 @@ bool ArchipelagoSession::Update() {
               h.item_flags = packet["item"].contains("flags")
                                  ? packet["item"]["flags"].get<int>()
                                  : 0;
+              h.status = packet["item"].contains("status")
+                             ? packet["item"]["status"].get<int>()
+                             : (extracted_hint_status != -1
+                                    ? extracted_hint_status
+                                    : 0);
+              if (h.found && h.status < 40)
+                h.status = 40;
               h.source_slot = name_;
-              hints_.push_back(h);
-              manager_->SetHintsDirty();
+              UpdateOrAddHint(h);
 
               rm.receiver_slot = h.receiver_slot;
               rm.sender_slot = h.finder_slot;
@@ -595,9 +622,12 @@ bool ArchipelagoSession::Update() {
                         ? h_val["item_flags"].get<int>()
                         : (h_val.contains("flags") ? h_val["flags"].get<int>()
                                                    : 0);
+                h.status =
+                    h_val.contains("status") ? h_val["status"].get<int>() : 0;
+                if (h.found && h.status < 40)
+                  h.status = 40;
                 h.source_slot = name_;
-                hints_.push_back(h);
-                manager_->SetHintsDirty();
+                UpdateOrAddHint(h);
               } catch (...) {
               }
             }
@@ -618,6 +648,7 @@ bool ArchipelagoSession::Update() {
           packet["checked_locations"].is_array()) {
         for (auto &loc : packet["checked_locations"]) {
           checked_locations_.insert(get_as_id(loc));
+          missing_locations_.erase(get_as_id(loc));
         }
         manager_->SetItemsDirty();
       }
@@ -628,53 +659,98 @@ bool ArchipelagoSession::Update() {
 
 void ArchipelagoSession::SendConnect() {
   json packet = json::array();
-  std::string uuid = "axolotl-client-" + name_;
-#ifdef GIT_HASH
-  uuid += "-" + std::string(GIT_HASH);
-#endif
   packet.push_back(
       {{"cmd", "Connect"},
        {"password", password_},
        {"game", ""},
        {"name", name_},
-       {"uuid", uuid},
+       {"uuid", manager_->GetSettings() ? manager_->GetSettings()->uuid : ""},
        {"version",
         {{"class", "Version"}, {"major", 0}, {"minor", 5}, {"build", 1}}},
        {"items_handling", 7},
        {"tags", {"TextOnly", "Tracker"}}});
-  webSocket_.send(packet.dump());
+  SendPacket(packet);
 }
 
 void ArchipelagoSession::SendChat(const std::string &message) {
   json packet = json::array();
   packet.push_back({{"cmd", "Say"}, {"text", message}});
-  webSocket_.send(packet.dump());
+  SendPacket(packet);
 }
 
 void ArchipelagoSession::SendGetDataPackage() {
   json packet = json::array();
   packet.push_back({{"cmd", "GetDataPackage"}});
-  webSocket_.send(packet.dump());
+  SendPacket(packet);
 }
 
 void ArchipelagoSession::SendSync() {
   json packet = json::array();
   packet.push_back({{"cmd", "Sync"}});
-  webSocket_.send(packet.dump());
+  SendPacket(packet);
 }
 
 void ArchipelagoSession::SendGetHints() {
   json packet = json::array();
-  std::string hint_key = "_read_hints_" + std::to_string(team_) + "_" +
-                         std::to_string(local_slot_);
-  packet.push_back({{"cmd", "Get"}, {"keys", {hint_key}}});
-  webSocket_.send(packet.dump());
+  packet.push_back({{"cmd", "Get"},
+                    {"keys",
+                     {"_read_hints_" + std::to_string(team_) + "_" +
+                      std::to_string(local_slot_)}}});
+  SendPacket(packet);
+}
+
+void ArchipelagoSession::SendUpdateHint(int64_t location_id, int receiver_slot,
+                                        int status) {
+  json packet = json::array();
+  packet.push_back({{"cmd", "UpdateHint"},
+                    {"player", receiver_slot},
+                    {"location", location_id},
+                    {"status", status}});
+  SendPacket(packet);
+
+  // Update local view across all sessions as the server doesn't echo this back
+  manager_->OnLocalHintStatusUpdated(location_id, receiver_slot, status);
+}
+
+void ArchipelagoSession::SendPacket(const json &packet) {
+  std::string dump = packet.dump();
+  if (manager_->IsDebugMode())
+    fprintf(stderr, "[SEND][%s] %s\n", name_.c_str(), dump.c_str());
+  webSocket_.send(dump);
+}
+
+void ArchipelagoSession::UpdateHintStatus(int64_t location_id, int receiver_slot,
+                                          int status) {
+  for (auto &h : hints_) {
+    if (h.location_id == location_id && h.receiver_slot == receiver_slot) {
+      h.status = status;
+    }
+  }
+}
+
+void ArchipelagoSession::UpdateOrAddHint(const Hint &hint) {
+  for (auto &h : hints_) {
+    if (h.location_id == hint.location_id &&
+        h.finder_slot == hint.finder_slot &&
+        h.receiver_slot == hint.receiver_slot) {
+      h.found = hint.found;
+      h.status = hint.status;
+      h.item_flags = hint.item_flags;
+      h.item_id = hint.item_id;
+      h.entrance_name = hint.entrance_name;
+      manager_->SetHintsDirty();
+      return;
+    }
+  }
+  hints_.push_back(hint);
+  manager_->SetHintsDirty();
 }
 
 void ArchipelagoSession::ClearData() {
   received_items_history_.clear();
   hints_.clear();
   checked_locations_.clear();
+  missing_locations_.clear();
 }
 
 void ArchipelagoSession::ReResolveHistory() {
@@ -759,6 +835,28 @@ std::string ArchipelagoSession::ResolveEntranceName(int64_t id, int slot) {
   return "";
 }
 
+std::string ArchipelagoSession::ResolvePlayerGame(int slot) const {
+  if (!metadata_)
+    return "";
+  int target_slot = (slot != -1) ? slot : ((team_ << 16) | local_slot_);
+  if (metadata_->slot_to_game.count(target_slot))
+    return metadata_->slot_to_game.at(target_slot);
+  if (slot != -1 && metadata_->slot_to_game.count(slot))
+    return metadata_->slot_to_game.at(slot);
+  return "";
+}
+
+std::string ArchipelagoSession::ResolvePlayerName(int slot) const {
+  if (!metadata_)
+    return "Unknown Player " + std::to_string(slot);
+  int target_slot = (slot != -1) ? slot : ((team_ << 16) | local_slot_);
+  if (metadata_->player_names.count(target_slot))
+    return metadata_->player_names.at(target_slot);
+  if (slot != -1 && metadata_->player_names.count(slot))
+    return metadata_->player_names.at(slot);
+  return "Unknown Player " + std::to_string(slot);
+}
+
 void ArchipelagoSession::ResolvePendingItems() {
   for (auto &pending : pending_items_) {
     std::string name = ResolveItemName(pending.id, pending.receiver);
@@ -818,11 +916,30 @@ void ArchipelagoNetwork::DisconnectAll() {
   }
 }
 
+ArchipelagoSession *
+ArchipelagoNetwork::GetSessionByGlobalSlot(int global_slot) {
+  for (auto &session : sessions_) {
+    if (session->IsConnected() &&
+        (session->GetTeam() << 16 | session->GetLocalSlot()) == global_slot)
+      return session.get();
+  }
+  return nullptr;
+}
+
 ArchipelagoSession *ArchipelagoNetwork::GetSession(const std::string &name) {
   for (auto &s : sessions_)
     if (s->GetName() == name)
       return s.get();
   return nullptr;
+}
+
+void ArchipelagoNetwork::OnLocalHintStatusUpdated(int64_t location_id,
+                                                   int receiver_slot,
+                                                   int status) {
+  for (auto &session : sessions_) {
+    session->UpdateHintStatus(location_id, receiver_slot, status);
+  }
+  SetHintsDirty();
 }
 
 std::shared_ptr<ServerMetadata>
@@ -917,55 +1034,7 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
     on_history_updated();
 }
 
-std::string ArchipelagoNetwork::ResolveItemName(int64_t id, int slot) {
-  for (auto &s : sessions_) {
-    std::string name = s->ResolveItemName(id, slot);
-    if (!name.empty())
-      return name;
-  }
-  return "";
-}
-
-std::string ArchipelagoNetwork::ResolveLocationName(int64_t id, int slot) {
-  for (auto &s : sessions_) {
-    std::string name = s->ResolveLocationName(id, slot);
-    if (!name.empty())
-      return name;
-  }
-  return "";
-}
-
-int64_t ArchipelagoNetwork::ResolveLocationID(const std::string &name,
-                                              int slot) {
-  // 1. Try resolving as-is
-  for (auto &session : sessions_) {
-    int64_t id = session->ResolveLocationID(name, slot);
-    if (id != -1)
-      return id;
-  }
-
-  // 2. Try stripping prefix AND resolving with slot specificity
-  size_t colon_pos = name.find(": ");
-  if (colon_pos != std::string::npos) {
-    std::string stripped_name = name.substr(colon_pos + 2);
-    for (auto &session : sessions_) {
-      int64_t id = session->ResolveLocationID(stripped_name, slot);
-      if (id != -1)
-        return id;
-    }
-  }
-
-  return -1;
-}
-
-std::string ArchipelagoNetwork::ResolveEntranceName(int64_t id, int slot) {
-  for (auto &s : sessions_) {
-    std::string name = s->ResolveEntranceName(id, slot);
-    if (!name.empty())
-      return name;
-  }
-  return "";
-}
+// Global Resolution Helpers removed in favor of Session-specific resolution
 
 std::string ArchipelagoNetwork::ResolvePlayerName(int slot) {
   for (auto &s : sessions_) {
@@ -1165,11 +1234,15 @@ void ArchipelagoNetwork::CheckDayChange(std::vector<RichMessage> &history,
 void ArchipelagoNetwork::ReResolveHistoryVector(
     std::vector<RichMessage> &history) {
   for (auto &rm : history) {
+    auto session = GetSession(rm.source_slot);
+    if (!session)
+      continue;
+
     for (auto &part : rm.parts) {
       if (part.text.find("Unknown Item ") == 0) {
         try {
           int64_t id = std::stoll(part.text.substr(13));
-          std::string name = ResolveItemName(id, rm.receiver_slot);
+          std::string name = session->ResolveItemName(id, rm.receiver_slot);
           if (!name.empty())
             part.text = name;
         } catch (...) {
@@ -1178,7 +1251,7 @@ void ArchipelagoNetwork::ReResolveHistoryVector(
       if (part.text.find("Unknown Location ") == 0) {
         try {
           int64_t id = std::stoll(part.text.substr(17));
-          std::string name = ResolveLocationName(id, rm.sender_slot);
+          std::string name = session->ResolveLocationName(id, rm.sender_slot);
           if (!name.empty())
             part.text = name;
         } catch (...) {

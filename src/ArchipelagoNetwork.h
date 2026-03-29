@@ -6,6 +6,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #endif
+#include <ctime>
 #include <functional>
 #include <ixwebsocket/IXWebSocket.h>
 #include <map>
@@ -14,7 +15,6 @@
 #include <nlohmann/json.hpp>
 #include <queue>
 #include <set>
-#include <ctime>
 #include <vector>
 
 struct MessagePart {
@@ -32,7 +32,7 @@ struct RichMessage {
   int64_t item_id = -1;
   int item_flags = 0;
   bool is_reconciled = false;
-  struct tm local_time;    // Cached local time to avoid redundant syscalls
+  struct tm local_time; // Cached local time to avoid redundant syscalls
 
   void populate_local_time() {
     time_t t = (time_t)timestamp;
@@ -52,6 +52,7 @@ struct Hint {
   int finder_slot;
   bool found;
   int item_flags;
+  int status = 0;
   std::string source_slot;
 };
 
@@ -68,6 +69,7 @@ struct ServerMetadata {
 class ArchipelagoNetwork;
 
 class ArchipelagoSession {
+  friend class ArchipelagoNetwork;
 public:
   enum class State { Disconnected, Connecting, Connected };
 
@@ -80,6 +82,10 @@ public:
   void SendChat(const std::string &message);
   void ReResolveHistory();
   void ClearData();
+  void UpdateOrAddHint(const Hint &hint);
+  void UpdateHintStatus(int64_t location_id, int receiver_slot, int status);
+  void SendUpdateHint(int64_t location_id, int receiver_slot, int status);
+  void SendPacket(const nlohmann::json &packet);
 
   State GetState() const;
   bool IsConnected() const { return GetState() == State::Connected; }
@@ -92,20 +98,39 @@ public:
     return received_items_history_;
   }
   const std::vector<Hint> &GetHints() const { return hints_; }
-  const std::set<int64_t> &GetCheckedLocations() const { return checked_locations_; }
-  bool IsDataPackageReceived() const { return metadata_ && metadata_->data_package_received; }
+  const std::set<int64_t> &GetCheckedLocations() const {
+    return checked_locations_;
+  }
+  const std::set<int64_t> &GetMissingLocations() const {
+    return missing_locations_;
+  }
+  bool IsDataPackageReceived() const {
+    return metadata_ && metadata_->data_package_received;
+  }
 
   // Metadata accessors
   std::string ResolveItemName(int64_t id, int slot = -1);
   std::string ResolveLocationName(int64_t id, int slot = -1);
   int64_t ResolveLocationID(const std::string &name, int slot = -1);
   std::string ResolveEntranceName(int64_t id, int slot = -1);
+  std::string ResolvePlayerGame(int slot = -1) const;
+  std::string ResolvePlayerName(int slot = -1) const;
   const std::map<int, std::string> &GetPlayerNames() const {
     if (metadata_) {
       return metadata_->player_names;
     }
     static const std::map<int, std::string> empty_map;
     return empty_map;
+  }
+
+  const nlohmann::json &GetSlotData() const { return slot_data_; }
+
+  std::map<int64_t, std::string>
+  GetLocationsForGame(const std::string &game) const {
+    if (metadata_ && metadata_->location_names.count(game)) {
+      return metadata_->location_names.at(game);
+    }
+    return {};
   }
 
 private:
@@ -152,6 +177,8 @@ private:
   std::vector<RichMessage> received_items_history_;
   std::vector<Hint> hints_;
   std::set<int64_t> checked_locations_;
+  std::set<int64_t> missing_locations_;
+  nlohmann::json slot_data_;
 
   struct PendingItem {
     int64_t id;
@@ -185,6 +212,9 @@ public:
     return sessions_;
   }
   ArchipelagoSession *GetSession(const std::string &name);
+  ArchipelagoSession *GetSessionByGlobalSlot(int global_slot);
+  void OnLocalHintStatusUpdated(int64_t location_id, int receiver_slot,
+                                int status);
   std::shared_ptr<ServerMetadata> GetOrCreateMetadata(const std::string &url);
 
   // Global history
@@ -203,11 +233,7 @@ public:
   void SendChat(const std::string &session_name, const std::string &message);
   void ClearAllData(bool keep_chat = true);
 
-  // Global Resolution Helpers
-  std::string ResolveItemName(int64_t id, int slot = -1);
-  std::string ResolveLocationName(int64_t id, int slot = -1);
-  int64_t ResolveLocationID(const std::string &name, int slot = -1);
-  std::string ResolveEntranceName(int64_t id, int slot = -1);
+  // Global Resolution Helpers (DELETED in favor of Session-specific resolution)
   std::string ResolvePlayerName(int slot);
   std::string ResolvePlayerGame(int slot);
   const std::set<int> &GetConnectedSlots();
@@ -235,7 +261,15 @@ public:
   bool IsMasterSession(ArchipelagoSession *session) const;
   void ReResolveHistory();
   void ReResolveHistoryVector(std::vector<RichMessage> &history);
+  void SetDebugMode(bool debug) { debug_mode_ = debug; }
+  bool IsDebugMode() const { return debug_mode_; }
+
   uint64_t GetDataVersion() const { return data_version_; }
+  const ConnectionSettings *GetSettings() const { return settings_; }
+
+private:
+  bool debug_mode_ = false;
+  std::vector<RichMessage> history_;
 
 private:
   std::function<void()> wake_up_callback_;

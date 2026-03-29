@@ -1,6 +1,5 @@
 #include "ItemFeedWindow.h"
 #include <algorithm>
-#include <cstring>
 #include <ctime>
 #include <imgui.h>
 #include <set>
@@ -21,14 +20,8 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
-    char filter_buf[256];
-    strncpy(filter_buf, filter_text_.c_str(), sizeof(filter_buf));
-    filter_buf[sizeof(filter_buf) - 1] = '\0';
-
     ImGui::PushItemWidth(-1.0f);
-    if (ImGui::InputText("##Filter", filter_buf, sizeof(filter_buf))) {
-      filter_text_ = filter_buf;
-    }
+    RenderFilterInput("##Filter", filter_text_, focus_filter_);
     ImGui::PopItemWidth();
 
     ImGui::Separator();
@@ -296,8 +289,8 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                            // growing window via SetCursorPos
       }
 
-      // Safe Bottom: Manually render the tail if needed to eliminate ghost
-      // space
+      // Safe Bottom: Manually render the tail
+      // if needed to eliminate ghost space
       if (force_bottom_render) {
         ImGui::SetCursorPosY((float)manual_tail_start * clipper_height);
         for (int row_idx = manual_tail_start;

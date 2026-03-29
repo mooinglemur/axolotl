@@ -52,6 +52,20 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
       ImGui::Checkbox("Confirm Exit", &settings_.confirm_exit);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Require confirmation when closing the application.");
+
+      ImGui::Text("Client UUID");
+      char uuid_buf[64];
+      strncpy(uuid_buf, settings_.uuid.c_str(), sizeof(uuid_buf));
+      if (ImGui::InputText("##UUID", uuid_buf, sizeof(uuid_buf))) {
+        settings_.uuid = uuid_buf;
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Randomize")) {
+        settings_.uuid = Config::GenerateUUID();
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Generate a new unique identifier for this client.");
+
       ImGui::Dummy(ImVec2(0.0f, 10.0f));
     }
 

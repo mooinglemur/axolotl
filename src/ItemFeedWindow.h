@@ -18,6 +18,7 @@ private:
   const ConnectionSettings &settings_;
   bool personal_only_;
   std::string filter_text_;
+  bool focus_filter_ = false;
 
   int selection_anchor_idx_ = -1;
   int selection_active_idx_ = -1;

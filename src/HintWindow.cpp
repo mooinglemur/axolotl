@@ -24,11 +24,8 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
-    char f_buf[256];
-    strncpy(f_buf, filter_text_.c_str(), sizeof(f_buf) - 1);
     ImGui::PushItemWidth(-1.0f);
-    if (ImGui::InputText("##Filter", f_buf, sizeof(f_buf)))
-      filter_text_ = f_buf;
+    RenderFilterInput("##Filter", filter_text_, focus_filter_);
     ImGui::PopItemWidth();
 
     ImGui::Separator();
@@ -37,15 +34,28 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
         current_version != last_data_version_ || force_rebuild_) {
       resolved_hints_.clear();
       for (const auto &h : hints) {
+        auto session = ap_network_.GetSession(h.source_slot);
+        if (!session)
+          continue;
+
         ResolvedHint rh;
         rh.hint = h;
-        rh.item_name = ap_network_.ResolveItemName(h.item_id, h.receiver_slot);
-        rh.receiver_name = ap_network_.ResolvePlayerName(h.receiver_slot);
+        rh.item_name = session->ResolveItemName(h.item_id, h.receiver_slot);
+        rh.receiver_name = session->ResolvePlayerName(h.receiver_slot);
         rh.location_name =
-            ap_network_.ResolveLocationName(h.location_id, h.finder_slot);
+            session->ResolveLocationName(h.location_id, h.finder_slot);
         rh.entrance_name = h.entrance_name;
-        rh.finder_name = ap_network_.ResolvePlayerName(h.finder_slot);
-        rh.status_name = h.found ? "Found" : "Not Found";
+        rh.finder_name = session->ResolvePlayerName(h.finder_slot);
+        if (h.status >= 40 || h.found)
+          rh.status_name = "Found";
+        else if (h.status >= 30)
+          rh.status_name = "Priority";
+        else if (h.status >= 20)
+          rh.status_name = "Avoid";
+        else if (h.status >= 10)
+          rh.status_name = "Not Needed";
+        else
+          rh.status_name = "Unspecified";
 
         rh.lower_combined = rh.item_name + " " + rh.receiver_name + " " +
                             rh.location_name + " " + rh.entrance_name + " " +
@@ -99,7 +109,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
                   else if (spec->ColumnIndex == 4)
                     delta = NaturalCompare(hA.finder_name, hB.finder_name);
                   else if (spec->ColumnIndex == 5)
-                    delta = hA.hint.found - hB.hint.found;
+                    delta = hA.hint.status - hB.hint.status;
 
                   if (delta != 0)
                     return (spec->SortDirection ==
@@ -165,152 +175,211 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
         ImGui::PushID(i);
         bool selectable_rendered = false;
-        for (int col = 0; col < 6; col++) {
-          if (ImGui::TableSetColumnIndex(col)) {
-            char label[32];
-            snprintf(label, sizeof(label), "##hintrow_%d", i);
-            if (ImGui::Selectable(label, is_selected,
-                                  ImGuiSelectableFlags_SpanAllColumns |
-                                      ImGuiSelectableFlags_AllowOverlap)) {
-            }
-            if (ImGui::IsItemClicked(0)) {
-              if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
-                selection_active_ = i;
-              else {
-                if (selection_anchor_ == i && selection_active_ == i) {
-                  selection_anchor_ = -1;
-                  selection_active_ = -1;
-                } else {
-                  selection_anchor_ = i;
-                  selection_active_ = i;
-                }
-              }
-            }
-            if (ImGui::IsItemHovered(
-                    ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-                ImGui::IsMouseDown(0))
+        ImGui::TableSetColumnIndex(0);
+        char label[32];
+        snprintf(label, sizeof(label), "##hintrow_%d", i);
+        if (ImGui::Selectable(label, is_selected,
+                              ImGuiSelectableFlags_SpanAllColumns |
+                                  ImGuiSelectableFlags_AllowOverlap)) {
+        }
+        if (ImGui::IsItemClicked(0)) {
+          if (ImGui::GetIO().KeyShift && selection_anchor_ != -1)
+            selection_active_ = i;
+          else {
+            if (selection_anchor_ == i && selection_active_ == i) {
+              selection_anchor_ = -1;
+              selection_active_ = -1;
+            } else {
+              selection_anchor_ = i;
               selection_active_ = i;
+            }
+          }
+        }
+        if (ImGui::IsItemHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            ImGui::IsMouseDown(0))
+          selection_active_ = i;
+
+        if (ImGui::IsItemHovered() &&
+            ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
+            ImGui::TableGetHoveredColumn() == 5) {
+          // Only show status menu if we are the receiver (we have a session for
+          // it)
+          if (ap_network_.GetSessionByGlobalSlot(h.receiver_slot)) {
+            ImGui::OpenPopup("StatusCtx");
+          } else {
+            ImGui::OpenPopup("RowCtx");
+          }
+        } else if (ImGui::IsItemHovered() &&
+                   ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+          ImGui::OpenPopup("RowCtx");
+        }
+
+        if (ImGui::BeginPopup("StatusCtx")) {
+          if (selection_anchor_ == -1) {
+            selection_anchor_ = i;
+            selection_active_ = i;
+          }
+          auto session_h = ap_network_.GetSessionByGlobalSlot(h.receiver_slot);
+          if (ImGui::MenuItem("Set Priority", NULL, h.status == 30)) {
+            if (session_h) {
+              if (ap_network_.IsDebugMode())
+                fprintf(stderr,
+                        "[UI] Requesting UpdateHint (Priority) for loc %lld, "
+                        "player %d\n",
+                        (long long)h.location_id, h.receiver_slot);
+              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 30);
+            }
+          }
+          if (ImGui::MenuItem("Set Avoid", NULL, h.status == 20)) {
+            if (session_h) {
+              if (ap_network_.IsDebugMode())
+                fprintf(stderr,
+                        "[UI] Requesting UpdateHint (Avoid) for loc %lld, "
+                        "player %d\n",
+                        (long long)h.location_id, h.receiver_slot);
+              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 20);
+            }
+          }
+          if (ImGui::MenuItem("Set Not Needed", NULL, h.status == 10)) {
+            if (session_h) {
+              if (ap_network_.IsDebugMode())
+                fprintf(stderr,
+                        "[UI] Requesting UpdateHint (Not Needed) for loc "
+                        "%lld, player %d\n",
+                        (long long)h.location_id, h.receiver_slot);
+              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 10);
+            }
+          }
+          if (ImGui::MenuItem("Set Unspecified", NULL, h.status == 0)) {
+            if (session_h) {
+              if (ap_network_.IsDebugMode())
+                fprintf(stderr,
+                        "[UI] Requesting UpdateHint (Unspecified) for loc "
+                        "%lld, player %d\n",
+                        (long long)h.location_id, h.receiver_slot);
+              session_h->SendUpdateHint(h.location_id, h.receiver_slot, 0);
+            }
+          }
+          ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopup("RowCtx")) {
+          if (selection_anchor_ == -1) {
+            selection_anchor_ = i;
+            selection_active_ = i;
+          }
+          if (ImGui::MenuItem("Copy selection (with markdown)")) {
+            std::string selected_text;
+            int start =
+                std::max(0, std::min(selection_anchor_, selection_active_));
+            int end =
+                std::min((int)resolved_hints_.size() - 1,
+                         std::max(selection_anchor_, selection_active_));
+            std::string l_filter_copy = filter_text_;
+            std::transform(l_filter_copy.begin(), l_filter_copy.end(),
+                           l_filter_copy.begin(), ::tolower);
+
+            for (int j = start; j <= end && j < (int)resolved_hints_.size();
+                 ++j) {
+              const auto &rh_j = resolved_hints_[j];
+              const auto &h_j = rh_j.hint;
+
+              if (!l_filter_copy.empty()) {
+                if (rh_j.lower_combined.find(l_filter_copy) ==
+                    std::string::npos)
+                  continue;
+              }
+
+              std::string cb = "**[Hint]:** " + rh_j.receiver_name + "'s *" +
+                               rh_j.item_name + "* is at **" +
+                               rh_j.location_name + "**";
+              if (!h_j.entrance_name.empty())
+                cb += " (via **" + h_j.entrance_name + "**)";
+              cb += " in **" + rh_j.finder_name + "**'s World. (" +
+                    rh_j.status_name + ")";
+              selected_text += cb;
+              if (j < end)
+                selected_text += "\n";
+            }
+            ImGui::SetClipboardText(selected_text.c_str());
+          }
+          if (ImGui::MenuItem("Copy selection (tab-delimited)")) {
+            std::string selected_text;
+            int start_c =
+                std::max(0, std::min(selection_anchor_, selection_active_));
+            int end_c =
+                std::min((int)resolved_hints_.size() - 1,
+                         std::max(selection_anchor_, selection_active_));
+
+            std::string l_filter_copy = filter_text_;
+            std::transform(l_filter_copy.begin(), l_filter_copy.end(),
+                           l_filter_copy.begin(), ::tolower);
 
             ImGuiTable *table = ImGui::GetCurrentTable();
-            struct ColumnOrder {
+            struct ColOrd {
               int index;
               int order;
             };
-            std::vector<ColumnOrder> visible_cols;
+            std::vector<ColOrd> v_cols;
             if (table) {
               for (int c = 0; c < 6; c++) {
                 if (c < table->Columns.size() && table->Columns[c].IsEnabled) {
-                  visible_cols.push_back({c, table->Columns[c].DisplayOrder});
+                  v_cols.push_back({c, table->Columns[c].DisplayOrder});
                 }
               }
-              std::sort(visible_cols.begin(), visible_cols.end(),
+              std::sort(v_cols.begin(), v_cols.end(),
                         [](const auto &a, const auto &b) {
                           return a.order < b.order;
                         });
             }
 
-            if (ImGui::BeginPopupContextItem(
-                    "HintCtx", ImGuiPopupFlags_MouseButtonRight)) {
-              if (selection_anchor_ == -1) {
-                selection_anchor_ = i;
-                selection_active_ = i;
+            for (int j = start_c; j <= end_c && j < (int)resolved_hints_.size();
+                 ++j) {
+              const auto &rh_j = resolved_hints_[j];
+
+              if (!l_filter_copy.empty()) {
+                if (rh_j.lower_combined.find(l_filter_copy) ==
+                    std::string::npos)
+                  continue;
               }
-              if (ImGui::MenuItem("Copy selection (with markdown)")) {
-                std::string selected_text;
-                int start =
-                    std::max(0, std::min(selection_anchor_, selection_active_));
-                int end =
-                    std::min((int)resolved_hints_.size() - 1,
-                             std::max(selection_anchor_, selection_active_));
-                std::string l_filter = filter_text_;
-                std::transform(l_filter.begin(), l_filter.end(),
-                               l_filter.begin(), ::tolower);
 
-                for (int j = start; j <= end && j < (int)resolved_hints_.size();
-                     ++j) {
-                  const auto &rh_j = resolved_hints_[j];
-                  const auto &h_j = rh_j.hint;
+              for (size_t c_idx = 0; c_idx < v_cols.size(); ++c_idx) {
+                int c_num = v_cols[c_idx].index;
+                if (c_num == 0)
+                  selected_text += rh_j.item_name;
+                else if (c_num == 1)
+                  selected_text += rh_j.receiver_name;
+                else if (c_num == 2)
+                  selected_text += rh_j.location_name;
+                else if (c_num == 3)
+                  selected_text += rh_j.entrance_name.empty()
+                                       ? "Vanilla"
+                                       : rh_j.entrance_name;
+                else if (c_num == 4)
+                  selected_text += rh_j.finder_name;
+                else if (c_num == 5)
+                  selected_text += rh_j.status_name;
 
-                  if (!l_filter.empty()) {
-                    if (rh_j.lower_combined.find(l_filter) == std::string::npos)
-                      continue;
-                  }
-
-                  std::string cb = "**[Hint]:** " + rh_j.receiver_name +
-                                   "'s *" + rh_j.item_name + "* is at **" +
-                                   rh_j.location_name + "**";
-                  if (!h_j.entrance_name.empty())
-                    cb += " (via **" + h_j.entrance_name + "**)";
-                  cb += " in **" + rh_j.finder_name + "**'s World. (" +
-                        rh_j.status_name + ")";
-                  selected_text += cb;
-                  if (j < end)
-                    selected_text += "\n";
-                }
-                ImGui::SetClipboardText(selected_text.c_str());
+                if (c_idx < v_cols.size() - 1)
+                  selected_text += "\t";
               }
-              if (ImGui::MenuItem("Copy selection (tab-delimited)")) {
-                std::string selected_text;
-                int start_c =
-                    std::max(0, std::min(selection_anchor_, selection_active_));
-                int end_c =
-                    std::min((int)resolved_hints_.size() - 1,
-                             std::max(selection_anchor_, selection_active_));
-
-                std::string l_filter = filter_text_;
-                std::transform(l_filter.begin(), l_filter.end(),
-                               l_filter.begin(), ::tolower);
-
-                for (int j = start_c;
-                     j <= end_c && j < (int)resolved_hints_.size(); ++j) {
-                  const auto &rh_j = resolved_hints_[j];
-
-                  if (!l_filter.empty()) {
-                    if (rh_j.lower_combined.find(l_filter) == std::string::npos)
-                      continue;
-                  }
-
-                  for (size_t c_idx = 0; c_idx < visible_cols.size(); ++c_idx) {
-                    int c_num = visible_cols[c_idx].index;
-                    if (c_num == 0)
-                      selected_text += rh_j.item_name;
-                    else if (c_num == 1)
-                      selected_text += rh_j.receiver_name;
-                    else if (c_num == 2)
-                      selected_text += rh_j.location_name;
-                    else if (c_num == 3)
-                      selected_text += rh_j.entrance_name.empty()
-                                           ? "Vanilla"
-                                           : rh_j.entrance_name;
-                    else if (c_num == 4)
-                      selected_text += rh_j.finder_name;
-                    else if (c_num == 5)
-                      selected_text += rh_j.status_name;
-
-                    if (c_idx < visible_cols.size() - 1)
-                      selected_text += "\t";
-                  }
-                  if (j < end_c)
-                    selected_text += "\n";
-                }
-                ImGui::SetClipboardText(selected_text.c_str());
-              }
-              if (ImGui::MenuItem("Clear selection")) {
-                selection_anchor_ = -1;
-                selection_active_ = -1;
-              }
-              ImGui::EndPopup();
+              if (j < end_c)
+                selected_text += "\n";
             }
-            selectable_rendered = true;
-            break;
+            ImGui::SetClipboardText(selected_text.c_str());
           }
+          if (ImGui::MenuItem("Clear selection")) {
+            selection_anchor_ = -1;
+            selection_active_ = -1;
+          }
+          ImGui::EndPopup();
         }
+
         ImGui::PopID();
 
         ImGui::TableSetColumnIndex(0);
-        if (selectable_rendered) {
-          ImGui::SameLine(0, 0);
-        }
+        ImGui::SameLine(0, 0);
 
         uint32_t color = 0xFFFFFF00;
         if (h.item_flags & 0x01)
@@ -358,9 +427,18 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
           }
         }
 
-        // Status column: Green if found, Red if not, Yellow if unknown
+        // Status column
         ImGui::TableSetColumnIndex(5);
-        uint32_t s_color = h.found ? 0xFF00FF00 : 0xFF0000FF;
+        uint32_t s_color = 0xFFAAAAAA; // Gray (Unspecified)
+        if (h.status >= 40 || h.found)
+          s_color = 0xFF00FF00; // Green (Found)
+        else if (h.status >= 30)
+          s_color = 0xFF00D7FF; // Gold (Priority)
+        else if (h.status >= 20)
+          s_color = 0xFF5050FF; // Red/Orange (Avoid)
+        else if (h.status >= 10)
+          s_color = 0xFF777777; // Dark Gray (Not Needed)
+
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(s_color), "%s",
                            status.c_str());
       }

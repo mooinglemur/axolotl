@@ -26,6 +26,7 @@ private:
   const ConnectionSettings &settings_;
   bool collapse_ = true;
   std::string filter_text_;
+  bool focus_filter_ = false;
 
   int selection_anchor_ = -1;
   int selection_active_ = -1;

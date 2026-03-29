@@ -7,6 +7,7 @@
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
 #include "SpoilerSphereTrackerWindow.h"
+#include "TrackerWindow.h"
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -33,7 +34,6 @@
 #include <ixwebsocket/IXNetSystem.h>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <csignal>
 
 static Application *s_instance = nullptr;
 std::atomic<bool> Application::should_exit_{false};
@@ -50,6 +50,7 @@ bool Application::InitializeNetwork() {
 #ifdef _WIN32
   ix::initNetSystem();
 #endif
+  ap_network_.SetDebugMode(debug_mode_);
   ap_network_.SetSettings(&current_config_);
   ap_network_.on_history_updated = [this]() {};
   for (const auto &slot : current_config_.slots) {
@@ -301,6 +302,7 @@ bool Application::InitializeUI() {
 
   AddWindow(std::make_unique<HintWindow>(ap_network_, current_config_));
   AddWindow(std::make_unique<SpoilerSphereTrackerWindow>(ap_network_, current_config_));
+  AddWindow(std::make_unique<TrackerWindow>(ap_network_, current_config_));
 
   if (is_first_launch_) {
     current_config_.show_windows["Chat"] = true;
@@ -309,6 +311,7 @@ bool Application::InitializeUI() {
     current_config_.show_windows["Personal Feed"] = false;
     current_config_.show_windows["Received Items"] = false;
     current_config_.show_windows["Settings"] = false;
+    current_config_.show_windows["Tracker"] = false;
   }
 
   // Load visibility from config
@@ -440,6 +443,14 @@ void Application::ReloadFonts() {
 void Application::SetPreviewFont(const std::string &path) {
   preview_font_path_ = path;
   fonts_reload_pending_ = true;
+}
+
+void Application::ParseArguments(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--debug") {
+      debug_mode_ = true;
+    }
+  }
 }
 
 void Application::SetPreviewFallbackFont(const std::string &path) {

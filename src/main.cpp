@@ -5,7 +5,7 @@
 #include <thread>
 #include <chrono>
 
-int main() {
+int main(int argc, char **argv) {
 #ifndef _WIN32
   setenv("QT_LOGGING_RULES", "qt.qpa.services=false", 1);
   std::signal(SIGINT, Application::SignalHandler);
@@ -13,6 +13,7 @@ int main() {
 #endif
 
   Application app;
+  app.ParseArguments(argc, argv);
 
   if (!app.InitializeNetwork()) {
     std::cerr << "Failed to initialize Archipelago Network." << std::endl;

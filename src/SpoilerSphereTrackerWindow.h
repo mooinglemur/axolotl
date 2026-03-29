@@ -3,7 +3,6 @@
 #include "SpoilerLog.h"
 #include "Window.h"
 #include <string>
-#include <vector>
 
 class SpoilerSphereTrackerWindow : public Window {
 public:
@@ -21,5 +20,7 @@ private:
 
   uint64_t last_data_version_ = 0;
 
+  std::string filter_text_;
+  bool focus_filter_ = false;
   void LoadSpoilerLog();
 };

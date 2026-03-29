@@ -24,17 +24,11 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
-    char filter_buf[256];
-    strncpy(filter_buf, filter_text_.c_str(), sizeof(filter_buf) - 1);
-    filter_buf[sizeof(filter_buf) - 1] = '\0';
-
     float collapse_width = ImGui::CalcTextSize("Collapse").x +
                            ImGui::GetStyle().ItemInnerSpacing.x +
                            ImGui::GetFrameHeight();
     ImGui::PushItemWidth(-(collapse_width + ImGui::GetStyle().ItemSpacing.x));
-    if (ImGui::InputText("##Filter", filter_buf, sizeof(filter_buf))) {
-      filter_text_ = filter_buf;
-    }
+    RenderFilterInput("##Filter", filter_text_, focus_filter_);
     ImGui::PopItemWidth();
     ImGui::SameLine();
     ImGui::Checkbox("Collapse", &collapse_);
@@ -352,9 +346,12 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
         ImGui::TableSetColumnIndex(1);
         ImGui::Text("%s", rm.source_slot.c_str());
         if (ImGui::IsItemHovered()) {
-          std::string game = ap_network_.ResolvePlayerGame(rm.receiver_slot);
-          if (!game.empty()) {
-            ImGui::SetTooltip("Game: %s", game.c_str());
+          auto session = ap_network_.GetSession(rm.source_slot);
+          if (session) {
+            std::string game = session->ResolvePlayerGame(rm.receiver_slot);
+            if (!game.empty()) {
+              ImGui::SetTooltip("Game: %s", game.c_str());
+            }
           }
         }
 
@@ -371,9 +368,12 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(use_color), "%s",
                                p.text.c_str());
             if (p.player_id != -1 && ImGui::IsItemHovered()) {
-              std::string game = ap_network_.ResolvePlayerGame(p.player_id);
-              if (!game.empty()) {
-                ImGui::SetTooltip("Game: %s", game.c_str());
+              auto session = ap_network_.GetSession(rm.source_slot);
+              if (session) {
+                std::string game = session->ResolvePlayerGame(p.player_id);
+                if (!game.empty()) {
+                  ImGui::SetTooltip("Game: %s", game.c_str());
+                }
               }
             }
             if (p_idx < rm.parts.size() - 1)

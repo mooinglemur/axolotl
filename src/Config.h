@@ -26,7 +26,7 @@ struct ConnectionSettings {
   std::string fallback_font_path = "";
   bool show_hints = true;
   bool show_details_in_sphere_tracker = true;
-  int max_history_size = 1000;
+  int max_history_size = 0;
   std::string timestamp_format_long = "[%Y-%m-%d %H:%M:%S]";
   std::string timestamp_format_short = "[%H:%M:%S]";
   int window_width = 1280;
@@ -39,6 +39,7 @@ struct ConnectionSettings {
   bool confirm_exit = true;
   bool show_chat_timestamps = true;
   bool show_feed_timestamps = true;
+  std::string uuid = "";
   std::map<std::string, bool> show_windows;
 };
 
@@ -51,4 +52,5 @@ public:
   static std::filesystem::path GetCaBundlePath();
   static ConnectionSettings Load();
   static void Save(const ConnectionSettings &settings);
+  static std::string GenerateUUID();
 };

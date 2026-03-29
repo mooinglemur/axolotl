@@ -107,6 +107,52 @@ inline void RenderRichMessageWrapped(const char *timestamp_str,
   }
 }
 
+inline bool RenderFilterInput(const char *label, std::string &filter_text,
+                               bool &focus_filter) {
+  char buf[256];
+  strncpy(buf, filter_text.c_str(), sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  ImGui::SetNextItemAllowOverlap();
+  if (focus_filter) {
+    ImGui::SetKeyboardFocusHere(0);
+    focus_filter = false;
+  }
+
+  bool changed = false;
+  if (ImGui::InputText(label, buf, sizeof(buf))) {
+    filter_text = buf;
+    changed = true;
+  }
+
+  if (!filter_text.empty()) {
+    ImVec2 min = ImGui::GetItemRectMin();
+    ImVec2 max = ImGui::GetItemRectMax();
+    float size = max.y - min.y;
+    ImVec2 button_pos = ImVec2(max.x - size, min.y);
+    ImGui::SetCursorScreenPos(button_pos);
+    if (ImGui::InvisibleButton("##Clear", ImVec2(size, size))) {
+      filter_text.clear();
+      focus_filter = true;
+      changed = true;
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+    ImVec2 center =
+        ImVec2(button_pos.x + size * 0.5f, button_pos.y + size * 0.5f);
+    float sz = size * 0.2f;
+    ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(center.x - sz, center.y - sz),
+                                        ImVec2(center.x + sz, center.y + sz),
+                                        color, 2.0f);
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(center.x - sz, center.y + sz),
+                                        ImVec2(center.x + sz, center.y - sz),
+                                        color, 2.0f);
+  }
+  return changed;
+}
+
 class Window {
 public:
   Window(const std::string &name) : name_(name) {}

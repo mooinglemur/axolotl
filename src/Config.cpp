@@ -160,6 +160,12 @@ ConnectionSettings Config::Load() {
     if (config["timestamp_format_short"])
       settings.timestamp_format_short =
           config["timestamp_format_short"].as<std::string>();
+    if (config["uuid"])
+      settings.uuid = config["uuid"].as<std::string>();
+
+    if (settings.uuid.empty()) {
+      settings.uuid = GenerateUUID();
+    }
   } catch (const std::exception &e) {
     std::cerr << "Error loading config: " << e.what() << std::endl;
   }
@@ -212,6 +218,7 @@ void Config::Save(const ConnectionSettings &settings) {
     out << YAML::Key << kv.first << YAML::Value << kv.second;
   }
   out << YAML::EndMap;
+  out << YAML::Key << "uuid" << YAML::Value << settings.uuid;
 
   out << YAML::EndMap;
 
@@ -236,4 +243,26 @@ void Config::Save(const ConnectionSettings &settings) {
     std::cerr << "Error: Could not rename config file: " << ec.message()
               << std::endl;
   }
+}
+
+std::string Config::GenerateUUID() {
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_int_distribution<> dis(0, 15);
+  static std::uniform_int_distribution<> dis2(8, 11);
+  static const char *digits = "0123456789abcdef";
+
+  std::string uuid = "";
+  for (int i = 0; i < 36; ++i) {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      uuid += "-";
+    } else if (i == 14) {
+      uuid += "4";
+    } else if (i == 19) {
+      uuid += digits[dis2(gen)];
+    } else {
+      uuid += digits[dis(gen)];
+    }
+  }
+  return uuid;
 }

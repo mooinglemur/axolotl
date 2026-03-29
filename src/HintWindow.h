@@ -28,6 +28,7 @@ private:
   ArchipelagoNetwork &ap_network_;
   const ConnectionSettings &settings_;
   std::string filter_text_;
+  bool focus_filter_ = false;
 
   int selection_anchor_ = -1;
   int selection_active_ = -1;

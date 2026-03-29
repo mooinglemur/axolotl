@@ -25,6 +25,7 @@ public:
   void CleanupUI();
   void Run();
   void ReloadFonts();
+  void ParseArguments(int argc, char **argv);
 
   bool UserRequestedExit() const { return user_requested_exit_ || should_exit_; }
   bool WasDisconnected() const { return is_disconnected_; }
@@ -94,5 +95,6 @@ private:
 
   bool user_requested_exit_ = false;
   bool is_disconnected_ = false;
+  bool debug_mode_ = false;
   static std::atomic<bool> should_exit_;
 };

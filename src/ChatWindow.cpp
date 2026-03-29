@@ -174,7 +174,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         for (const auto &s : settings_.slots) {
           if (s.name == name_to_remove || s.last_name == name_to_remove)
             name_still_used = true;
-          if (s.name == last_name_to_remove || s.last_name == last_name_to_remove)
+          if (s.name == last_name_to_remove ||
+              s.last_name == last_name_to_remove)
             last_name_still_used = true;
         }
 
@@ -501,6 +502,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     if (connected_slots.empty()) {
       ImGui::BeginDisabled();
       ImGui::Text("Connect a slot to chat...");
+      ImGui::EndDisabled();
     } else {
       float max_name_width = 0.0f;
       for (const auto &name : connected_slots) {
@@ -520,70 +522,68 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         ImGui::EndCombo();
       }
       ImGui::SameLine();
-    }
 
-    ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue |
-                                      ImGuiInputTextFlags_CallbackHistory |
-                                      ImGuiInputTextFlags_CallbackAlways;
-    if (ac_active_)
-      input_flags |= ImGuiInputTextFlags_CallbackCompletion;
+      ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue |
+                                        ImGuiInputTextFlags_CallbackHistory |
+                                        ImGuiInputTextFlags_CallbackAlways;
+      if (ac_active_)
+        input_flags |= ImGuiInputTextFlags_CallbackCompletion;
 
-    // Autocomplete logic remains mostly same but uses selected slot's player
-    // names
-    if (ac_active_ && !ac_matches_.empty()) {
-      ImVec2 pos = ImGui::GetCursorScreenPos();
-      pos.y -= (ac_matches_.size() * ImGui::GetTextLineHeightWithSpacing()) +
-               ImGui::GetStyle().WindowPadding.y * 2;
-      ImGui::SetNextWindowPos(pos);
-      ImGui::SetNextWindowSizeConstraints(ImVec2(200, 0), ImVec2(500, 200));
-      if (ImGui::Begin("AutoCompPopup", nullptr,
-                       ImGuiWindowFlags_NoTitleBar |
-                           ImGuiWindowFlags_AlwaysAutoResize |
-                           ImGuiWindowFlags_NoFocusOnAppearing)) {
-        for (int i = 0; i < (int)ac_matches_.size(); ++i) {
-          if (ImGui::Selectable(ac_matches_[i].c_str(),
-                                i == ac_selected_idx_)) {
-            std::string buf_str(input_buf_);
-            buf_str.replace(ac_cursor_pos_, ac_match_string_.length(),
-                            ac_matches_[i] + " ");
-            strncpy(input_buf_, buf_str.c_str(), sizeof(input_buf_) - 1);
-            ac_active_ = false;
-            ImGui::SetKeyboardFocusHere(-1);
+      // Autocomplete logic remains mostly same but uses selected slot's
+      // player names
+      if (ac_active_ && !ac_matches_.empty()) {
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        pos.y -= (ac_matches_.size() * ImGui::GetTextLineHeightWithSpacing()) +
+                 ImGui::GetStyle().WindowPadding.y * 2;
+        ImGui::SetNextWindowPos(pos);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(200, 0), ImVec2(500, 200));
+        if (ImGui::Begin("AutoCompPopup", nullptr,
+                         ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoFocusOnAppearing)) {
+          for (int i = 0; i < (int)ac_matches_.size(); ++i) {
+            if (ImGui::Selectable(ac_matches_[i].c_str(),
+                                  i == ac_selected_idx_)) {
+              std::string buf_str(input_buf_);
+              buf_str.replace(ac_cursor_pos_, ac_match_string_.length(),
+                              ac_matches_[i] + " ");
+              strncpy(input_buf_, buf_str.c_str(), sizeof(input_buf_) - 1);
+              ac_active_ = false;
+              ImGui::SetKeyboardFocusHere(-1);
+            }
           }
+          ImGui::End();
         }
-        ImGui::End();
+      }
+
+      float button_width = ImGui::CalcTextSize("Send").x +
+                           ImGui::GetStyle().FramePadding.x * 2.0f;
+      float input_width = ImGui::GetContentRegionAvail().x - button_width -
+                          ImGui::GetStyle().ItemSpacing.x;
+      if (focus_input_) {
+        ImGui::SetKeyboardFocusHere(0);
+        focus_input_ = false;
+      }
+      ImGui::SetNextItemWidth(input_width);
+      bool send = ImGui::InputText(
+          "##Input", input_buf_, sizeof(input_buf_), input_flags,
+          &ChatWindow::TextEditCallbackStub, (void *)this);
+      ImGui::SameLine();
+      if (ImGui::Button("Send"))
+        send = true;
+
+      if (send && input_buf_[0] != '\0' && !connected_slots.empty()) {
+        if (!HandleCommand(input_buf_)) {
+          ap_network_.SendChat(selected_send_slot_name_, input_buf_);
+        }
+        if (input_history_.empty() || input_history_.back() != input_buf_)
+          input_history_.push_back(input_buf_);
+        history_pos_ = -1;
+        ac_active_ = false;
+        input_buf_[0] = '\0';
+        focus_input_ = true;
       }
     }
-
-    float button_width =
-        ImGui::CalcTextSize("Send").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    float input_width = ImGui::GetContentRegionAvail().x - button_width -
-                        ImGui::GetStyle().ItemSpacing.x;
-    if (focus_input_) {
-      ImGui::SetKeyboardFocusHere(0);
-      focus_input_ = false;
-    }
-    ImGui::SetNextItemWidth(input_width);
-    bool send =
-        ImGui::InputText("##Input", input_buf_, sizeof(input_buf_), input_flags,
-                         &ChatWindow::TextEditCallbackStub, (void *)this);
-    ImGui::SameLine();
-    if (ImGui::Button("Send"))
-      send = true;
-
-    if (send && input_buf_[0] != '\0' && !connected_slots.empty()) {
-      if (!HandleCommand(input_buf_)) {
-        ap_network_.SendChat(selected_send_slot_name_, input_buf_);
-      }
-      if (input_history_.empty() || input_history_.back() != input_buf_)
-        input_history_.push_back(input_buf_);
-      history_pos_ = -1;
-      ac_active_ = false;
-      input_buf_[0] = '\0';
-      focus_input_ = true;
-    }
-    if (connected_slots.empty())
-      ImGui::EndDisabled();
   }
   ImGui::End();
 }
