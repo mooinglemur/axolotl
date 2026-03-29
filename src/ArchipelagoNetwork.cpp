@@ -4,8 +4,10 @@
 #include "version.h"
 #include <algorithm>
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <ixwebsocket/IXHttpClient.h>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -1172,6 +1174,11 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
     item_history_.push_back(msg);
     last_item_activity_time_ = GetCurrentTimestamp();
     global_stats_.checked_locations++;
+    if (msg.sender_slot != -1) {
+      global_stats_.slot_info[msg.sender_slot].checked_locations++;
+      global_stats_.slot_info[msg.sender_slot].last_activity_time =
+          msg.timestamp;
+    }
     live_checks_since_last_poll_++;
   } else {
     CheckDayChange(chat_history_, msg.timestamp, last_chat_day_);
@@ -1532,8 +1539,14 @@ void ArchipelagoNetwork::SyncTotalLocations() {
       if (j.contains("player_locations_total") &&
           j["player_locations_total"].is_array()) {
         for (const auto &p : j["player_locations_total"]) {
-          if (p.contains("total_locations")) {
-            total_l += p["total_locations"].get<int>();
+          if (p.contains("total_locations") && p.contains("player")) {
+            int slot = p["player"].get<int>();
+            int team = p.contains("team") ? p["team"].get<int>() : 0;
+            int packed_slot = (team << 16) | slot;
+
+            int player_total = p["total_locations"].get<int>();
+            total_l += player_total;
+            global_stats_.slot_info[packed_slot].total_locations = player_total;
           }
         }
       }
@@ -1627,12 +1640,49 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
         if (j.contains("player_status") && j["player_status"].is_array()) {
           total_g = (int)j["player_status"].size();
           for (const auto &stats : j["player_status"]) {
-            if (stats.contains("status") && stats.contains("player") &&
-                stats["status"].is_number() &&
-                stats["status"].get<int>() == 30) {
-              completed_g++;
-              std::lock_guard<std::recursive_mutex> lock(history_mutex_);
-              global_stats_.completed_slots.insert(stats["player"].get<int>());
+            if (stats.contains("player")) {
+              int slot = stats["player"].get<int>();
+              int team = stats.contains("team") ? stats["team"].get<int>() : 0;
+              int packed_slot = (team << 16) | slot;
+
+              if (stats.contains("status") && stats["status"].is_number() &&
+                  stats["status"].get<int>() == 30) {
+                completed_g++;
+                global_stats_.completed_slots.insert(packed_slot);
+              }
+            }
+          }
+        }
+
+        if (j.contains("player_checks_done") && j["player_checks_done"].is_array()) {
+          for (const auto &checks : j["player_checks_done"]) {
+            if (checks.contains("player") && checks.contains("locations") && checks["locations"].is_array()) {
+              int slot = checks["player"].get<int>();
+              int team = checks.contains("team") ? checks["team"].get<int>() : 0;
+              int packed_slot = (team << 16) | slot;
+              global_stats_.slot_info[packed_slot].checked_locations = (int)checks["locations"].size();
+            }
+          }
+        }
+
+        if (j.contains("activity_timers") && j["activity_timers"].is_array()) {
+          for (const auto &timer_entry : j["activity_timers"]) {
+            if (timer_entry.contains("player") && timer_entry.contains("time")) {
+              int slot = timer_entry["player"].get<int>();
+              int team = timer_entry.contains("team") ? timer_entry["team"].get<int>() : 0;
+              int packed_slot = (team << 16) | slot;
+
+              std::string time_str = timer_entry["time"].get<std::string>();
+              std::tm tm = {};
+              std::stringstream ss(time_str);
+              ss >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT");
+              if (!ss.fail()) {
+#ifdef _WIN32
+                global_stats_.slot_info[packed_slot].last_activity_time = (double)_mkgmtime(&tm);
+#else
+                global_stats_.slot_info[packed_slot].last_activity_time = (double)timegm(&tm);
+#endif
+              }
             }
           }
         }
@@ -1640,11 +1690,8 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
         if (j.contains("total_checks_done") &&
             j["total_checks_done"].is_array()) {
           for (const auto &team_stats : j["total_checks_done"]) {
-            // Assume team 0 for now
-            if (team_stats.contains("team") &&
-                team_stats["team"].get<int>() == 0) {
-              checked_l = (int)team_stats["checks_done"].get<int>();
-              break;
+            if (team_stats.contains("checks_done")) {
+              checked_l += (int)team_stats["checks_done"].get<int>();
             }
           }
         }

@@ -61,11 +61,18 @@ struct Hint {
   std::string source_slot;
 };
 
+struct SlotStats {
+  int total_locations = 0;
+  int checked_locations = 0;
+  double last_activity_time = 0.0;
+};
+
 struct MultiworldStats {
   int total_games = 0;
   std::set<int> completed_slots;
   int total_locations = 0;
   int checked_locations = 0;
+  std::map<int, SlotStats> slot_info;
 };
 
 struct ServerMetadata {

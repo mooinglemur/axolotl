@@ -16,4 +16,7 @@ private:
   std::string last_settings_tracker_url_;
   bool sync_triggered_ = false;
   double last_seen_sync_time_ = -1.0;
+  std::string filter_text_;
+  bool focus_filter_ = false;
+  bool exclude_goal_complete_ = false;
 };

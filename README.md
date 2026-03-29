@@ -55,7 +55,15 @@ cd axolotl
 git submodule update --init --recursive
 ```
 
-### 2. Build with CMake
+### 2. Build with CMake/ninja
+
+```bash
+mkdir build && cd build
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja
+```
+
+If your system does not have the ninja build system and you don't wish to install it, `make` is also an option.
 
 ```bash
 mkdir build && cd build
