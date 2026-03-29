@@ -57,6 +57,7 @@ bool Application::InitializeNetwork() {
   for (const auto &slot : current_config_.slots) {
     ap_network_.AddSession(slot.name);
   }
+  ap_network_.StartNetworkThread();
   return true;
 }
 
@@ -101,6 +102,7 @@ void Application::CleanupUI() {
 }
 
 Application::~Application() {
+  ap_network_.StopNetworkThread();
   CleanupUI();
 
 #ifdef _WIN32
@@ -477,12 +479,8 @@ void Application::Run() {
     glfwWaitEventsTimeout(0.016); // 60 FPS base
     double t_after_poll = glfwGetTime();
 
-    bool net_changed = ap_network_.Update();
-    if (net_changed)
-      frames_to_render_ = 3;
-
-    // Render if network changed OR if we received a real window event (not a
-    // timeout) OR if we are in a settlement period
+    // Render if we received a real window event (not a timeout)
+    // OR if we are in a settlement period
     bool should_render =
         (frames_to_render_ > 0) || (t_after_poll - t_start < 0.015);
 
@@ -773,10 +771,15 @@ void Application::AddWindow(std::unique_ptr<Window> window) {
 }
 
 void Application::RenderUI(std::tm *current_tm) {
+  bool overview_open = false;
   for (auto &window : windows_) {
     window->Render(current_tm, content_font_, preview_font_,
                    preview_fallback_font_);
+    if (window->GetName() == "Overview" && window->GetOpen()) {
+      overview_open = true;
+    }
   }
+  ap_network_.SetTrackerSyncActive(overview_open);
 }
 
 #ifdef _WIN32

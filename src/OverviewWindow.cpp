@@ -20,16 +20,13 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
     return;
 
   // Tracker URL might have been cleared externally (e.g., server change)
-  if (settings_.tracker_url.empty() && tracker_url_buf_[0] != '\0') {
-    std::memset(tracker_url_buf_, 0, sizeof(tracker_url_buf_));
-  } else if (!settings_.tracker_url.empty() &&
-             settings_.tracker_url != tracker_url_buf_) {
+  if (settings_.tracker_url != last_settings_tracker_url_) {
     std::strncpy(tracker_url_buf_, settings_.tracker_url.c_str(),
                  sizeof(tracker_url_buf_) - 1);
+    last_settings_tracker_url_ = settings_.tracker_url;
   }
 
-  // Trigger tracker sync
-  ap_network_.UpdateTrackerStats();
+  // Tracker URL might have been cleared externally (e.g., server change)
 
   ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
   if (ImGui::Begin(name_.c_str(), &is_open_)) {

@@ -7,6 +7,7 @@
 #include <ws2tcpip.h>
 #endif
 #include <ctime>
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <ixwebsocket/IXWebSocket.h>
@@ -16,6 +17,7 @@
 #include <nlohmann/json.hpp>
 #include <queue>
 #include <set>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -212,8 +214,13 @@ public:
   ArchipelagoNetwork();
   ~ArchipelagoNetwork();
 
+  void StartNetworkThread();
+  void StopNetworkThread();
   bool Update();
   void SetMaxHistory(int max_history) { max_history_size_ = max_history; }
+
+  void LockHistory() const { history_mutex_.lock(); }
+  void UnlockHistory() const { history_mutex_.unlock(); }
 
   // Session management
   ArchipelagoSession *AddSession(const std::string &name);
@@ -239,7 +246,7 @@ public:
     return item_history_;
   }
 
-  const MultiworldStats &GetGlobalStats() const { return global_stats_; }
+  MultiworldStats GetGlobalStats() const;
   void UpdateTrackerStats();
   void ForceTrackerSync();
   double GetLastTrackerSyncTime() const { return last_tracker_sync_time_; }
@@ -271,6 +278,7 @@ public:
   // Callbacks
   std::function<void()> on_history_updated;
   void SetWakeUpCallback(std::function<void()> cb) { wake_up_callback_ = cb; }
+  void SetTrackerSyncActive(bool active);
   void WakeUp() {
     if (wake_up_callback_)
       wake_up_callback_();
@@ -323,6 +331,7 @@ private:
 
   struct MessageHashEntry {
     std::string first_session_name;
+    double last_time;
   };
   std::unordered_map<size_t, MessageHashEntry> message_hash_history_;
   std::deque<size_t> message_hash_queue_;
@@ -338,5 +347,8 @@ private:
   double last_item_activity_time_ = -1.0;
   double last_successful_sync_activity_time_ = -1.0;
   std::string last_synced_static_url_;
-  bool tracker_sync_active_ = true;
+  bool tracker_sync_active_ = false;
+
+  std::thread network_thread_;
+  std::atomic<bool> network_thread_running_{false};
 };

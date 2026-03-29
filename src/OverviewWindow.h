@@ -13,6 +13,7 @@ private:
   ArchipelagoNetwork &ap_network_;
   ConnectionSettings &settings_;
   char tracker_url_buf_[512];
+  std::string last_settings_tracker_url_;
   bool sync_triggered_ = false;
   double last_seen_sync_time_ = -1.0;
 };

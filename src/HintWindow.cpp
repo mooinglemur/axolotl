@@ -16,6 +16,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (!is_open_)
     return;
 
+  std::lock_guard<std::recursive_mutex> history_lock(ap_network_.GetHistoryMutex());
   const auto &hints = ap_network_.GetAggregatedHints();
   uint64_t current_version = ap_network_.GetDataVersion();
 

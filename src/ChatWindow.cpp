@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <ctime>
+#include <iostream>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <set>
@@ -770,6 +771,10 @@ bool ChatWindow::HandleCommand(const std::string &line) {
       n = 1;
     }
 
+    if (ap_network_.IsDebugMode()) {
+      std::cout << "[Debug] subcmd: " << subcmd << ", args: " << args << ", n: " << n << std::endl;
+    }
+
     if (subcmd == "fillchat") {
       for (int i = 0; i < n; ++i) {
         ap_network_.OnStatusMessage(nullptr,
@@ -780,6 +785,13 @@ bool ChatWindow::HandleCommand(const std::string &line) {
       std::string slot_name = selected_send_slot_name_.empty()
                                   ? "Player"
                                   : selected_send_slot_name_;
+      int slot_id = -1;
+      if (!selected_send_slot_name_.empty()) {
+        if (auto session = ap_network_.GetSession(selected_send_slot_name_)) {
+          slot_id = (session->GetTeam() << 16) | session->GetLocalSlot();
+        }
+      }
+
       for (int i = 0; i < n; ++i) {
         RichMessage rm;
         rm.timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -788,6 +800,8 @@ bool ChatWindow::HandleCommand(const std::string &line) {
                        1000000.0;
         rm.populate_local_time();
         rm.source_slot = slot_name;
+        rm.sender_slot = slot_id;
+        rm.receiver_slot = slot_id;
 
         rm.parts.push_back({slot_name, 0xFFFF00FF}); // Player color (Magenta)
         rm.parts.push_back({" found their ", 0xFFFFFFFF});
@@ -798,7 +812,7 @@ bool ChatWindow::HandleCommand(const std::string &line) {
                             0xFF00FF00}); // Location color (Green)
         rm.parts.push_back({")", 0xFFFFFFFF});
 
-        ap_network_.OnGlobalMessage(nullptr, rm, true);
+        ap_network_.OnGlobalMessage(nullptr, rm, true, 0, true);
       }
       return true;
     }

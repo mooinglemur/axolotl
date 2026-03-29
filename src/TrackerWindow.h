@@ -16,4 +16,12 @@ private:
   std::string filter_text_;
   bool focus_filter_ = false;
   const ConnectionSettings &settings_;
+
+  struct SessionCache {
+    uint64_t data_version = 0;
+    std::vector<std::string> unchecked_names;
+    std::vector<std::string> checked_names;
+    std::string game;
+  };
+  std::map<std::string, SessionCache> session_caches_;
 };

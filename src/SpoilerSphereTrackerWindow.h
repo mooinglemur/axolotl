@@ -19,6 +19,17 @@ private:
   std::string log_path_;
 
   uint64_t last_data_version_ = 0;
+  uint64_t last_logic_data_version_ = 0;
+  std::string last_logic_filter_;
+
+  struct SlotProgression {
+    int current_sphere = -1;
+    int locations_sphere = 0;
+    bool blocked = false;
+    std::vector<int> available_location_indices;
+    std::string blocking_item = "";
+  };
+  std::map<int, SlotProgression> progression_cache_;
 
   std::string filter_text_;
   bool focus_filter_ = false;

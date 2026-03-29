@@ -49,36 +49,43 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
           std::string tab_name = session->GetName();
           if (ImGui::BeginTabItem(tab_name.c_str())) {
             int slot = session->GetLocalSlot();
+            int global_slot_id = (session->GetTeam() << 16) | slot;
             const auto &checked_ids = session->GetCheckedLocations();
             const auto &missing_ids = session->GetMissingLocations();
-            int global_slot_id = (session->GetTeam() << 16) | slot;
-            std::string game = session->ResolvePlayerGame(global_slot_id);
 
-            std::vector<std::string> unchecked_names;
-            std::vector<std::string> checked_names;
+            SessionCache &cache = session_caches_[tab_name];
+            if (cache.data_version != ap_network_.GetDataVersion()) {
+              cache.data_version = ap_network_.GetDataVersion();
+              cache.game = session->ResolvePlayerGame(global_slot_id);
+              cache.unchecked_names.clear();
+              cache.checked_names.clear();
 
-            for (int64_t id : missing_ids) {
-              std::string name = session->ResolveLocationName(id, global_slot_id);
-              if (!name.empty())
-                unchecked_names.push_back(name);
+              for (int64_t id : missing_ids) {
+                std::string name =
+                    session->ResolveLocationName(id, global_slot_id);
+                if (!name.empty())
+                  cache.unchecked_names.push_back(name);
+              }
+              for (int64_t id : checked_ids) {
+                std::string name =
+                    session->ResolveLocationName(id, global_slot_id);
+                if (!name.empty())
+                  cache.checked_names.push_back(name);
+              }
+
+              // Natural sort
+              std::sort(cache.unchecked_names.begin(),
+                        cache.unchecked_names.end(),
+                        [](const std::string &a, const std::string &b) {
+                          return NaturalCompare(a, b) < 0;
+                        });
+              std::sort(cache.checked_names.begin(), cache.checked_names.end(),
+                        [](const std::string &a, const std::string &b) {
+                          return NaturalCompare(a, b) < 0;
+                        });
             }
-            for (int64_t id : checked_ids) {
-              std::string name = session->ResolveLocationName(id, global_slot_id);
-              if (!name.empty())
-                checked_names.push_back(name);
-            }
 
-            // Natural sort
-            std::sort(unchecked_names.begin(), unchecked_names.end(),
-                      [](const std::string &a, const std::string &b) {
-                        return NaturalCompare(a, b) < 0;
-                      });
-            std::sort(checked_names.begin(), checked_names.end(),
-                      [](const std::string &a, const std::string &b) {
-                        return NaturalCompare(a, b) < 0;
-                      });
-
-            ImGui::Text("Game: %s", game.c_str());
+            ImGui::Text("Game: %s", cache.game.c_str());
             ImGui::Separator();
 
             if (ImGui::BeginChild("LocationsChild")) {
@@ -86,7 +93,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                            ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (custom_font)
                   ImGui::PushFont(custom_font);
-                for (const auto &name : unchecked_names) {
+                for (const auto &name : cache.unchecked_names) {
                   if (matches_filter(name)) {
                     ImGui::BulletText("%s", name.c_str());
                   }
@@ -100,7 +107,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                   ImGui::PushFont(custom_font);
                 ImGui::PushStyleColor(ImGuiCol_Text,
                                       ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                for (const auto &name : checked_names) {
+                for (const auto &name : cache.checked_names) {
                   if (matches_filter(name)) {
                     ImGui::BulletText("%s", name.c_str());
                   }

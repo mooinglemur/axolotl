@@ -115,6 +115,9 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
       // Logic to find current sphere
       const auto &my_slots = ap_network_.GetConnectedSlots();
 
+      const auto &spheres = log_.GetSpheres();
+
+      // Collect latest player names (needed for Raw View and Logic)
       std::set<std::string> my_player_names;
       for (int slot : my_slots) {
         auto session = ap_network_.GetSessionBySlot(slot);
@@ -137,111 +140,107 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
         }
       }
 
-      const auto &spheres = log_.GetSpheres();
+      bool logic_needs_update =
+          (ap_network_.GetDataVersion() != last_logic_data_version_);
+      if (logic_needs_update) {
+        last_logic_data_version_ = ap_network_.GetDataVersion();
+        progression_cache_.clear();
 
-      // Map to store state for each connected slot
-      struct SlotProgression {
-        int current_sphere =
-            0; // The sphere we are reporting (possibly the source of blockage)
-        int locations_sphere = 0; // The sphere where the locations come from
-        bool blocked = false;
-        std::vector<int> available_location_indices;
-        std::string blocking_item = "";
-      };
-      std::map<int, SlotProgression> progression;
+        for (int slot : my_slots) {
+          auto session = ap_network_.GetSessionBySlot(slot);
+          if (!session)
+            continue;
+          std::string playerName = session->ResolvePlayerName(slot);
+          SlotProgression &prog = progression_cache_[slot];
 
-      for (int slot : my_slots) {
-        auto session = ap_network_.GetSessionBySlot(slot);
-        if (!session)
-          continue;
-        std::string playerName = session->ResolvePlayerName(slot);
-        SlotProgression &prog = progression[slot];
+          // Track items received for this slot (counts)
+          std::map<std::string, int> received_item_counts;
+          for (const auto &msg : session->GetReceivedItems()) {
+            std::string itemName =
+                session->ResolveItemName(msg.item_id, msg.receiver_slot);
+            received_item_counts[itemName]++;
+          }
 
-        // Track items received for this slot (counts)
-        std::map<std::string, int> received_item_counts;
-        for (const auto &msg : session->GetReceivedItems()) {
-          std::string itemName =
-              session->ResolveItemName(msg.item_id, msg.receiver_slot);
-          received_item_counts[itemName]++;
-        }
+          std::map<std::string, int> required_counts;
+          for (int i = 0; i < (int)spheres.size(); ++i) {
+            const auto &sphere = spheres[i];
 
-        std::map<std::string, int> required_counts;
-        for (int i = 0; i < (int)spheres.size(); ++i) {
-          const auto &sphere = spheres[i];
+            // 1. Verify we have all requirements from PREVIOUS spheres to be in
+            // Sphere i
+            for (auto const &[name, count] : required_counts) {
+              if (received_item_counts[name] < count) {
+                if (!prog.blocked) {
+                  prog.blocked = true;
+                  prog.blocking_item = name;
 
-          // 1. Verify we have all requirements from PREVIOUS spheres to be in
-          // Sphere i
-          for (auto const &[name, count] : required_counts) {
-            if (received_item_counts[name] < count) {
-              if (!prog.blocked) {
-                prog.blocked = true;
-                prog.blocking_item = name;
-
-                // Find the sphere k < i that added the requirement we are
-                // missing
-                std::map<std::string, int> trace_counts;
-                for (int k = 0; k < i; ++k) {
-                  for (const auto &item : spheres[k].items)
-                    if (item.player == playerName)
-                      trace_counts[item.name]++;
-                  for (const auto &loc : spheres[k].locations)
-                    if (loc.item.player == playerName)
-                      trace_counts[loc.item.name]++;
-                  if (trace_counts[name] > received_item_counts[name]) {
-                    prog.current_sphere = k;
-                    break;
+                  // Find the sphere k < i that added the requirement we are
+                  // missing
+                  std::map<std::string, int> trace_counts;
+                  for (int k = 0; k < i; ++k) {
+                    for (const auto &item : spheres[k].items)
+                      if (item.player == playerName)
+                        trace_counts[item.name]++;
+                    for (const auto &loc : spheres[k].locations)
+                      if (loc.item.player == playerName)
+                        trace_counts[loc.item.name]++;
+                    if (trace_counts[name] > received_item_counts[name]) {
+                      prog.current_sphere = k;
+                      break;
+                    }
                   }
                 }
-              }
-              // DO NOT goto next_slot yet! We want to find the first sphere
-              // with work.
-              break;
-            }
-          }
-
-          // 2. Check for unchecked locations in current sphere
-          bool all_my_checked = true;
-          std::vector<int> unchecked_indices;
-          for (int j = 0; j < (int)sphere.locations.size(); ++j) {
-            const auto &loc = sphere.locations[j];
-            if (loc.player == playerName) {
-              int64_t lid = session->ResolveLocationID(loc.name, slot);
-              if (lid == -1 || !slot_checked[slot].count(lid)) {
-                all_my_checked = false;
-                unchecked_indices.push_back(j);
+                // DO NOT goto next_slot_calc yet! We want to find the first
+                // sphere with work.
+                break;
               }
             }
-          }
 
-          if (!all_my_checked) {
-            // We found the first sphere with unchecked locations!
-            prog.locations_sphere = i;
-            prog.available_location_indices = unchecked_indices;
-            if (!prog.blocked) {
-              prog.current_sphere = i;
+            // 2. Check for unchecked locations in current sphere
+            bool all_my_checked = true;
+            std::vector<int> unchecked_indices;
+            for (int j = 0; j < (int)sphere.locations.size(); ++j) {
+              const auto &loc = sphere.locations[j];
+              if (loc.player == playerName) {
+                int64_t lid = session->ResolveLocationID(loc.name, slot);
+                if (lid == -1 || !slot_checked[slot].count(lid)) {
+                  all_my_checked = false;
+                  unchecked_indices.push_back(j);
+                }
+              }
             }
 
-            // Natural sort the locations for better display
-            std::sort(prog.available_location_indices.begin(),
-                      prog.available_location_indices.end(), [&](int a, int b) {
-                        return NaturalCompare(sphere.locations[a].name,
-                                              sphere.locations[b].name) < 0;
-                      });
+            if (!all_my_checked) {
+              // We found the first sphere with unchecked locations!
+              prog.locations_sphere = i;
+              prog.available_location_indices = unchecked_indices;
+              if (!prog.blocked) {
+                prog.current_sphere = i;
+              }
 
-            goto next_slot;
+              // Natural sort the locations for better display
+              std::sort(
+                  prog.available_location_indices.begin(),
+                  prog.available_location_indices.end(),
+                  [&](int x, int y) {
+                    return NaturalCompare(spheres[i].locations[x].name,
+                                          spheres[i].locations[y].name) < 0;
+                  });
+
+              goto next_slot_calc;
+            }
+
+            // 3. Current sphere is fully checked, add its items to requirements
+            // for next sphere
+            for (const auto &item : sphere.items)
+              if (item.player == playerName)
+                required_counts[item.name]++;
+            for (const auto &loc : sphere.locations)
+              if (loc.item.player == playerName)
+                required_counts[loc.item.name]++;
           }
-
-          // 3. Current sphere is fully checked, add its items to requirements
-          // for next sphere
-          for (const auto &item : sphere.items)
-            if (item.player == playerName)
-              required_counts[item.name]++;
-          for (const auto &loc : sphere.locations)
-            if (loc.item.player == playerName)
-              required_counts[loc.item.name]++;
+          prog.current_sphere = -1; // Finished
+        next_slot_calc:;
         }
-        prog.current_sphere = -1; // Finished
-      next_slot:;
       }
 
       // Display progression for each slot (order by login interface)
@@ -251,12 +250,12 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
         if (!session || !session->IsConnected())
           continue;
         int slot = (session->GetTeam() << 16) | session->GetLocalSlot();
-        if (!progression.count(slot) || seen_slots.count(slot))
+        if (!progression_cache_.count(slot) || seen_slots.count(slot))
           continue;
         seen_slots.insert(slot);
 
         std::string playerName = ap_network_.ResolvePlayerName(slot);
-        const auto &prog = progression[slot];
+        const auto &prog = progression_cache_[slot];
 
         // Filter: show if player name matches OR any of the available locations
         // match
