@@ -17,6 +17,7 @@ struct SlotSettings {
 
 struct ConnectionSettings {
   std::string server_url = "archipelago.gg:0";
+  std::string tracker_url = "";
   std::vector<SlotSettings> slots;
 
   // UI Preferences

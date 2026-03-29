@@ -3,15 +3,16 @@
 #include "FontScanner.h"
 #include "HintWindow.h"
 #include "ItemFeedWindow.h"
+#include "OverviewWindow.h"
 #include "Platform.h"
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
 #include "SpoilerSphereTrackerWindow.h"
 #include "TrackerWindow.h"
+#include <GLFW/glfw3.h>
 #include <chrono>
 #include <iostream>
 #include <thread>
-#include <GLFW/glfw3.h>
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <GL/gl.h>
 #endif
@@ -31,9 +32,9 @@
 #else
 #include <backends/imgui_impl_opengl3.h>
 #endif
-#include <ixwebsocket/IXNetSystem.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <ixwebsocket/IXNetSystem.h>
 
 static Application *s_instance = nullptr;
 std::atomic<bool> Application::should_exit_{false};
@@ -70,7 +71,8 @@ void Application::CleanupUI() {
 
   glfwGetWindowSize(window_, &current_config_.window_width,
                     &current_config_.window_height);
-  glfwGetWindowPos(window_, &current_config_.window_x, &current_config_.window_y);
+  glfwGetWindowPos(window_, &current_config_.window_x,
+                   &current_config_.window_y);
 
   Config::Save(current_config_);
 
@@ -129,7 +131,8 @@ void Application::glfw_error_callback(int error, const char *description) {
   if (error == 65544 ||
       (description &&
        (std::string(description).find("Wayland") != std::string::npos ||
-        std::string(description).find("Protocol error") != std::string::npos))) {
+        std::string(description).find("Protocol error") !=
+            std::string::npos))) {
     if (s_instance) {
       s_instance->is_disconnected_ = true;
     }
@@ -301,8 +304,10 @@ bool Application::InitializeUI() {
                                              "Personal Feed"));
 
   AddWindow(std::make_unique<HintWindow>(ap_network_, current_config_));
-  AddWindow(std::make_unique<SpoilerSphereTrackerWindow>(ap_network_, current_config_));
+  AddWindow(std::make_unique<SpoilerSphereTrackerWindow>(ap_network_,
+                                                         current_config_));
   AddWindow(std::make_unique<TrackerWindow>(ap_network_, current_config_));
+  AddWindow(std::make_unique<OverviewWindow>(ap_network_, current_config_));
 
   if (is_first_launch_) {
     current_config_.show_windows["Chat"] = true;
@@ -312,6 +317,7 @@ bool Application::InitializeUI() {
     current_config_.show_windows["Received Items"] = false;
     current_config_.show_windows["Settings"] = false;
     current_config_.show_windows["Tracker"] = false;
+    current_config_.show_windows["Overview"] = false;
   }
 
   // Load visibility from config
@@ -459,7 +465,8 @@ void Application::SetPreviewFallbackFont(const std::string &path) {
 }
 
 void Application::Run() {
-  while (!glfwWindowShouldClose(window_) && !is_disconnected_ && !should_exit_) {
+  while (!glfwWindowShouldClose(window_) && !is_disconnected_ &&
+         !should_exit_) {
     double t_start_frame = glfwGetTime();
 #ifdef __APPLE__
     id<CAMetalDrawable> drawable = nil;

@@ -130,6 +130,8 @@ ConnectionSettings Config::Load() {
     YAML::Node config = YAML::LoadFile(path.string());
     if (config["server_url"])
       settings.server_url = config["server_url"].as<std::string>();
+    if (config["tracker_url"])
+      settings.tracker_url = config["tracker_url"].as<std::string>();
     if (config["slots"] && config["slots"].IsSequence()) {
       for (const auto &slot_node : config["slots"]) {
         SlotSettings slot;
@@ -216,6 +218,7 @@ void Config::Save(const ConnectionSettings &settings) {
   YAML::Emitter out;
   out << YAML::BeginMap;
   out << YAML::Key << "server_url" << YAML::Value << settings.server_url;
+  out << YAML::Key << "tracker_url" << YAML::Value << settings.tracker_url;
   out << YAML::Key << "slots" << YAML::Value << YAML::BeginSeq;
   for (const auto &slot : settings.slots) {
     out << YAML::BeginMap;

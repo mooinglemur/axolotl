@@ -4,6 +4,8 @@
 #include "version.h"
 #include <algorithm>
 #include <chrono>
+#include <iostream>
+#include <ixwebsocket/IXHttpClient.h>
 
 using json = nlohmann::json;
 
@@ -249,6 +251,7 @@ bool ArchipelagoSession::Update() {
             // Player status logic removed as per simplification request
           }
         }
+        manager_->SetTotalGames((int)packet["players"].size());
       }
 
       if (packet.contains("checked_locations") &&
@@ -402,6 +405,9 @@ bool ArchipelagoSession::Update() {
       rm.timestamp = msg_time;
       rm.populate_local_time();
       rm.source_slot = name_;
+      if (packet.contains("type") && packet["type"].is_string()) {
+        rm.type = packet["type"].get<std::string>();
+      }
       bool is_item_event = false;
       bool is_status_msg = false;
       if (packet.contains("type")) {
@@ -1035,6 +1041,14 @@ bool ArchipelagoNetwork::Update() {
       slots_dirty_ = true;
       aggregated_items_dirty_ = true;
       aggregated_hints_dirty_ = true;
+      if (tracker_confidence_ == TrackerConfidence::High) {
+        if (debug_mode_) {
+          std::cout << "[Overview] Session state change detected. Tracker "
+                       "confidence reset to LOW."
+                    << std::endl;
+        }
+        tracker_confidence_ = TrackerConfidence::Low;
+      }
       changed = true;
     }
   }
@@ -1118,9 +1132,30 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
     SetItemsDirty(); // Replaced aggregated_items_dirty_ = true;
     CheckDayChange(item_history_, msg.timestamp, last_item_day_);
     item_history_.push_back(msg);
+    last_item_activity_time_ = GetCurrentTimestamp();
+    global_stats_.checked_locations++;
+    live_checks_since_last_poll_++;
   } else {
     CheckDayChange(chat_history_, msg.timestamp, last_chat_day_);
     chat_history_.push_back(msg);
+    if (!is_status) {
+      std::string full_text;
+      for (const auto &p : msg.parts)
+        full_text += p.text;
+      if (msg.type == "Goal" ||
+          full_text.find(" completed their goal") != std::string::npos) {
+        if (msg.sender_slot != -1) {
+          global_stats_.completed_slots.insert(msg.sender_slot);
+        } else {
+          for (const auto &p : msg.parts) {
+            if (p.player_id != -1) {
+              global_stats_.completed_slots.insert(p.player_id);
+              break;
+            }
+          }
+        }
+      }
+    }
   }
 
   if (max_history_size_ > 0) {
@@ -1404,6 +1439,201 @@ void ArchipelagoNetwork::ClearItemHistory() {
 bool ArchipelagoNetwork::IsDataPackageReceived() const {
   for (const auto &session : sessions_) {
     if (session->IsConnected() && session->IsDataPackageReceived())
+      return true;
+  }
+  return false;
+}
+void ArchipelagoNetwork::SyncTotalLocations() {
+  if (!settings_ || settings_->tracker_url.empty())
+    return;
+
+  std::string api_url = settings_->tracker_url;
+  size_t pos = api_url.find("/tracker/");
+  if (pos != std::string::npos) {
+    api_url.replace(pos, 9, "/api/static_tracker/");
+  } else {
+    pos = api_url.find("/api/tracker/");
+    if (pos != std::string::npos) {
+      api_url.replace(pos, 13, "/api/static_tracker/");
+    } else {
+      return;
+    }
+  }
+
+  if (debug_mode_) {
+    std::cout << "[Overview] Syncing with static tracker API: " << api_url
+              << std::endl;
+  }
+
+  ix::HttpClient httpClient;
+  auto args = std::make_shared<ix::HttpRequestArgs>();
+  args->followRedirects = true;
+  args->compress = true;
+  args->extraHeaders["User-Agent"] =
+      "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
+
+  auto response = httpClient.get(api_url, args);
+  if (response && response->statusCode == 200) {
+    try {
+      auto j = nlohmann::json::parse(response->body);
+      int total_l = 0;
+      if (j.contains("player_locations_total") &&
+          j["player_locations_total"].is_array()) {
+        for (const auto &p : j["player_locations_total"]) {
+          if (p.contains("total_locations")) {
+            total_l += p["total_locations"].get<int>();
+          }
+        }
+      }
+
+      std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+      global_stats_.total_locations = total_l;
+
+      if (debug_mode_) {
+        std::cout << "[Overview] Static Tracker Stats: Total Locations "
+                  << total_l << std::endl;
+      }
+    } catch (...) {
+    }
+  }
+}
+
+void ArchipelagoNetwork::UpdateTrackerStats() {
+  if (!settings_ || settings_->tracker_url.empty() || !IsAnySessionConnected())
+    return;
+
+  if (!force_tracker_sync_ && tracker_confidence_ == TrackerConfidence::High)
+    return;
+
+  double now = GetCurrentTimestamp();
+  if (last_tracker_sync_time_ > 0 && now - last_tracker_sync_time_ < 120.0) {
+    return; // Rate limit 2 minutes
+  }
+
+  // Poll static tracker if URL changed
+  if (settings_->tracker_url != last_synced_static_url_) {
+    SyncTotalLocations();
+    last_synced_static_url_ = settings_->tracker_url;
+  }
+
+  // Activity check
+  if (last_tracker_sync_time_ > 0 && last_successful_sync_activity_time_ >= 0) {
+    if (last_item_activity_time_ <= last_successful_sync_activity_time_) {
+      // No activity since last successful sync, skip
+      return;
+    }
+  }
+
+  std::string api_url = settings_->tracker_url;
+  size_t pos = api_url.find("/tracker/");
+  if (pos != std::string::npos) {
+    api_url.replace(pos, 9, "/api/tracker/");
+  } else {
+    // Check if it's already an API URL
+    if (api_url.find("/api/tracker/") == std::string::npos)
+      return; // Invalid URL
+  }
+
+  last_tracker_sync_time_ = now;
+
+  if (debug_mode_) {
+    std::cout << "[Overview] Syncing with tracker API: " << api_url << std::endl;
+  }
+
+  ix::HttpClient httpClient;
+  auto args = std::make_shared<ix::HttpRequestArgs>();
+  args->followRedirects = true;
+  args->compress = true; // Enables Accept-Encoding: gzip
+  args->extraHeaders["User-Agent"] = "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
+  auto response = httpClient.get(api_url, args);
+  if (response) {
+    if (debug_mode_) {
+      std::cout << "[Overview] API Response: " << response->statusCode << " ("
+                << response->description << ")" << std::endl;
+      std::cout << "[Overview] Body: " << response->body << std::endl;
+    }
+    if (response->statusCode == 200) {
+      try {
+        auto j = nlohmann::json::parse(response->body);
+        int total_g = 0;
+        int completed_g = 0;
+        int checked_l = 0;
+
+        if (j.contains("player_status") && j["player_status"].is_array()) {
+          total_g = (int)j["player_status"].size();
+          for (const auto &stats : j["player_status"]) {
+            if (stats.contains("status") && stats.contains("player") &&
+                stats["status"].is_number() && stats["status"].get<int>() == 30) {
+              completed_g++;
+              std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+              global_stats_.completed_slots.insert(stats["player"].get<int>());
+            }
+          }
+        }
+
+        if (j.contains("total_checks_done") &&
+            j["total_checks_done"].is_array()) {
+          for (const auto &team_stats : j["total_checks_done"]) {
+            // Assume team 0 for now
+            if (team_stats.contains("team") &&
+                team_stats["team"].get<int>() == 0) {
+              checked_l = (int)team_stats["checks_done"].get<int>();
+              break;
+            }
+          }
+        }
+
+        if (debug_mode_) {
+          std::cout << "[Overview] Tracker Stats Parsed: Games " << completed_g
+                    << "/" << total_g << ", Checked Locations " << checked_l
+                    << std::endl;
+        }
+
+        std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+        if (total_g > 0)
+          global_stats_.total_games = total_g;
+
+        // Handle confidence transition
+        if (tracker_confidence_ == TrackerConfidence::Low) {
+          if (last_tracker_checked_count_ != -1 &&
+              checked_l == last_tracker_checked_count_ &&
+              live_checks_since_last_poll_ == 0) {
+            tracker_confidence_ = TrackerConfidence::High;
+            if (debug_mode_) {
+              std::cout << "[Overview] Tracker confidence transitioned to "
+                           "HIGH. Polling suspended."
+                        << std::endl;
+            }
+          }
+        }
+
+        global_stats_.checked_locations = checked_l;
+        last_tracker_checked_count_ = checked_l;
+        live_checks_since_last_poll_ = 0;
+        last_successful_sync_activity_time_ = last_item_activity_time_;
+      } catch (...) {
+      }
+    }
+  }
+}
+
+void ArchipelagoNetwork::ForceTrackerSync() {
+  last_tracker_sync_time_ = -1.0;
+  last_successful_sync_activity_time_ = -1.0;
+  force_tracker_sync_ = true;
+}
+
+void ArchipelagoNetwork::SetTotalGames(int count) {
+  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  if (global_stats_.total_games == 0) {
+    global_stats_.total_games = count;
+  }
+}
+
+bool ArchipelagoNetwork::IsAnySessionConnected() const {
+  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  for (const auto &session : sessions_) {
+    if (session->IsConnected())
       return true;
   }
   return false;

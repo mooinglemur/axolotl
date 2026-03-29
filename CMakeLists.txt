@@ -101,7 +101,24 @@ else()
 endif()
 
 # Application executable
-file(GLOB_RECURSE SRC_FILES "src/*.cpp")
+set(SRC_FILES
+    src/Application.cpp
+    src/ArchipelagoNetwork.cpp
+    src/ChatWindow.cpp
+    src/Config.cpp
+    src/DataPackageCache.cpp
+    src/FontScanner.cpp
+    src/HintWindow.cpp
+    src/ItemFeedWindow.cpp
+    src/OverviewWindow.cpp
+    src/Platform.cpp
+    src/ReceivedItemsWindow.cpp
+    src/SettingsWindow.cpp
+    src/SpoilerLog.cpp
+    src/SpoilerSphereTrackerWindow.cpp
+    src/TrackerWindow.cpp
+    src/main.cpp
+)
 # Options
 option(AXOLOTL_OFFICIAL_RELEASE "Build as an official release" OFF)
 option(AXOLOTL_IGNORE_DIRTY "Skip the dirty repo check" OFF)

@@ -83,15 +83,21 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
             if (ImGui::BeginChild("LocationsChild")) {
               if (ImGui::CollapsingHeader("Unchecked Locations",
-                                          ImGuiTreeNodeFlags_DefaultOpen)) {
+                                           ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (custom_font)
+                  ImGui::PushFont(custom_font);
                 for (const auto &name : unchecked_names) {
                   if (matches_filter(name)) {
                     ImGui::BulletText("%s", name.c_str());
                   }
                 }
+                if (custom_font)
+                  ImGui::PopFont();
               }
 
               if (ImGui::CollapsingHeader("Checked Locations")) {
+                if (custom_font)
+                  ImGui::PushFont(custom_font);
                 ImGui::PushStyleColor(ImGuiCol_Text,
                                       ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
                 for (const auto &name : checked_names) {
@@ -100,6 +106,8 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                   }
                 }
                 ImGui::PopStyleColor();
+                if (custom_font)
+                  ImGui::PopFont();
               }
             }
             ImGui::EndChild();

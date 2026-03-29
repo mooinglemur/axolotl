@@ -279,6 +279,8 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
         ImGui::PushID(slot);
         if (ImGui::CollapsingHeader(playerName.c_str(),
                                     ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (custom_font)
+            ImGui::PushFont(custom_font);
           bool goal_reached = false;
           auto session = ap_network_.GetSessionBySlot(slot);
           if (session && prog.current_sphere >= 0 &&
@@ -316,6 +318,8 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
               ImGui::BulletText("%s", loc.name.c_str());
             }
           }
+          if (custom_font)
+            ImGui::PopFont();
         }
         ImGui::PopID();
       }
@@ -323,6 +327,8 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
       if (settings_.show_details_in_sphere_tracker) {
         ImGui::Separator();
         if (ImGui::CollapsingHeader("Raw Sphere View")) {
+          if (custom_font)
+            ImGui::PushFont(custom_font);
           for (const auto &sphere : spheres) {
             // Check if sphere matches (any location/item)
             bool sphere_matches = l_filter.empty();
@@ -447,6 +453,8 @@ void SpoilerSphereTrackerWindow::Render(std::tm *current_tm,
               ImGui::TreePop();
             }
           }
+          if (custom_font)
+            ImGui::PopFont();
         }
       }
     }

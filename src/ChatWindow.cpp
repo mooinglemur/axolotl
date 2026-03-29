@@ -64,6 +64,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         settings_.server_url = server_url_;
         if (settings_.server_url != old_url) {
           ap_network_.ClearAllData(true);
+          settings_.tracker_url = "";
         }
       }
     }

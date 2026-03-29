@@ -34,6 +34,7 @@ struct RichMessage {
   int64_t item_id = -1;
   int item_flags = 0;
   bool is_reconciled = false;
+  std::string type;     // Message type (e.g., "Goal", "Hint", "Chat")
   struct tm local_time; // Cached local time to avoid redundant syscalls
 
   void populate_local_time() {
@@ -56,6 +57,13 @@ struct Hint {
   int item_flags;
   int status = 0;
   std::string source_slot;
+};
+
+struct MultiworldStats {
+  int total_games = 0;
+  std::set<int> completed_slots;
+  int total_locations = 0;
+  int checked_locations = 0;
 };
 
 struct ServerMetadata {
@@ -91,7 +99,7 @@ public:
   void SendPacket(const nlohmann::json &packet);
 
   State GetState() const;
-  bool IsConnected() const { return GetState() == State::Connected; }
+  bool IsConnected() const { return is_connected_; }
   const std::string &GetName() const { return name_; }
   const std::string &GetUrl() const { return original_url_; }
   int GetLocalSlot() const { return local_slot_; }
@@ -199,6 +207,7 @@ struct ConnectionSettings;
 
 class ArchipelagoNetwork {
 public:
+  void SyncTotalLocations();
   using State = ArchipelagoSession::State;
   ArchipelagoNetwork();
   ~ArchipelagoNetwork();
@@ -229,6 +238,16 @@ public:
   const std::vector<RichMessage> &GetItemHistory() const {
     return item_history_;
   }
+
+  const MultiworldStats &GetGlobalStats() const { return global_stats_; }
+  void UpdateTrackerStats();
+  void ForceTrackerSync();
+  double GetLastTrackerSyncTime() const { return last_tracker_sync_time_; }
+
+  enum class TrackerConfidence { Low, High };
+  TrackerConfidence GetTrackerConfidence() const { return tracker_confidence_; }
+  void SetTotalGames(int count);
+  bool IsAnySessionConnected() const;
 
   // Aggregated data
   const std::vector<RichMessage> &GetAggregatedReceivedItems() const;
@@ -308,4 +327,16 @@ private:
   std::unordered_map<size_t, MessageHashEntry> message_hash_history_;
   std::deque<size_t> message_hash_queue_;
   mutable std::recursive_mutex history_mutex_;
+  MultiworldStats global_stats_;
+  double last_tracker_sync_time_ = -1.0;
+  bool force_tracker_sync_ = false;
+  TrackerConfidence tracker_confidence_ = TrackerConfidence::Low;
+  int last_tracker_checked_count_ = -1;
+  int live_checks_since_last_poll_ = 0;
+  std::map<std::string, ArchipelagoSession::State> last_session_states_;
+  bool last_any_session_connected_ = false;
+  double last_item_activity_time_ = -1.0;
+  double last_successful_sync_activity_time_ = -1.0;
+  std::string last_synced_static_url_;
+  bool tracker_sync_active_ = true;
 };
