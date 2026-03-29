@@ -11,8 +11,11 @@ void DataPackageCache::SaveGameData(const std::string &game_name,
                                     const nlohmann::json &data) {
   std::lock_guard<std::mutex> lock(cache_mutex_);
   auto dir = Config::GetDataPackageCacheDir();
-  auto filename = SanitizeFileName(game_name) + "_" + checksum + ".json";
+  auto filename = SanitizeFileName(game_name) + ".json";
   auto path = dir / filename;
+
+  nlohmann::json final_data = data;
+  final_data["checksum"] = checksum;
 
   // Atomic write using a temporary file
   static std::random_device rd;
@@ -23,7 +26,7 @@ void DataPackageCache::SaveGameData(const std::string &game_name,
 
   std::ofstream fout(tmp_path);
   if (fout.is_open()) {
-    fout << data.dump();
+    fout << final_data.dump();
     fout.close();
 
     std::error_code ec;
@@ -39,7 +42,7 @@ nlohmann::json DataPackageCache::LoadGameData(const std::string &game_name,
                                               const std::string &checksum) {
   std::lock_guard<std::mutex> lock(cache_mutex_);
   auto dir = Config::GetDataPackageCacheDir();
-  auto filename = SanitizeFileName(game_name) + "_" + checksum + ".json";
+  auto filename = SanitizeFileName(game_name) + ".json";
   auto path = dir / filename;
 
   if (std::filesystem::exists(path)) {
@@ -48,7 +51,9 @@ nlohmann::json DataPackageCache::LoadGameData(const std::string &game_name,
       try {
         nlohmann::json data;
         fin >> data;
-        return data;
+        if (data.contains("checksum") && data["checksum"] == checksum) {
+          return data;
+        }
       } catch (...) {
       }
     }
