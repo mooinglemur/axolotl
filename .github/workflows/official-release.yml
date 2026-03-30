@@ -82,13 +82,13 @@ jobs:
             - See the commit history for details.
 
             **Direct Downloads**:
+
+            **Linux**:
             - [Linux AppImage](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Linux-x86_64.AppImage)
             - [Linux Flatpak](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/com.mooinglemur.axolotl.flatpak)
-            - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-macOS.dmg)
-            - [Windows Native (Portable)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Native.exe)
-            - [Windows Native (MSI)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Native.msi)
-            - [Windows Static (Portable)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Static.exe)
-            - [Windows Static (MSI)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Static.msi)
+
+            **Windows**:
+            - [Windows Portable EXE](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AxolotlAPTextClient-Windows-Static.exe)
           artifacts: release_assets/*
           prerelease: false
           replacesArtifacts: true
