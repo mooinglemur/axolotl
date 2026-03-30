@@ -132,8 +132,8 @@ endif()
 
 # Dynamic version generation
 add_custom_target(UpdateVersion ALL
-    COMMAND ${CMAKE_COMMAND} -DS_DIR=${CMAKE_SOURCE_DIR} -DAXOLOTL_IGNORE_DIRTY=${AXOLOTL_IGNORE_DIRTY} -P ${CMAKE_SOURCE_DIR}/tools/generate_version.cmake
-    BYPRODUCTS ${CMAKE_SOURCE_DIR}/src/version.h
+    COMMAND ${CMAKE_COMMAND} -DS_DIR=${CMAKE_SOURCE_DIR} -DAXOLOTL_IGNORE_DIRTY=${AXOLOTL_IGNORE_DIRTY} -DOUT_FILE=${CMAKE_BINARY_DIR}/version.h -P ${CMAKE_SOURCE_DIR}/tools/generate_version.cmake
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/version.h
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMENT "Updating version.h with current git hash"
 )

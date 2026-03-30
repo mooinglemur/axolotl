@@ -35,7 +35,11 @@ set(VERSION_H_CONTENT "
 #define GIT_HASH \"${GIT_HASH}\"
 ")
 
-set(VERSION_H_PATH "${CMAKE_SOURCE_DIR}/src/version.h")
+if(NOT OUT_FILE)
+    set(OUT_FILE "${CMAKE_SOURCE_DIR}/src/version.h")
+endif()
+
+set(VERSION_H_PATH "${OUT_FILE}")
 
 if(EXISTS "${VERSION_H_PATH}")
     file(READ "${VERSION_H_PATH}" OLD_CONTENT)

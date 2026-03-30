@@ -48,4 +48,3 @@ Thumbs.db
 .cache/
 build_error.txt
 compile_commands.json
-src/version.h
