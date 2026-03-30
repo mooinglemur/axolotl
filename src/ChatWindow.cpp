@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cstring>
 #include <ctime>
-#include <iostream>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <iostream>
 #include <set>
 
 ChatWindow::ChatWindow(ArchipelagoNetwork &ap_network,
@@ -198,7 +198,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     ImGui::Separator();
 
     // History
-    std::lock_guard<std::recursive_mutex> history_lock(ap_network_.GetHistoryMutex());
+    std::lock_guard<std::recursive_mutex> history_lock(
+        ap_network_.GetHistoryMutex());
     const auto &history = ap_network_.GetChatHistory();
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
@@ -772,7 +773,8 @@ bool ChatWindow::HandleCommand(const std::string &line) {
     }
 
     if (ap_network_.IsDebugMode()) {
-      std::cout << "[Debug] subcmd: " << subcmd << ", args: " << args << ", n: " << n << std::endl;
+      std::cout << "[Debug] subcmd: " << subcmd << ", args: " << args
+                << ", n: " << n << std::endl;
     }
 
     if (subcmd == "fillchat") {
@@ -802,15 +804,21 @@ bool ChatWindow::HandleCommand(const std::string &line) {
         rm.source_slot = slot_name;
         rm.sender_slot = slot_id;
         rm.receiver_slot = slot_id;
+        rm.type = "ItemSend";
 
-        rm.parts.push_back({slot_name, 0xFFFF00FF}); // Player color (Magenta)
-        rm.parts.push_back({" found their ", 0xFFFFFFFF});
         rm.parts.push_back(
-            {"Item " + std::to_string(i + 1), 0xFFFFFF00}); // Item color (Cyan)
-        rm.parts.push_back({" (", 0xFFFFFFFF});
-        rm.parts.push_back({"Location " + std::to_string(i + 1),
-                            0xFF00FF00}); // Location color (Green)
-        rm.parts.push_back({")", 0xFFFFFFFF});
+            MessagePart{slot_name, 0xFFFF00FF, -1,
+                        "player_id player_self"}); // Player color (Magenta)
+        rm.parts.push_back(
+            MessagePart{" found their ", 0xFFFFFFFF, -1, "text"});
+        rm.parts.push_back(
+            MessagePart{"Item " + std::to_string(i + 1), 0xFFFFFF00, -1,
+                        "item_id item_filler"}); // Item color (Cyan)
+        rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
+        rm.parts.push_back(
+            MessagePart{"Location " + std::to_string(i + 1), 0xFF00FF00, -1,
+                        "location_id"}); // Location color (Green)
+        rm.parts.push_back(MessagePart{")", 0xFFFFFFFF, -1, "text"});
 
         ap_network_.OnGlobalMessage(nullptr, rm, true, 0, true);
       }

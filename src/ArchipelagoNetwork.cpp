@@ -4,10 +4,8 @@
 #include "version.h"
 #include <algorithm>
 #include <chrono>
-#include <iomanip>
 #include <iostream>
 #include <ixwebsocket/IXHttpClient.h>
-#include <sstream>
 
 using json = nlohmann::json;
 
@@ -440,6 +438,8 @@ bool ArchipelagoSession::Update() {
           color = 0xFF00FFFF; // Cyan/Yellow for status
         }
 
+        std::string class_name = type;
+
         if (type == "player_id") {
           try {
             int pid = part.contains("player") ? (int)get_as_id(part["player"])
@@ -462,7 +462,8 @@ bool ArchipelagoSession::Update() {
               }
             }
             color = (pid == local_slot_) ? 0xFFFF00FF : 0xFFCCCCCC;
-            rm.parts.push_back({content, color, global_id});
+            if (pid == local_slot_) class_name += " player_self";
+            rm.parts.push_back(MessagePart{content, color, global_id, class_name});
             continue;
           } catch (...) {
           }
@@ -477,14 +478,19 @@ bool ArchipelagoSession::Update() {
               if (is_item_event)
                 pending_items_.push_back({iid, 0, sid, flags, false});
             }
-            if (flags & 0x01)
+            if (flags & 0x01) {
               color = 0xFFFF5FAF;
-            else if (flags & 0x02)
+              class_name += " item_progression";
+            } else if (flags & 0x02) {
               color = 0xFFED9564;
-            else if (flags & 0x04)
+              class_name += " item_useful";
+            } else if (flags & 0x04) {
               color = 0xFF0045FF;
-            else
+              class_name += " item_trap";
+            } else {
               color = 0xFFFFFF00;
+              class_name += " item_filler";
+            }
           } catch (...) {
           }
         } else if (type == "location_id") {
@@ -498,7 +504,7 @@ bool ArchipelagoSession::Update() {
           } catch (...) {
           }
         }
-        rm.parts.push_back({content, color});
+        rm.parts.push_back(MessagePart{content, color, -1, class_name});
       }
 
       if (packet.contains("slot")) {
@@ -1179,6 +1185,9 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
       global_stats_.slot_info[msg.sender_slot].last_activity_time =
           msg.timestamp;
     }
+    if (on_stats_updated) {
+      on_stats_updated(global_stats_);
+    }
     live_checks_since_last_poll_++;
   } else {
     CheckDayChange(chat_history_, msg.timestamp, last_chat_day_);
@@ -1208,8 +1217,15 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
             }
           }
         }
+        if (on_stats_updated) {
+          on_stats_updated(global_stats_);
+        }
       }
     }
+  }
+
+  if (on_message_received) {
+    on_message_received(msg);
   }
 
   if (max_history_size_ > 0) {
@@ -1554,6 +1570,10 @@ void ArchipelagoNetwork::SyncTotalLocations() {
       std::lock_guard<std::recursive_mutex> lock(history_mutex_);
       global_stats_.total_locations = total_l;
 
+      if (on_stats_updated) {
+        on_stats_updated(global_stats_);
+      }
+
       if (debug_mode_) {
         std::cout << "[Overview] Static Tracker Stats: Total Locations "
                   << total_l << std::endl;
@@ -1654,22 +1674,29 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
           }
         }
 
-        if (j.contains("player_checks_done") && j["player_checks_done"].is_array()) {
+        if (j.contains("player_checks_done") &&
+            j["player_checks_done"].is_array()) {
           for (const auto &checks : j["player_checks_done"]) {
-            if (checks.contains("player") && checks.contains("locations") && checks["locations"].is_array()) {
+            if (checks.contains("player") && checks.contains("locations") &&
+                checks["locations"].is_array()) {
               int slot = checks["player"].get<int>();
-              int team = checks.contains("team") ? checks["team"].get<int>() : 0;
+              int team =
+                  checks.contains("team") ? checks["team"].get<int>() : 0;
               int packed_slot = (team << 16) | slot;
-              global_stats_.slot_info[packed_slot].checked_locations = (int)checks["locations"].size();
+              global_stats_.slot_info[packed_slot].checked_locations =
+                  (int)checks["locations"].size();
             }
           }
         }
 
         if (j.contains("activity_timers") && j["activity_timers"].is_array()) {
           for (const auto &timer_entry : j["activity_timers"]) {
-            if (timer_entry.contains("player") && timer_entry.contains("time")) {
+            if (timer_entry.contains("player") &&
+                timer_entry.contains("time")) {
               int slot = timer_entry["player"].get<int>();
-              int team = timer_entry.contains("team") ? timer_entry["team"].get<int>() : 0;
+              int team = timer_entry.contains("team")
+                             ? timer_entry["team"].get<int>()
+                             : 0;
               int packed_slot = (team << 16) | slot;
 
               std::string time_str = timer_entry["time"].get<std::string>();
@@ -1678,9 +1705,11 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
               ss >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT");
               if (!ss.fail()) {
 #ifdef _WIN32
-                global_stats_.slot_info[packed_slot].last_activity_time = (double)_mkgmtime(&tm);
+                global_stats_.slot_info[packed_slot].last_activity_time =
+                    (double)_mkgmtime(&tm);
 #else
-                global_stats_.slot_info[packed_slot].last_activity_time = (double)timegm(&tm);
+                global_stats_.slot_info[packed_slot].last_activity_time =
+                    (double)timegm(&tm);
 #endif
               }
             }
@@ -1722,6 +1751,10 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
 
         global_stats_.checked_locations = checked_l;
         last_tracker_checked_count_ = checked_l;
+
+        if (on_stats_updated) {
+          on_stats_updated(global_stats_);
+        }
         live_checks_since_last_poll_ = 0;
         last_successful_sync_activity_time_ = last_item_activity_time_;
       } catch (...) {

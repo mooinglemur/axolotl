@@ -1,5 +1,6 @@
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
+#include "EmbeddedWebServer.h"
 #include "Window.h"
 #include <atomic>
 #include <imgui.h>
@@ -87,6 +88,7 @@ private:
   std::string glsl_version_;
   std::string imgui_ini_path_;
   ArchipelagoNetwork ap_network_;
+  std::unique_ptr<EmbeddedWebServer> web_server_;
   std::vector<std::unique_ptr<Window>> windows_;
   bool show_about_ = false;
   bool show_exit_confirmation_ = false;

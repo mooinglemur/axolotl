@@ -35,6 +35,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <ixwebsocket/IXNetSystem.h>
+#include <nlohmann/json.hpp>
 
 static Application *s_instance = nullptr;
 std::atomic<bool> Application::should_exit_{false};
@@ -76,6 +77,11 @@ void Application::CleanupUI() {
                    &current_config_.window_y);
 
   Config::Save(current_config_);
+
+  if (web_server_) {
+    web_server_->Stop();
+    web_server_.reset();
+  }
 
   // Clear windows (destroying UI objects) before ImGui shutdown
   windows_.clear();
@@ -329,6 +335,50 @@ bool Application::InitializeUI() {
     }
   }
 
+  web_server_ = std::make_unique<EmbeddedWebServer>(current_config_);
+  web_server_->SetDebugMode(debug_mode_);
+  web_server_->Start();
+
+  ap_network_.on_message_received = [this](const RichMessage &msg) {
+    if (web_server_) {
+      nlohmann::json j;
+      j["type"] = "feed_item";
+      std::string html_text;
+      for (const auto &p : msg.parts) {
+        if (!p.css_class.empty()) {
+          html_text +=
+              "<span class=\"" + p.css_class + "\">" + p.text + "</span>";
+        } else if (p.color != 0 && p.color != 0xFFFFFFFF) {
+          int r = (p.color) & 0xFF;
+          int g = (p.color >> 8) & 0xFF;
+          int b = (p.color >> 16) & 0xFF;
+          html_text += "<span style=\"color: rgb(" + std::to_string(r) + "," +
+                       std::to_string(g) + "," + std::to_string(b) + ")\">" +
+                       p.text + "</span>";
+        } else {
+          html_text += p.text;
+        }
+      }
+      j["html"] = html_text;
+      j["category"] = msg.type;
+
+      web_server_->BroadcastFeedEvent(j.dump(), msg.type);
+    }
+  };
+
+  ap_network_.on_stats_updated = [this](const MultiworldStats &stats) {
+    if (web_server_) {
+      nlohmann::json j;
+      j["type"] = "overview_update";
+      j["total_games"] = stats.total_games;
+      j["completed_games"] = stats.completed_slots.size();
+      j["total_locations"] = stats.total_locations;
+      j["checked_locations"] = stats.checked_locations;
+
+      web_server_->BroadcastOverviewEvent(j.dump());
+    }
+  };
+
   return true;
 }
 
@@ -495,8 +545,22 @@ void Application::Run() {
     }
 
     if (settings_changed_pending_) {
+      bool need_web_restart = (current_config_.http_server_enabled !=
+                               pending_config_.http_server_enabled) ||
+                              (current_config_.http_server_bind_address !=
+                               pending_config_.http_server_bind_address) ||
+                              (current_config_.http_server_port !=
+                               pending_config_.http_server_port);
+
       current_config_ = pending_config_;
       ap_network_.SetMaxHistory(current_config_.max_history_size);
+
+      if (need_web_restart) {
+        web_server_ = std::make_unique<EmbeddedWebServer>(current_config_);
+        web_server_->SetDebugMode(debug_mode_);
+        web_server_->Start();
+      }
+
       fonts_reload_pending_ = true;
       settings_changed_pending_ = false;
       should_render = true;

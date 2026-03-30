@@ -109,6 +109,7 @@ set(SRC_FILES
     src/ChatWindow.cpp
     src/Config.cpp
     src/DataPackageCache.cpp
+    src/EmbeddedWebServer.cpp
     src/FontScanner.cpp
     src/HintWindow.cpp
     src/ItemFeedWindow.cpp
@@ -137,9 +138,18 @@ add_custom_target(UpdateVersion ALL
     COMMENT "Updating version.h with current git hash"
 )
 
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/embedded_static.h
+    COMMAND ${CMAKE_COMMAND} -E env python3 ${CMAKE_SOURCE_DIR}/tools/embed_static.py ${CMAKE_BINARY_DIR}/embedded_static.h ${CMAKE_SOURCE_DIR}/static/feed.html ${CMAKE_SOURCE_DIR}/static/feed.css ${CMAKE_SOURCE_DIR}/static/feed.js ${CMAKE_SOURCE_DIR}/static/overview.html ${CMAKE_SOURCE_DIR}/static/overview.css ${CMAKE_SOURCE_DIR}/static/overview.js
+    DEPENDS ${CMAKE_SOURCE_DIR}/static/feed.html ${CMAKE_SOURCE_DIR}/static/feed.css ${CMAKE_SOURCE_DIR}/static/feed.js ${CMAKE_SOURCE_DIR}/static/overview.html ${CMAKE_SOURCE_DIR}/static/overview.css ${CMAKE_SOURCE_DIR}/static/overview.js ${CMAKE_SOURCE_DIR}/tools/embed_static.py
+    COMMENT "Generating embedded_static.h"
+)
+
+add_custom_target(GenerateStaticEmbedded ALL DEPENDS ${CMAKE_BINARY_DIR}/embedded_static.h)
+
 add_executable(axolotl-apclient WIN32 ${SRC_FILES})
-add_dependencies(axolotl-apclient UpdateVersion)
-target_include_directories(axolotl-apclient PRIVATE src)
+add_dependencies(axolotl-apclient UpdateVersion GenerateStaticEmbedded)
+target_include_directories(axolotl-apclient PRIVATE src ${CMAKE_BINARY_DIR})
 target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32)
 
 if (AXOLOTL_OFFICIAL_RELEASE)

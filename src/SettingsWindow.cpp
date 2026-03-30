@@ -329,6 +329,26 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                                     : custom_font);
     }
 
+    if (ImGui::CollapsingHeader("Embedded HTTP Server")) {
+      ImGui::Checkbox("Enabled", &settings_.http_server_enabled);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Enable the embedded local HTTP server for OBS integrations.");
+
+      char bind_buf[128];
+      strncpy(bind_buf, settings_.http_server_bind_address.c_str(), sizeof(bind_buf));
+      if (ImGui::InputText("Bind Address", bind_buf, sizeof(bind_buf))) {
+        settings_.http_server_bind_address = bind_buf;
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("IP address to bind the HTTP server to (e.g., 127.0.0.1 or ::1)");
+
+      ImGui::InputInt("Port", &settings_.http_server_port);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("TCP port for the embedded HTTP server.");
+
+      ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    }
+
     ImGui::Spacing();
     ImGui::Separator();
 

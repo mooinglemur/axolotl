@@ -1,0 +1,75 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #1e1e24;
+    /* Dark background for desktop browsers. OBS overrides this to transparent via default Custom CSS */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: white;
+    overflow: hidden;
+}
+
+#overview-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+}
+
+#progress-container {
+    position: relative;
+    width: 100%;
+}
+
+#games-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#progress-bar-track {
+    width: 100%;
+    height: 24px;
+    background-color: rgba(0, 0, 0, 0.7);
+    border: 1px solid #fcfcfc;
+    border-radius: 4px;
+    overflow: hidden;
+    /* Optional shadow */
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+#progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #cc0022 0%, #229900 100%);
+    width: 0%;
+    transition: width 0.3s ease-out;
+}
+
+#progress-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px #000;
+    pointer-events: none;
+}
+
+#progress-percent {
+    margin-right: 0.25em;
+}
+
+#games-label {
+    margin-left: 0.25em;
+}
+
+#games-text {
+    font-size: 16px;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px #000;
+    text-align: right;
+}

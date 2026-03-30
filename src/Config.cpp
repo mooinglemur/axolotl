@@ -203,6 +203,13 @@ ConnectionSettings Config::Load() {
     if (config["uuid"])
       settings.uuid = config["uuid"].as<std::string>();
 
+    if (config["http_server_enabled"])
+      settings.http_server_enabled = config["http_server_enabled"].as<bool>();
+    if (config["http_server_bind_address"])
+      settings.http_server_bind_address = config["http_server_bind_address"].as<std::string>();
+    if (config["http_server_port"])
+      settings.http_server_port = config["http_server_port"].as<int>();
+
     if (settings.uuid.empty()) {
       settings.uuid = GenerateUUID();
     }
@@ -260,6 +267,9 @@ void Config::Save(const ConnectionSettings &settings) {
   }
   out << YAML::EndMap;
   out << YAML::Key << "uuid" << YAML::Value << settings.uuid;
+  out << YAML::Key << "http_server_enabled" << YAML::Value << settings.http_server_enabled;
+  out << YAML::Key << "http_server_bind_address" << YAML::Value << settings.http_server_bind_address;
+  out << YAML::Key << "http_server_port" << YAML::Value << settings.http_server_port;
 
   out << YAML::EndMap;
 

@@ -1,0 +1,107 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #1e1e24;
+    /* Dark background for desktop browsers. OBS overrides this to transparent via default Custom CSS */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: white;
+    overflow: hidden;
+}
+
+#feed-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    height: 100vh;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+.feed-item {
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 8px 12px;
+    margin-top: 2px;
+    border-radius: 2px;
+    border-left: 4px solid #aa00ff;
+    animation: fadein 0.3s ease-out;
+    text-shadow: 1px 1px 1px #000;
+}
+
+.feed-item.player-self {
+    border-left-color: #cc00ff;
+}
+
+.feed-item.player-other {
+    border-left-color: #d8d8d8;
+}
+
+.feed-item.system {
+    border-left-color: #aaaaff;
+}
+
+.feed-text {
+    font-size: 16px;
+    line-height: 1.4;
+}
+
+@keyframes fadein {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.player_id {
+    color: #cccccc;
+    font-weight: bold;
+}
+
+.player_self {
+    color: #ff00ff;
+}
+
+.item_id {
+    color: #00ffff;
+    font-weight: bold;
+}
+
+.item_progression {
+    color: #af99ef;
+    font-weight: bold;
+}
+
+.item_useful {
+    color: #6d8be8;
+    font-weight: bold;
+}
+
+.item_trap {
+    color: #fa8072;
+    font-weight: bold;
+}
+
+.item_filler {
+    color: #00ffff;
+}
+
+.location_id {
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.entrance_name {
+    color: #6699ff;
+    text-decoration: underline;
+}
+
+.timestamp {
+    display: none;
+    opacity: 0.6;
+    margin-right: 0.5em;
+    font-family: 'Courier New', Courier, monospace;
+}

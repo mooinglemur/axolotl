@@ -42,6 +42,10 @@ struct ConnectionSettings {
   bool show_feed_timestamps = true;
   std::string uuid = "";
   std::map<std::string, bool> show_windows;
+
+  bool http_server_enabled = false;
+  std::string http_server_bind_address = "127.0.0.1";
+  int http_server_port = 3621;
 };
 
 class Config {
