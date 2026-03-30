@@ -18,7 +18,7 @@ jobs:
           echo "Tag version: $TAG_VERSION"
 
           # Generate version.h
-          cmake -P tools/generate_version.cmake -DOUT_FILE=version.h
+          cmake -DOUT_FILE=version.h -P tools/generate_version.cmake
 
           # Extract version from generated version.h
           HEADER_VERSION=$(grep 'AXOLOTL_VERSION_STRING' version.h | awk -F'"' '{print $2}')
