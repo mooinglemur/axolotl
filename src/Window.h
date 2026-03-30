@@ -170,5 +170,5 @@ public:
 
 protected:
   std::string name_;
-  bool is_open_ = true;
+  bool is_open_ = false;
 };

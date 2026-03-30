@@ -6,7 +6,6 @@
 TrackerWindow::TrackerWindow(ArchipelagoNetwork &ap_network,
                              const ConnectionSettings &settings)
     : Window("Tracker"), ap_network_(ap_network), settings_(settings) {
-  SetOpen(false);
 }
 
 void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,

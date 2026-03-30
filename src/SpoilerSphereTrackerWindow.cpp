@@ -12,7 +12,6 @@ SpoilerSphereTrackerWindow::SpoilerSphereTrackerWindow(
     ArchipelagoNetwork &ap_network, const ConnectionSettings &settings)
     : Window("Spoiler Sphere Tracker"), ap_network_(ap_network),
       settings_(settings) {
-  SetOpen(false);
 }
 
 void SpoilerSphereTrackerWindow::LoadSpoilerLog() {
