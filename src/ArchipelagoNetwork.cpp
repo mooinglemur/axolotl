@@ -40,7 +40,7 @@ ArchipelagoSession::ArchipelagoSession(ArchipelagoNetwork *manager,
 }
 
 ArchipelagoSession::~ArchipelagoSession() {
-  Disconnect();
+  webSocket_.stop();
   webSocket_.setOnMessageCallback(nullptr);
 }
 
@@ -79,7 +79,9 @@ void ArchipelagoSession::Connect(const std::string &url,
     webSocket_.setTLSOptions(tls_options);
   }
 
-  webSocket_.start();
+  pending_url_ = full_url;
+  pending_start_ = true;
+  pending_stop_ = true;
   user_wants_connection_ = true;
   manager_->OnStatusMessage(this, "Connecting to " + full_url + "...");
 }
@@ -87,7 +89,7 @@ void ArchipelagoSession::Connect(const std::string &url,
 void ArchipelagoSession::Disconnect() {
   if (!user_wants_connection_)
     return;
-  webSocket_.stop();
+  pending_stop_ = true;
   is_connected_ = false;
   user_wants_connection_ = false;
   manager_->OnStatusMessage(this, "Disconnected by user");
@@ -165,9 +167,9 @@ bool ArchipelagoSession::Update() {
     manager_->OnStatusMessage(this,
                               "Executing deferred fallback to " + pending_url_);
     pending_fallback_ = false;
-    webSocket_.stop();
-    webSocket_.setUrl(pending_url_);
-    webSocket_.start();
+    pending_stop_ = true;
+    pending_start_ = true;
+    // pending_url_ is already set
     changed = true;
   }
 
@@ -227,6 +229,9 @@ bool ArchipelagoSession::Update() {
           metadata_->datapackage_checksums[game] = checksum.get<std::string>();
         }
       }
+      if (packet.contains("hint_cost")) {
+        hint_cost_ = packet["hint_cost"].get<int>();
+      }
       SendConnect();
     } else if (cmd == "Connected") {
       is_connected_ = true;
@@ -234,6 +239,13 @@ bool ArchipelagoSession::Update() {
       local_slot_ = packet["slot"].get<int>();
       team_ = packet.contains("team") ? packet["team"].get<int>() : 0;
       last_received_day_ = -1;
+
+      if (packet.contains("hint_points")) {
+        hint_points_ = packet["hint_points"].get<int>();
+      }
+      if (packet.contains("hint_cost")) {
+        hint_cost_ = packet["hint_cost"].get<int>();
+      }
 
       if (packet.contains("players") && metadata_) {
         for (auto &player : packet["players"]) {
@@ -462,8 +474,10 @@ bool ArchipelagoSession::Update() {
               }
             }
             color = (pid == local_slot_) ? 0xFFFF00FF : 0xFFCCCCCC;
-            if (pid == local_slot_) class_name += " player_self";
-            rm.parts.push_back(MessagePart{content, color, global_id, class_name});
+            if (pid == local_slot_)
+              class_name += " player_self";
+            rm.parts.push_back(
+                MessagePart{content, color, global_id, class_name});
             continue;
           } catch (...) {
           }
@@ -533,6 +547,7 @@ bool ArchipelagoSession::Update() {
             if (packet.contains("item") &&
                 packet["item"].contains("location")) {
               int64_t loc_id = get_as_id(packet["item"]["location"]);
+              rm.location_id = loc_id; // Store in RichMessage
               for (auto &hint : hints_) {
                 if (hint.location_id == loc_id &&
                     hint.finder_slot == rm.sender_slot) {
@@ -721,6 +736,12 @@ bool ArchipelagoSession::Update() {
         }
       }
     } else if (cmd == "RoomUpdate") {
+      if (packet.contains("hint_points")) {
+        hint_points_ = packet["hint_points"].get<int>();
+      }
+      if (packet.contains("hint_cost")) {
+        hint_cost_ = packet["hint_cost"].get<int>();
+      }
       if (packet.contains("players")) {
         for (auto &player : packet["players"]) {
           int p_team = player.contains("team") ? player["team"].get<int>() : 0;
@@ -738,6 +759,51 @@ bool ArchipelagoSession::Update() {
         }
         manager_->SetItemsDirty();
       }
+    } else if (cmd == "Bounced") {
+      if (packet.contains("tags") && packet["tags"].is_array()) {
+        bool is_deathlink = false;
+        for (const auto &tag : packet["tags"]) {
+          if (tag == "DeathLink") {
+            is_deathlink = true;
+            break;
+          }
+        }
+        if (is_deathlink && packet.contains("data")) {
+          if (manager_->GetSettings() &&
+              !manager_->GetSettings()->show_deathlink_messages) {
+            continue; // Skip if disabled
+          }
+          auto &data = packet["data"];
+          std::string source =
+              data.contains("source") ? data["source"].get<std::string>() : "";
+          std::string cause =
+              data.contains("cause") ? data["cause"].get<std::string>() : "";
+
+          RichMessage rm;
+          rm.timestamp = msg_time;
+          rm.populate_local_time();
+          rm.type = "DeathLink";
+          rm.source_slot = name_;
+          rm.parts.push_back(
+              MessagePart{"[DeathLink] ", 0xFF0000FF, -1, "deathlink-header"});
+          if (!source.empty()) {
+            rm.parts.push_back(MessagePart{"(" + source + ") ", 0xFFCCCCCC, -1,
+                                           "deathlink-source"});
+          }
+          if (!cause.empty()) {
+            rm.parts.push_back(
+                MessagePart{cause, 0xFFAAAAAA, -1, "deathlink-cause"});
+          } else {
+            rm.parts.push_back(
+                MessagePart{" died", 0xFFAAAAAA, -1, "deathlink-cause"});
+          }
+
+          // Use a hash of the data to prevent duplicates if multiple sessions
+          // receive the same bounce
+          size_t msg_hash = std::hash<std::string>{}(data.dump() + rm.type);
+          manager_->OnGlobalMessage(this, rm, true, msg_hash);
+        }
+      }
     }
   }
   return changed;
@@ -754,13 +820,24 @@ void ArchipelagoSession::SendConnect() {
        {"version",
         {{"class", "Version"}, {"major", 0}, {"minor", 5}, {"build", 1}}},
        {"items_handling", 7},
-       {"tags", {"TextOnly", "Tracker"}}});
+       {"tags", {"Tracker", "Axolotl", "DeathLink"}}});
   SendPacket(packet);
 }
 
 void ArchipelagoSession::SendChat(const std::string &message) {
   json packet = json::array();
   packet.push_back({{"cmd", "Say"}, {"text", message}});
+  SendPacket(packet);
+}
+
+void ArchipelagoSession::SendDeathLink(const std::string &cause) {
+  json packet = json::array();
+  json data = {{"cmd", "DeathLink"},
+               {"source", name_},
+               {"timestamp", GetCurrentTimestamp()},
+               {"cause", cause}};
+  packet.push_back(
+      {{"cmd", "Bounce"}, {"tags", {"DeathLink"}}, {"data", data}});
   SendPacket(packet);
 }
 
@@ -807,7 +884,32 @@ void ArchipelagoSession::SendPacket(const json &packet) {
   std::string dump = packet.dump();
   if (manager_->IsDebugMode())
     fprintf(stderr, "[SEND][%s] %s\n", name_.c_str(), dump.c_str());
-  webSocket_.send(dump);
+  std::lock_guard<std::mutex> lock(outgoing_mutex_);
+  outgoing_queue_.push_back(dump);
+}
+
+void ArchipelagoSession::ProcessNetworkCommands() {
+  if (pending_stop_) {
+    webSocket_.stop();
+    pending_stop_ = false;
+  }
+  if (!pending_url_.empty()) {
+    webSocket_.setUrl(pending_url_);
+    pending_url_.clear();
+  }
+  if (pending_start_) {
+    webSocket_.start();
+    pending_start_ = false;
+  }
+
+  std::deque<std::string> to_send;
+  {
+    std::lock_guard<std::mutex> lock(outgoing_mutex_);
+    std::swap(to_send, outgoing_queue_);
+  }
+  for (const auto &msg : to_send) {
+    webSocket_.send(msg);
+  }
 }
 
 void ArchipelagoSession::UpdateHintStatus(int64_t location_id, int finder_slot,
@@ -842,6 +944,21 @@ void ArchipelagoSession::ClearData() {
   hints_.clear();
   checked_locations_.clear();
   missing_locations_.clear();
+
+  if (manager_ && local_slot_ != -1) {
+    manager_->ClearSessionStats((team_ << 16) | local_slot_);
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    std::queue<QueuedPacket> empty;
+    std::swap(message_queue_, empty);
+  }
+  {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    std::queue<QueuedStatus> empty;
+    std::swap(status_messages_, empty);
+  }
 }
 
 void ArchipelagoSession::ReResolveHistory() {
@@ -989,7 +1106,7 @@ void ArchipelagoNetwork::StopNetworkThread() {
 }
 
 MultiworldStats ArchipelagoNetwork::GetGlobalStats() const {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   return global_stats_;
 }
 
@@ -1002,18 +1119,27 @@ std::string ArchipelagoNetwork::MaskURL(const std::string &url) {
   return std::string(url.length(), '*');
 }
 ArchipelagoNetwork::~ArchipelagoNetwork() {
+  StopNetworkThread();
   sessions_.clear(); // This will destroy sessions and stop their websockets
 }
 
 ArchipelagoSession *ArchipelagoNetwork::AddSession(const std::string &name) {
-  if (GetSession(name))
-    return GetSession(name);
-  sessions_.push_back(std::make_unique<ArchipelagoSession>(this, name));
-  slots_dirty_ = true;
-  return sessions_.back().get();
+  ArchipelagoSession *session = nullptr;
+  {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    if (GetSession(name))
+      return GetSession(name);
+    sessions_.push_back(std::make_unique<ArchipelagoSession>(this, name));
+    slots_dirty_ = true;
+    session = sessions_.back().get();
+  }
+  if (session)
+    session->ProcessNetworkCommands();
+  return session;
 }
 
 void ArchipelagoNetwork::RemoveSession(const std::string &name) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
     if ((*it)->GetName() == name) {
       sessions_.erase(it);
@@ -1028,13 +1154,21 @@ void ArchipelagoNetwork::RemoveSession(const std::string &name) {
 }
 
 void ArchipelagoNetwork::DisconnectAll() {
+  {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    for (auto &session : sessions_) {
+      session->Disconnect();
+    }
+    ClearGlobalStats();
+  }
   for (auto &session : sessions_) {
-    session->Disconnect();
+    session->ProcessNetworkCommands();
   }
 }
 
 ArchipelagoSession *
 ArchipelagoNetwork::GetSessionByGlobalSlot(int global_slot) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto &session : sessions_) {
     if (session->IsConnected() &&
         (session->GetTeam() << 16 | session->GetLocalSlot()) == global_slot)
@@ -1044,6 +1178,7 @@ ArchipelagoNetwork::GetSessionByGlobalSlot(int global_slot) {
 }
 
 ArchipelagoSession *ArchipelagoNetwork::GetSession(const std::string &name) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto &s : sessions_)
     if (s->GetName() == name)
       return s.get();
@@ -1052,6 +1187,7 @@ ArchipelagoSession *ArchipelagoNetwork::GetSession(const std::string &name) {
 
 void ArchipelagoNetwork::OnLocalHintStatusUpdated(int64_t location_id,
                                                   int finder_slot, int status) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto &session : sessions_) {
     session->UpdateHintStatus(location_id, finder_slot, status);
   }
@@ -1069,32 +1205,69 @@ ArchipelagoNetwork::GetOrCreateMetadata(const std::string &url) {
 
 bool ArchipelagoNetwork::Update() {
   bool changed = false;
-  for (auto &session : sessions_) {
-    bool was_connected = session->IsConnected();
-    if (session->Update())
-      changed = true;
-    if (was_connected != session->IsConnected()) {
-      slots_dirty_ = true;
-      aggregated_items_dirty_ = true;
-      aggregated_hints_dirty_ = true;
-      if (tracker_confidence_ == TrackerConfidence::High) {
-        if (debug_mode_) {
-          std::cout << "[Overview] Session state change detected. Tracker "
-                       "confidence reset to LOW."
-                    << std::endl;
+  {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    for (auto &session : sessions_) {
+      bool was_connected = session->IsConnected();
+      if (session->Update())
+        changed = true;
+      if (was_connected != session->IsConnected()) {
+        slots_dirty_ = true;
+        aggregated_items_dirty_ = true;
+        aggregated_hints_dirty_ = true;
+        if (sync_state_ == TrackerSyncState::Completed) {
+          if (debug_mode_) {
+            std::cout << "[Overview] Session state change detected. Restarting "
+                         "sync cycle."
+                      << std::endl;
+          }
+          ForceTrackerSync();
         }
-        tracker_confidence_ = TrackerConfidence::Low;
+        changed = true;
       }
-      changed = true;
     }
+    UpdateTrackerStats();
   }
 
-  UpdateTrackerStats();
+  for (auto &session : sessions_) {
+    session->ProcessNetworkCommands();
+  }
 
   return changed;
 }
 
+void ArchipelagoNetwork::ClearGlobalStats() {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  global_stats_ = MultiworldStats();
+  sync_state_ = TrackerSyncState::Idle;
+  initial_tracker_sync_time_ = 0.0;
+  last_tracker_sync_time_ = -1.0;
+  last_successful_sync_activity_time_ = -1.0;
+  if (on_stats_updated)
+    on_stats_updated(global_stats_);
+}
+
+void ArchipelagoNetwork::ClearSessionStats(int global_slot) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  if (global_stats_.slot_info.count(global_slot)) {
+    global_stats_.slot_info.erase(global_slot);
+    global_stats_.completed_slots.erase(global_slot);
+
+    // Re-calculate global totals
+    int total_checked = 0;
+    for (auto const &[id, stats] : global_stats_.slot_info) {
+      total_checked += (int)stats.checked_location_ids.size();
+    }
+    global_stats_.checked_locations = total_checked;
+    last_tracker_checked_count_ = total_checked;
+
+    if (on_stats_updated)
+      on_stats_updated(global_stats_);
+  }
+}
+
 bool ArchipelagoNetwork::IsAnySessionActive() const {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (const auto &s : sessions_) {
     if (s->GetState() != State::Disconnected)
       return true;
@@ -1103,6 +1276,7 @@ bool ArchipelagoNetwork::IsAnySessionActive() const {
 }
 
 const std::set<int> &ArchipelagoNetwork::GetConnectedSlots() {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   if (slots_dirty_) {
     connected_slots_cache_.clear();
     for (const auto &s : sessions_) {
@@ -1172,23 +1346,34 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
     }
   }
 
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
 
   if (is_item_feed) {
     SetItemsDirty(); // Replaced aggregated_items_dirty_ = true;
     CheckDayChange(item_history_, msg.timestamp, last_item_day_);
     item_history_.push_back(msg);
     last_item_activity_time_ = GetCurrentTimestamp();
-    global_stats_.checked_locations++;
-    if (msg.sender_slot != -1) {
-      global_stats_.slot_info[msg.sender_slot].checked_locations++;
-      global_stats_.slot_info[msg.sender_slot].last_activity_time =
-          msg.timestamp;
+
+    if (msg.type == "ItemSend") {
+      int sender = msg.sender_slot;
+      if (sender != -1) {
+        auto &slot_stats = global_stats_.slot_info[sender];
+        slot_stats.checked_location_ids.insert(msg.location_id);
+        slot_stats.checked_locations =
+            (int)slot_stats.checked_location_ids.size();
+        slot_stats.last_activity_time = msg.timestamp;
+
+        // Re-calculate global count
+        int total_checked = 0;
+        for (auto const &[id, stats] : global_stats_.slot_info) {
+          total_checked += (int)stats.checked_location_ids.size();
+        }
+        global_stats_.checked_locations = total_checked;
+      }
     }
     if (on_stats_updated) {
       on_stats_updated(global_stats_);
     }
-    live_checks_since_last_poll_++;
   } else {
     CheckDayChange(chat_history_, msg.timestamp, last_chat_day_);
     if (!chat_history_.empty() &&
@@ -1263,7 +1448,7 @@ std::string ArchipelagoNetwork::ResolvePlayerGame(int slot) {
 }
 
 void ArchipelagoNetwork::ClearAllData(bool keep_chat) {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   if (!keep_chat) {
     ClearChatHistory();
   }
@@ -1285,7 +1470,7 @@ void ArchipelagoNetwork::ClearAllData(bool keep_chat) {
 
 void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
                                          const std::string &msg) {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   RichMessage rm;
   rm.timestamp = GetCurrentTimestamp();
   rm.populate_local_time();
@@ -1496,7 +1681,7 @@ void ArchipelagoNetwork::SetHintsDirty() {
 }
 
 void ArchipelagoNetwork::ClearChatHistory() {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   chat_history_.clear();
   last_chat_day_ = -1;
   if (on_history_updated)
@@ -1518,7 +1703,6 @@ bool ArchipelagoNetwork::IsDataPackageReceived() const {
   return false;
 }
 void ArchipelagoNetwork::SyncTotalLocations() {
-  std::lock_guard<std::recursive_mutex> history_lock(history_mutex_);
   if (!settings_ || settings_->tracker_url.empty())
     return;
 
@@ -1540,47 +1724,53 @@ void ArchipelagoNetwork::SyncTotalLocations() {
               << std::endl;
   }
 
-  ix::HttpClient httpClient;
   auto args = std::make_shared<ix::HttpRequestArgs>();
   args->followRedirects = true;
   args->compress = true;
   args->extraHeaders["User-Agent"] =
       "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
 
-  auto response = httpClient.get(api_url, args);
-  if (response && response->statusCode == 200) {
-    try {
-      auto j = nlohmann::json::parse(response->body);
-      int total_l = 0;
-      if (j.contains("player_locations_total") &&
-          j["player_locations_total"].is_array()) {
-        for (const auto &p : j["player_locations_total"]) {
-          if (p.contains("total_locations") && p.contains("player")) {
-            int slot = p["player"].get<int>();
-            int team = p.contains("team") ? p["team"].get<int>() : 0;
-            int packed_slot = (team << 16) | slot;
+  // Use a temporary thread to avoid blocking the network thread or UI
+  std::thread([this, api_url, args]() {
+    ix::HttpClient httpClient;
+    auto response = httpClient.get(api_url, args);
 
-            int player_total = p["total_locations"].get<int>();
-            total_l += player_total;
-            global_stats_.slot_info[packed_slot].total_locations = player_total;
+    if (response && response->statusCode == 200) {
+      try {
+        auto j = nlohmann::json::parse(response->body);
+        int total_l = 0;
+        if (j.contains("player_locations_total") &&
+            j["player_locations_total"].is_array()) {
+
+          std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+          for (const auto &p : j["player_locations_total"]) {
+            if (p.contains("total_locations") && p.contains("player")) {
+              int slot = p["player"].get<int>();
+              int team = p.contains("team") ? p["team"].get<int>() : 0;
+              int packed_slot = (team << 16) | slot;
+
+              int player_total = p["total_locations"].get<int>();
+              total_l += player_total;
+              global_stats_.slot_info[packed_slot].total_locations =
+                  player_total;
+            }
+          }
+
+          global_stats_.total_locations = total_l;
+
+          if (on_stats_updated) {
+            on_stats_updated(global_stats_);
+          }
+
+          if (debug_mode_) {
+            std::cout << "[Overview] Static Tracker Stats: Total Locations "
+                      << total_l << std::endl;
           }
         }
+      } catch (...) {
       }
-
-      std::lock_guard<std::recursive_mutex> lock(history_mutex_);
-      global_stats_.total_locations = total_l;
-
-      if (on_stats_updated) {
-        on_stats_updated(global_stats_);
-      }
-
-      if (debug_mode_) {
-        std::cout << "[Overview] Static Tracker Stats: Total Locations "
-                  << total_l << std::endl;
-      }
-    } catch (...) {
     }
-  }
+  }).detach();
 }
 
 void ArchipelagoNetwork::UpdateTrackerStats() {
@@ -1588,36 +1778,43 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
       !IsAnySessionConnected() || !tracker_sync_active_)
     return;
 
-  bool forced = false;
   {
-    std::lock_guard<std::recursive_mutex> lock(history_mutex_);
-    forced = force_tracker_sync_;
-    force_tracker_sync_ = false;
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    if (settings_->tracker_url != last_synced_tracker_url_) {
+      ClearGlobalStats();
+      last_synced_tracker_url_ = settings_->tracker_url;
+    }
   }
 
-  if (!forced && tracker_confidence_ == TrackerConfidence::High)
+  if (sync_state_ == TrackerSyncState::Completed)
     return;
 
   double now = GetCurrentTimestamp();
-  if (!forced && last_tracker_sync_time_ > 0 &&
-      now - last_tracker_sync_time_ < 120.0) {
-    return; // Rate limit 2 minutes
-  }
 
-  // Poll static tracker if URL changed
-  if (settings_->tracker_url != last_synced_static_url_) {
-    SyncTotalLocations();
-    last_synced_static_url_ = settings_->tracker_url;
-  }
+  bool trigger_poll = false;
+  {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    // If we haven't started syncing yet, start now
+    if (sync_state_ == TrackerSyncState::Idle) {
+      SyncTotalLocations();
+      force_tracker_sync_ = true; // Trigger the poll
+      sync_state_ = TrackerSyncState::FirstPollInProgress;
+    } else if (sync_state_ == TrackerSyncState::WaitingForSecondPoll) {
+      // If 2 minutes have passed since the first sync, trigger the second poll
+      if (now - initial_tracker_sync_time_ >= 120.0) {
+        force_tracker_sync_ = true;
+        sync_state_ = TrackerSyncState::SecondPollInProgress;
+      }
+    }
 
-  // Activity check
-  if (!forced && last_tracker_sync_time_ > 0 &&
-      last_successful_sync_activity_time_ >= 0) {
-    if (last_item_activity_time_ <= last_successful_sync_activity_time_) {
-      // No activity since last successful sync, skip
-      return;
+    if (force_tracker_sync_) {
+      trigger_poll = true;
+      force_tracker_sync_ = false;
     }
   }
+
+  if (!trigger_poll)
+    return;
 
   std::string api_url = settings_->tracker_url;
   size_t pos = api_url.find("/tracker/");
@@ -1636,149 +1833,170 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
               << std::endl;
   }
 
-  ix::HttpClient httpClient;
   auto args = std::make_shared<ix::HttpRequestArgs>();
   args->followRedirects = true;
   args->compress = true; // Enables Accept-Encoding: gzip
   args->extraHeaders["User-Agent"] =
       "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
-  auto response = httpClient.get(api_url, args);
-  if (response) {
-    if (debug_mode_) {
-      std::cout << "[Overview] API Response: " << response->statusCode << " ("
-                << response->description << ")" << std::endl;
-      std::cout << "[Overview] Body: " << response->body << std::endl;
-    }
-    if (response->statusCode == 200) {
-      try {
-        std::lock_guard<std::recursive_mutex> history_lock(history_mutex_);
-        auto j = nlohmann::json::parse(response->body);
-        int total_g = 0;
-        int completed_g = 0;
-        int checked_l = 0;
 
-        if (j.contains("player_status") && j["player_status"].is_array()) {
-          total_g = (int)j["player_status"].size();
-          for (const auto &stats : j["player_status"]) {
-            if (stats.contains("player")) {
-              int slot = stats["player"].get<int>();
-              int team = stats.contains("team") ? stats["team"].get<int>() : 0;
-              int packed_slot = (team << 16) | slot;
+  std::thread([this, api_url, args, now]() {
+    ix::HttpClient httpClient;
+    auto response = httpClient.get(api_url, args);
+    if (response) {
+      if (debug_mode_) {
+        std::cout << "[Overview] API Response: " << response->statusCode << " ("
+                  << response->description << ")" << std::endl;
+      }
+      if (response->statusCode == 200) {
+        try {
+          auto j = nlohmann::json::parse(response->body);
+          int total_g = 0;
+          int completed_g = 0;
+          int checked_l = 0;
 
-              if (stats.contains("status") && stats["status"].is_number() &&
-                  stats["status"].get<int>() == 30) {
-                completed_g++;
-                global_stats_.completed_slots.insert(packed_slot);
+          std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+
+          if (j.contains("player_status") && j["player_status"].is_array()) {
+            total_g = (int)j["player_status"].size();
+            for (const auto &stats : j["player_status"]) {
+              if (stats.contains("player")) {
+                int slot = stats["player"].get<int>();
+                int team =
+                    stats.contains("team") ? stats["team"].get<int>() : 0;
+                int packed_slot = (team << 16) | slot;
+
+                if (stats.contains("status") && stats["status"].is_number() &&
+                    stats["status"].get<int>() == 30) {
+                  completed_g++;
+                  global_stats_.completed_slots.insert(packed_slot);
+                }
               }
             }
           }
-        }
 
-        if (j.contains("player_checks_done") &&
-            j["player_checks_done"].is_array()) {
-          for (const auto &checks : j["player_checks_done"]) {
-            if (checks.contains("player") && checks.contains("locations") &&
-                checks["locations"].is_array()) {
-              int slot = checks["player"].get<int>();
-              int team =
-                  checks.contains("team") ? checks["team"].get<int>() : 0;
-              int packed_slot = (team << 16) | slot;
-              global_stats_.slot_info[packed_slot].checked_locations =
-                  (int)checks["locations"].size();
+          if (j.contains("player_checks_done") &&
+              j["player_checks_done"].is_array()) {
+            for (const auto &checks : j["player_checks_done"]) {
+              if (checks.contains("player") && checks.contains("locations") &&
+                  checks["locations"].is_array()) {
+                int slot = checks["player"].get<int>();
+                int team =
+                    checks.contains("team") ? checks["team"].get<int>() : 0;
+                int packed_slot = (team << 16) | slot;
+                auto &slot_stats = global_stats_.slot_info[packed_slot];
+                for (const auto &loc : checks["locations"]) {
+                  slot_stats.checked_location_ids.insert(get_as_id(loc));
+                }
+                slot_stats.checked_locations =
+                    (int)slot_stats.checked_location_ids.size();
+              }
             }
           }
-        }
 
-        if (j.contains("activity_timers") && j["activity_timers"].is_array()) {
-          for (const auto &timer_entry : j["activity_timers"]) {
-            if (timer_entry.contains("player") &&
-                timer_entry.contains("time")) {
-              int slot = timer_entry["player"].get<int>();
-              int team = timer_entry.contains("team")
-                             ? timer_entry["team"].get<int>()
-                             : 0;
-              int packed_slot = (team << 16) | slot;
+          if (j.contains("activity_timers") &&
+              j["activity_timers"].is_array()) {
+            for (const auto &timer_entry : j["activity_timers"]) {
+              if (timer_entry.contains("player") &&
+                  timer_entry.contains("time")) {
+                int slot = timer_entry["player"].get<int>();
+                int team = timer_entry.contains("team")
+                               ? timer_entry["team"].get<int>()
+                               : 0;
+                int packed_slot = (team << 16) | slot;
 
-              std::string time_str = timer_entry["time"].get<std::string>();
-              std::tm tm = {};
-              std::stringstream ss(time_str);
-              ss >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT");
-              if (!ss.fail()) {
+                std::string time_str = timer_entry["time"].get<std::string>();
+                std::tm tm = {};
+                std::stringstream ss(time_str);
+                ss >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT");
+                if (!ss.fail()) {
 #ifdef _WIN32
-                global_stats_.slot_info[packed_slot].last_activity_time =
-                    (double)_mkgmtime(&tm);
+                  global_stats_.slot_info[packed_slot].last_activity_time =
+                      (double)_mkgmtime(&tm);
 #else
-                global_stats_.slot_info[packed_slot].last_activity_time =
-                    (double)timegm(&tm);
+                  global_stats_.slot_info[packed_slot].last_activity_time =
+                      (double)timegm(&tm);
 #endif
+                }
               }
             }
           }
-        }
 
-        if (j.contains("total_checks_done") &&
-            j["total_checks_done"].is_array()) {
-          for (const auto &team_stats : j["total_checks_done"]) {
-            if (team_stats.contains("checks_done")) {
-              checked_l += (int)team_stats["checks_done"].get<int>();
+          if (j.contains("total_checks_done") &&
+              j["total_checks_done"].is_array()) {
+            for (const auto &team_stats : j["total_checks_done"]) {
+              if (team_stats.contains("checks_done")) {
+                checked_l += (int)team_stats["checks_done"].get<int>();
+              }
             }
           }
-        }
 
-        if (debug_mode_) {
-          std::cout << "[Overview] Tracker Stats Parsed: Games " << completed_g
-                    << "/" << total_g << ", Checked Locations " << checked_l
-                    << std::endl;
-        }
+          if (total_g > 0)
+            global_stats_.total_games = total_g;
 
-        std::lock_guard<std::recursive_mutex> lock(history_mutex_);
-        if (total_g > 0)
-          global_stats_.total_games = total_g;
+          // Re-calculate global count
+          int total_checked = 0;
+          for (auto const &[id, stats] : global_stats_.slot_info) {
+            total_checked += (int)stats.checked_location_ids.size();
+          }
+          global_stats_.checked_locations = total_checked;
+          last_tracker_checked_count_ = total_checked;
 
-        // Handle confidence transition
-        if (tracker_confidence_ == TrackerConfidence::Low) {
-          if (last_tracker_checked_count_ != -1 &&
-              checked_l == last_tracker_checked_count_ &&
-              live_checks_since_last_poll_ == 0) {
-            tracker_confidence_ = TrackerConfidence::High;
+          // Handle two-poll strategy state
+          if (sync_state_ == TrackerSyncState::FirstPollInProgress) {
+            initial_tracker_sync_time_ = now;
+            sync_state_ = TrackerSyncState::WaitingForSecondPoll;
             if (debug_mode_) {
-              std::cout << "[Overview] Tracker confidence transitioned to "
-                           "HIGH. Polling suspended."
-                        << std::endl;
+              std::cout
+                  << "[Overview] First tracker sync complete. Second poll "
+                     "scheduled for 2 minutes from now."
+                  << std::endl;
+            }
+          } else if (sync_state_ == TrackerSyncState::SecondPollInProgress) {
+            sync_state_ = TrackerSyncState::Completed;
+            if (debug_mode_) {
+              std::cout
+                  << "[Overview] Second tracker sync complete. Sync finished."
+                  << std::endl;
             }
           }
-        }
 
-        global_stats_.checked_locations = checked_l;
-        last_tracker_checked_count_ = checked_l;
+          if (on_stats_updated) {
+            on_stats_updated(global_stats_);
+          }
+          last_successful_sync_activity_time_ = last_item_activity_time_;
 
-        if (on_stats_updated) {
-          on_stats_updated(global_stats_);
+          if (debug_mode_) {
+            std::cout << "[Overview] Tracker Stats Parsed: Games "
+                      << completed_g << "/" << total_g << ", Checked Locations "
+                      << total_checked << std::endl;
+          }
+        } catch (...) {
         }
-        live_checks_since_last_poll_ = 0;
-        last_successful_sync_activity_time_ = last_item_activity_time_;
-      } catch (...) {
       }
     }
-  }
+  }).detach();
 }
 
 void ArchipelagoNetwork::ForceTrackerSync() {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   last_tracker_sync_time_ = -1.0;
   last_successful_sync_activity_time_ = -1.0;
+
+  sync_state_ = TrackerSyncState::Idle;
+  initial_tracker_sync_time_ = 0.0;
+
   force_tracker_sync_ = true;
 }
 
 void ArchipelagoNetwork::SetTotalGames(int count) {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   if (global_stats_.total_games == 0) {
     global_stats_.total_games = count;
   }
 }
 
 bool ArchipelagoNetwork::IsAnySessionConnected() const {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (const auto &session : sessions_) {
     if (session->IsConnected())
       return true;
@@ -1787,10 +2005,10 @@ bool ArchipelagoNetwork::IsAnySessionConnected() const {
 }
 
 void ArchipelagoNetwork::SetTrackerSyncActive(bool active) {
-  std::lock_guard<std::recursive_mutex> lock(history_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   if (active && !tracker_sync_active_) {
-    // When re-enabling, reset confidence to allow immediate poll
-    tracker_confidence_ = TrackerConfidence::Low;
+    // When re-enabling, reset sync state to allow immediate poll
+    ForceTrackerSync();
   }
   tracker_sync_active_ = active;
 }

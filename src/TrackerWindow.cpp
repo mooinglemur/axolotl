@@ -5,8 +5,7 @@
 
 TrackerWindow::TrackerWindow(ArchipelagoNetwork &ap_network,
                              const ConnectionSettings &settings)
-    : Window("Tracker"), ap_network_(ap_network), settings_(settings) {
-}
+    : Window("Tracker"), ap_network_(ap_network), settings_(settings) {}
 
 void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                            ImFont *preview_font,
@@ -85,11 +84,15 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
             }
 
             ImGui::Text("Game: %s", cache.game.c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(
+                ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  Hint Points: %d (Cost: %d)",
+                session->GetHintPoints(), session->GetHintCost());
             ImGui::Separator();
 
             if (ImGui::BeginChild("LocationsChild")) {
               if (ImGui::CollapsingHeader("Unchecked Locations",
-                                           ImGuiTreeNodeFlags_DefaultOpen)) {
+                                          ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (custom_font)
                   ImGui::PushFont(custom_font);
                 for (const auto &name : cache.unchecked_names) {

@@ -39,9 +39,10 @@ body {
 
 #progress-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #cc0022 0%, #229900 100%);
+    /* Start with red at 0% (Hue 0) and transition to green at 100% (Hue 120) */
+    background-color: hsl(calc(var(--pct, 0) * 1.2), 60%, 40%);
     width: 0%;
-    transition: width 0.3s ease-out;
+    transition: width 0.5s ease-out, background-color 2.0s ease-out;
 }
 
 #progress-text {

@@ -16,7 +16,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (!is_open_)
     return;
 
-  std::lock_guard<std::recursive_mutex> history_lock(ap_network_.GetHistoryMutex());
+  std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
   const auto &hints = ap_network_.GetAggregatedHints();
   uint64_t current_version = ap_network_.GetDataVersion();
 
@@ -25,16 +25,23 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
-    ImGui::PushItemWidth(-1.0f);
+    float checkbox_width = ImGui::CalcTextSize("Exclude found").x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x * 2.0f + 20.0f;
+    ImGui::PushItemWidth(-checkbox_width);
     RenderFilterInput("##Filter", filter_text_, focus_filter_);
     ImGui::PopItemWidth();
+    ImGui::SameLine();
+    ImGui::Checkbox("Exclude found", &exclude_found_);
 
     ImGui::Separator();
 
     if (hints.size() != last_hint_count_ ||
-        current_version != last_data_version_ || force_rebuild_) {
+        current_version != last_data_version_ ||
+        exclude_found_ != last_exclude_found_ || force_rebuild_) {
       resolved_hints_.clear();
       for (const auto &h : hints) {
+        if (exclude_found_ && h.found)
+          continue;
+
         auto session = ap_network_.GetSession(h.source_slot);
         if (!session)
           continue;
@@ -68,6 +75,7 @@ void HintWindow::Render(std::tm *current_tm, ImFont *custom_font,
         resolved_hints_.push_back(rh);
       }
       force_rebuild_ = false;
+      last_exclude_found_ = exclude_found_;
     }
 
     if (ImGui::BeginTable(

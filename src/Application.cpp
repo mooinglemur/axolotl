@@ -360,7 +360,24 @@ bool Application::InitializeUI() {
         }
       }
       j["html"] = html_text;
-      j["category"] = msg.type;
+      std::string category = "system";
+      if (msg.type == "ItemSend" || msg.type == "ItemCheat" ||
+          msg.type == "Hint") {
+        bool is_personal = false;
+        for (const auto &session : ap_network_.GetSessions()) {
+          int my_slot = (session->GetTeam() << 16) | session->GetLocalSlot();
+          if (msg.sender_slot == my_slot || msg.receiver_slot == my_slot) {
+            is_personal = true;
+            break;
+          }
+        }
+        category = is_personal ? "player-self" : "player-other";
+      } else if (msg.type == "DeathLink") {
+        category = "deathlink";
+      } else if (msg.type == "Chat") {
+        category = "chat";
+      }
+      j["category"] = category;
 
       web_server_->BroadcastFeedEvent(j.dump(), msg.type);
     }
@@ -368,10 +385,21 @@ bool Application::InitializeUI() {
 
   ap_network_.on_stats_updated = [this](const MultiworldStats &stats) {
     if (web_server_) {
+      int fully_completed = 0;
+      for (const auto &[slot_id, s_stats] : stats.slot_info) {
+        bool is_goal = stats.completed_slots.count(slot_id) > 0;
+        bool is_100_percent =
+            (s_stats.total_locations > 0 &&
+             s_stats.checked_locations >= s_stats.total_locations);
+        if (is_goal && is_100_percent) {
+          fully_completed++;
+        }
+      }
+
       nlohmann::json j;
       j["type"] = "overview_update";
       j["total_games"] = stats.total_games;
-      j["completed_games"] = stats.completed_slots.size();
+      j["completed_games"] = fully_completed;
       j["total_locations"] = stats.total_locations;
       j["checked_locations"] = stats.checked_locations;
 

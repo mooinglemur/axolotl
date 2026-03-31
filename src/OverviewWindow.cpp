@@ -52,7 +52,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
       bool is_goal = stats.completed_slots.count(slot_id) > 0;
       bool is_100_percent =
           (s_stats.total_locations > 0 &&
-           s_stats.checked_locations == s_stats.total_locations);
+           s_stats.checked_locations >= s_stats.total_locations);
 
       if (is_goal && is_100_percent) {
         fully_completed++;
@@ -240,6 +240,13 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
             ImGui::Text("%s", e.name.c_str());
           }
 
+          if (ImGui::IsItemHovered()) {
+            std::string game = ap_network_.ResolvePlayerGame(e.slot_id);
+            if (!game.empty()) {
+              ImGui::SetTooltip("Game: %s", game.c_str());
+            }
+          }
+
           ImGui::TableSetColumnIndex(1);
           char overlay[64];
           snprintf(overlay, sizeof(overlay), "%.1f%% (%d/%d)",
@@ -274,8 +281,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
             double delta = now - e.last_activity;
 
             if (delta < 0) {
-              snprintf(delta_str, sizeof(delta_str), "N/A");
-              is_disabled = true;
+              snprintf(delta_str, sizeof(delta_str), "now");
             } else if (delta < 60) {
               snprintf(delta_str, sizeof(delta_str), "%ds", (int)delta);
             } else if (delta < 3600) {

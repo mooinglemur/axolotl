@@ -26,7 +26,7 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
     ImGui::Separator();
 
-    std::lock_guard<std::recursive_mutex> history_lock(ap_network_.GetHistoryMutex());
+    std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
     auto const &history = ap_network_.GetItemHistory();
     const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
 

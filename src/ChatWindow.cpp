@@ -198,8 +198,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     ImGui::Separator();
 
     // History
-    std::lock_guard<std::recursive_mutex> history_lock(
-        ap_network_.GetHistoryMutex());
+    std::lock_guard<std::recursive_mutex> lock(
+        ap_network_.GetStateMutex());
     const auto &history = ap_network_.GetChatHistory();
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
@@ -821,6 +821,14 @@ bool ChatWindow::HandleCommand(const std::string &line) {
         rm.parts.push_back(MessagePart{")", 0xFFFFFFFF, -1, "text"});
 
         ap_network_.OnGlobalMessage(nullptr, rm, true, 0, true);
+      }
+      return true;
+    } else if (subcmd == "deathlink") {
+      if (!selected_send_slot_name_.empty()) {
+        if (auto session = ap_network_.GetSession(selected_send_slot_name_)) {
+          std::string cause = selected_send_slot_name_ + " wielded the power of the Axolotl debug command.";
+          session->SendDeathLink(cause);
+        }
       }
       return true;
     }

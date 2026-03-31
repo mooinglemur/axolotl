@@ -29,12 +29,14 @@ private:
   const ConnectionSettings &settings_;
   std::string filter_text_;
   bool focus_filter_ = false;
+  bool exclude_found_ = false;
 
   int selection_anchor_ = -1;
   int selection_active_ = -1;
 
   std::vector<ResolvedHint> resolved_hints_;
   bool force_rebuild_ = true;
+  bool last_exclude_found_ = false;
   size_t last_hint_count_ = 0;
   uint64_t last_data_version_ = 0;
 };

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Axolotl VERSION 0.1.1 LANGUAGES CXX)
+project(Axolotl VERSION 0.1.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -132,10 +132,18 @@ endif()
 
 # Dynamic version generation
 add_custom_target(UpdateVersion ALL
-    COMMAND ${CMAKE_COMMAND} -DS_DIR=${CMAKE_SOURCE_DIR} -DAXOLOTL_IGNORE_DIRTY=${AXOLOTL_IGNORE_DIRTY} -DOUT_FILE=${CMAKE_BINARY_DIR}/version.h -P ${CMAKE_SOURCE_DIR}/tools/generate_version.cmake
+    COMMAND ${CMAKE_COMMAND} 
+        -DS_DIR=${CMAKE_SOURCE_DIR} 
+        -DAXOLOTL_IGNORE_DIRTY=${AXOLOTL_IGNORE_DIRTY}
+        -DPROJECT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        -DPROJECT_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        -DPROJECT_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+        -DPROJECT_VERSION=${PROJECT_VERSION}
+        -DOUT_FILE=${CMAKE_BINARY_DIR}/version.h
+        -P ${CMAKE_SOURCE_DIR}/tools/generate_version.cmake
     BYPRODUCTS ${CMAKE_BINARY_DIR}/version.h
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMENT "Updating version.h with current git hash"
+    COMMENT "Updating version.h with current project version and git hash"
 )
 
 add_custom_command(

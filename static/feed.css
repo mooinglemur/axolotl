@@ -39,6 +39,14 @@ body {
     border-left-color: #aaaaff;
 }
 
+.feed-item.chat {
+    border-left-color: #ffffff;
+}
+
+.feed-item.deathlink {
+    border-left-color: #ff0000;
+}
+
 .feed-text {
     font-size: 16px;
     line-height: 1.4;
@@ -104,4 +112,18 @@ body {
     opacity: 0.6;
     margin-right: 0.5em;
     font-family: 'Courier New', Courier, monospace;
+}
+
+.deathlink-header {
+    color: #ff0000;
+    font-weight: bold;
+}
+
+.deathlink-source {
+    color: #cccccc;
+    font-weight: bold;
+}
+
+.deathlink-cause {
+    color: #aaaaaa;
 }

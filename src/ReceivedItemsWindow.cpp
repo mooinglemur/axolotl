@@ -35,7 +35,7 @@ void ReceivedItemsWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
     ImGui::Separator();
 
-    std::lock_guard<std::recursive_mutex> history_lock(ap_network_.GetHistoryMutex());
+    std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
     auto const &history = ap_network_.GetAggregatedReceivedItems();
     uint64_t current_version = ap_network_.GetDataVersion();
     bool filter_changed = (filter_text_ != last_filter_text_);

@@ -40,6 +40,7 @@ struct ConnectionSettings {
   bool confirm_exit = true;
   bool show_chat_timestamps = true;
   bool show_feed_timestamps = true;
+  bool show_deathlink_messages = true;
   std::string uuid = "";
   std::map<std::string, bool> show_windows;
 

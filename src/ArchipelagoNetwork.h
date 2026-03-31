@@ -35,6 +35,7 @@ struct RichMessage {
   int receiver_slot = -1;
   std::string source_slot; // Name of the slot that received this
   int64_t item_id = -1;
+  int64_t location_id = -1; // Added for set-based tracking
   int item_flags = 0;
   bool is_reconciled = false;
   std::string type;     // Message type (e.g., "Goal", "Hint", "Chat")
@@ -64,6 +65,7 @@ struct Hint {
 
 struct SlotStats {
   int total_locations = 0;
+  std::set<int64_t> checked_location_ids; // Set-based tracking
   int checked_locations = 0;
   double last_activity_time = 0.0;
 };
@@ -101,12 +103,14 @@ public:
   void Disconnect();
   bool Update();
   void SendChat(const std::string &message);
+  void SendDeathLink(const std::string &cause);
   void ReResolveHistory();
   void ClearData();
   void UpdateOrAddHint(const Hint &hint);
   void UpdateHintStatus(int64_t location_id, int finder_slot, int status);
   void SendUpdateHint(int64_t location_id, int finder_slot, int status);
   void SendPacket(const nlohmann::json &packet);
+  void ProcessNetworkCommands();
 
   State GetState() const;
   bool IsConnected() const { return is_connected_; }
@@ -128,6 +132,8 @@ public:
   bool IsDataPackageReceived() const {
     return metadata_ && metadata_->data_package_received;
   }
+  int GetHintPoints() const { return hint_points_; }
+  int GetHintCost() const { return hint_cost_; }
 
   // Metadata accessors
   std::string ResolveItemName(int64_t id, int slot = -1);
@@ -191,6 +197,11 @@ private:
   std::mutex queue_mutex_;
   std::mutex status_mutex_;
 
+  std::deque<std::string> outgoing_queue_;
+  std::mutex outgoing_mutex_;
+  bool pending_start_ = false;
+  bool pending_stop_ = false;
+
   // Shared Metadata
   std::shared_ptr<ServerMetadata> metadata_;
 
@@ -209,8 +220,9 @@ private:
     bool is_received_packet;
   };
   std::vector<PendingItem> pending_items_;
-
   int64_t last_received_day_ = -1;
+  int hint_points_ = 0;
+  int hint_cost_ = 0;
 };
 
 struct ConnectionSettings;
@@ -227,13 +239,15 @@ public:
   bool Update();
   void SetMaxHistory(int max_history) { max_history_size_ = max_history; }
 
-  void LockHistory() const { history_mutex_.lock(); }
-  void UnlockHistory() const { history_mutex_.unlock(); }
+  void LockHistory() const { state_mutex_.lock(); }
+  void UnlockHistory() const { state_mutex_.unlock(); }
 
   // Session management
   ArchipelagoSession *AddSession(const std::string &name);
   void RemoveSession(const std::string &name);
   void DisconnectAll();
+  void ClearGlobalStats();
+  void ClearSessionStats(int global_slot);
   ArchipelagoSession *GetSessionBySlot(int slot);
   const std::vector<std::unique_ptr<ArchipelagoSession>> &GetSessions() const {
     return sessions_;
@@ -244,7 +258,7 @@ public:
                                  int status);
   std::shared_ptr<ServerMetadata> GetOrCreateMetadata(const std::string &url);
 
-  std::recursive_mutex &GetHistoryMutex() const { return history_mutex_; }
+  std::recursive_mutex &GetStateMutex() const { return state_mutex_; }
 
   // Global history
   const std::vector<RichMessage> &GetChatHistory() const {
@@ -258,9 +272,10 @@ public:
   void UpdateTrackerStats();
   void ForceTrackerSync();
   double GetLastTrackerSyncTime() const { return last_tracker_sync_time_; }
+  bool IsSyncCompleted() const {
+    return sync_state_ == TrackerSyncState::Completed;
+  }
 
-  enum class TrackerConfidence { Low, High };
-  TrackerConfidence GetTrackerConfidence() const { return tracker_confidence_; }
   void SetTotalGames(int count);
   bool IsAnySessionConnected() const;
 
@@ -311,6 +326,7 @@ public:
   const ConnectionSettings *GetSettings() const { return settings_; }
 
 private:
+  mutable std::recursive_mutex state_mutex_; // Protects all manager state
   bool debug_mode_ = false;
   std::vector<RichMessage> history_;
 
@@ -345,19 +361,28 @@ private:
   };
   std::unordered_map<size_t, MessageHashEntry> message_hash_history_;
   std::deque<size_t> message_hash_queue_;
-  mutable std::recursive_mutex history_mutex_;
   MultiworldStats global_stats_;
   double last_tracker_sync_time_ = -1.0;
   bool force_tracker_sync_ = false;
-  TrackerConfidence tracker_confidence_ = TrackerConfidence::Low;
-  int last_tracker_checked_count_ = -1;
-  int live_checks_since_last_poll_ = 0;
+  int64_t last_tracker_checked_count_ = -1;
   std::map<std::string, ArchipelagoSession::State> last_session_states_;
   bool last_any_session_connected_ = false;
   double last_item_activity_time_ = -1.0;
   double last_successful_sync_activity_time_ = -1.0;
   std::string last_synced_static_url_;
+  std::string last_synced_tracker_url_;
   bool tracker_sync_active_ = false;
+
+  // New Two-Poll Tracker Sync State
+  enum class TrackerSyncState {
+    Idle,
+    FirstPollInProgress,
+    WaitingForSecondPoll,
+    SecondPollInProgress,
+    Completed
+  };
+  TrackerSyncState sync_state_ = TrackerSyncState::Idle;
+  double initial_tracker_sync_time_ = 0.0;
 
   std::thread network_thread_;
   std::atomic<bool> network_thread_running_{false};

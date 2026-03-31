@@ -57,9 +57,11 @@ function updateOverview(data) {
         let pct = (data.checked_locations / data.total_locations) * 100;
         pct = Math.min(Math.max(pct, 0), 100);
         progressBarFill.style.width = `${pct}%`;
+        progressBarFill.style.setProperty('--pct', pct);
         document.getElementById('progress-percent').innerText = `${pct.toFixed(1)}%`;
     } else {
         progressBarFill.style.width = `0%`;
+        progressBarFill.style.setProperty('--pct', 0);
         document.getElementById('progress-percent').innerText = `0.0%`;
     }
 }
