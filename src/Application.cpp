@@ -46,6 +46,11 @@ Application::Application()
     : current_config_(Config::Load()), pending_config_(current_config_) {
   s_instance = this;
   is_first_launch_ = !std::filesystem::exists(Config::GetConfigPath());
+  live_server_url_ = current_config_.server_url;
+  live_slots_ = current_config_.slots;
+  if (live_slots_.empty()) {
+    live_slots_.push_back(SlotSettings());
+  }
 }
 
 bool Application::InitializeNetwork() {
@@ -55,7 +60,7 @@ bool Application::InitializeNetwork() {
   ap_network_.SetDebugMode(debug_mode_);
   ap_network_.SetSettings(&current_config_);
   ap_network_.on_history_updated = [this]() {};
-  for (const auto &slot : current_config_.slots) {
+  for (const auto &slot : live_slots_) {
     ap_network_.AddSession(slot.name);
   }
   ap_network_.StartNetworkThread();
@@ -76,6 +81,8 @@ void Application::CleanupUI() {
   glfwGetWindowPos(window_, &current_config_.window_x,
                    &current_config_.window_y);
 
+  current_config_.server_url = live_server_url_;
+  current_config_.slots = live_slots_;
   Config::Save(current_config_);
 
   if (web_server_) {
@@ -290,7 +297,8 @@ bool Application::InitializeUI() {
   ReloadFonts();
 
   // Create all windows at startup
-  AddWindow(std::make_unique<ChatWindow>(ap_network_, current_config_));
+  AddWindow(std::make_unique<ChatWindow>(ap_network_, current_config_,
+                                         live_server_url_, live_slots_));
 
   AddWindow(std::make_unique<SettingsWindow>(
       current_config_,
@@ -641,17 +649,12 @@ void Application::Run() {
                                   &dock_id_bottom);
 
       ImGuiID dock_id_top_left, dock_id_top_right;
-      ImGui::DockBuilderSplitNode(dock_id_top, ImGuiDir_Left, 0.25f,
+      ImGui::DockBuilderSplitNode(dock_id_top, ImGuiDir_Left, 0.5f,
                                   &dock_id_top_left, &dock_id_top_right);
 
-      ImGuiID dock_id_bottom_left, dock_id_bottom_right;
-      ImGui::DockBuilderSplitNode(dock_id_bottom, ImGuiDir_Left, 0.5f,
-                                  &dock_id_bottom_left, &dock_id_bottom_right);
-
-      ImGui::DockBuilderDockWindow("Chat", dock_id_top_right);
-      ImGui::DockBuilderDockWindow("Item Feed", dock_id_top_left);
-      ImGui::DockBuilderDockWindow("Log", dock_id_bottom_left);
-      ImGui::DockBuilderDockWindow("Hints", dock_id_bottom_right);
+      ImGui::DockBuilderDockWindow("Chat", dock_id_top_left);
+      ImGui::DockBuilderDockWindow("Hints", dock_id_top_right);
+      ImGui::DockBuilderDockWindow("Full Feed", dock_id_bottom);
       ImGui::DockBuilderFinish(dockspace_id);
     }
 

@@ -9,12 +9,16 @@
 #include <set>
 
 ChatWindow::ChatWindow(ArchipelagoNetwork &ap_network,
-                       ConnectionSettings &settings, const std::string &name)
-    : Window(name), ap_network_(ap_network), settings_(settings) {
+                       ConnectionSettings &settings,
+                       std::string &live_server_url,
+                       std::vector<SlotSettings> &live_slots,
+                       const std::string &name)
+    : Window(name), ap_network_(ap_network), settings_(settings),
+      live_server_url_(live_server_url), live_slots_(live_slots) {
   input_text_.reserve(256);
 
   // Load initial settings
-  strncpy(server_url_, settings.server_url.c_str(), sizeof(server_url_) - 1);
+  strncpy(server_url_, live_server_url_.c_str(), sizeof(server_url_) - 1);
 }
 
 void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
@@ -56,16 +60,16 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         (input_buf == server_url_) ? "Server URL" : "Server URL##Masked";
     ImGuiInputTextFlags flags =
         (input_buf == server_url_) ? 0 : ImGuiInputTextFlags_ReadOnly;
-    std::string old_url = settings_.server_url;
+    std::string old_url = live_server_url_;
     if (ImGui::InputText(label, input_buf,
                          (input_buf == server_url_) ? sizeof(server_url_)
                                                     : strlen(input_buf) + 1,
                          flags)) {
       if (input_buf == server_url_) {
-        settings_.server_url = server_url_;
-        if (settings_.server_url != old_url) {
+        live_server_url_ = server_url_;
+        if (live_server_url_ != old_url) {
           ap_network_.ClearAllData(true);
-          settings_.tracker_url = "";
+          // settings_.tracker_url = ""; // Don't wipe tracker URL in settings
         }
       }
     }
@@ -75,16 +79,16 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Add Slot")) {
-      settings_.slots.push_back(SlotSettings("NewPlayer", "", false));
-      ap_network_.AddSession(settings_.slots.back().name);
-      Config::Save(settings_);
+      live_slots_.push_back(SlotSettings("NewPlayer", "", false));
+      ap_network_.AddSession(live_slots_.back().name);
+      // Config::Save(settings_); // Don't save on every slot addition anymore
     }
 
     ImGui::Separator();
 
-    for (int i = 0; i < (int)settings_.slots.size(); ++i) {
+    for (int i = 0; i < (int)live_slots_.size(); ++i) {
       ImGui::PushID(i);
-      auto &slot = settings_.slots[i];
+      auto &slot = live_slots_[i];
       auto session = ap_network_.GetSession(slot.name);
       if (session && session->GetName() != slot.last_name) {
         // This session belongs to another slot
@@ -94,8 +98,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
                            : ArchipelagoNetwork::State::Disconnected;
 
       bool name_is_duplicate = false;
-      for (int j = 0; j < (int)settings_.slots.size(); ++j) {
-        if (i != j && settings_.slots[j].name == slot.name) {
+      for (int j = 0; j < (int)live_slots_.size(); ++j) {
+        if (i != j && live_slots_[j].name == slot.name) {
           name_is_duplicate = true;
           break;
         }
@@ -143,10 +147,10 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
             slot.last_name = slot.name;
             session = nullptr;
           }
-          Config::Save(settings_); // Save before connecting
+          // Config::Save(settings_); // Save before connecting
           if (!session)
             session = ap_network_.AddSession(slot.name);
-          session->Connect(settings_.server_url, slot.password);
+          session->Connect(live_server_url_, slot.password);
         }
         ImGui::EndDisabled();
       } else if (state == ArchipelagoNetwork::State::Connecting) {
@@ -162,18 +166,18 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       }
 
       ImGui::SameLine();
-      bool can_remove = (settings_.slots.size() > 1) &&
+      bool can_remove = (live_slots_.size() > 1) &&
                         (state == ArchipelagoNetwork::State::Disconnected);
       ImGui::BeginDisabled(!can_remove);
       if (ImGui::Button("Remove")) {
         std::string name_to_remove = slot.name;
         std::string last_name_to_remove = slot.last_name;
-        settings_.slots.erase(settings_.slots.begin() + i);
+        live_slots_.erase(live_slots_.begin() + i);
 
         // Only remove session if no other slot uses these names
         bool name_still_used = false;
         bool last_name_still_used = false;
-        for (const auto &s : settings_.slots) {
+        for (const auto &s : live_slots_) {
           if (s.name == name_to_remove || s.last_name == name_to_remove)
             name_still_used = true;
           if (s.name == last_name_to_remove ||
@@ -186,7 +190,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         if (!last_name_still_used && last_name_to_remove != name_to_remove)
           ap_network_.RemoveSession(last_name_to_remove);
 
-        Config::Save(settings_);
+        // Config::Save(settings_);
         ImGui::EndDisabled();
         ImGui::PopID();
         break;

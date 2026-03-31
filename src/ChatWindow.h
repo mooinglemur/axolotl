@@ -8,6 +8,7 @@
 class ChatWindow : public Window {
 public:
   ChatWindow(ArchipelagoNetwork &ap_network, ConnectionSettings &settings,
+             std::string &live_server_url, std::vector<SlotSettings> &live_slots,
              const std::string &name = "Chat");
   void Render(std::tm *current_tm, ImFont *custom_font = nullptr,
               ImFont *preview_font = nullptr,
@@ -16,6 +17,8 @@ public:
 private:
   ArchipelagoNetwork &ap_network_;
   ConnectionSettings &settings_;
+  std::string &live_server_url_;
+  std::vector<SlotSettings> &live_slots_;
 
   char server_url_[256] = "archipelago.gg:0";
   char masked_url_[256] = "";

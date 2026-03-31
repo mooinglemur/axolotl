@@ -52,6 +52,8 @@ private:
   // Preferences
   ConnectionSettings current_config_;
   ConnectionSettings pending_config_;
+  std::string live_server_url_;
+  std::vector<SlotSettings> live_slots_;
   std::atomic<bool> settings_changed_pending_{false};
   std::atomic<bool> fonts_reload_pending_{false};
   std::atomic<bool> is_initialized_{false};
