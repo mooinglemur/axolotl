@@ -1,7 +1,5 @@
 # Axolotl Archipelago Client
 
-# THIS APPLICATION IS IN EARLY DEVELOPMENT AND MAY BE UNSTABLE
-
 Axolotl is a lightweight, cross-platform Archipelago multiworld client built with C++ and ImGui. It provides a clean, modular interface for interacting with Archipelago sessions, including chat, received item tracking, and hinting.
 
 ![Axolotl Screenshot](./images/screenshot.png)
@@ -22,7 +20,7 @@ Axolotl is a lightweight, cross-platform Archipelago multiworld client built wit
 
 ## Obtaining
 
-- There are no official releases yet, but you can download a pre-built binary from the [releases page](https://github.com/mooinglemur/axolotl/releases).
+- The latest release can be downloaded from the [releases page](https://github.com/mooinglemur/axolotl/releases).
 
 **The macOS build is not tested, and may not work at all**
 
