@@ -1,5 +1,17 @@
 set(CMAKE_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 
+if(NOT PROJECT_VERSION)
+    file(READ "${CMAKE_SOURCE_DIR}/CMakeLists.txt" CMAKELISTS_CONTENT)
+    string(REGEX MATCH "project\\(Axolotl VERSION ([0-9]+\\.[0-9]+\\.[0-9]+)" MATCHED_VERSION "${CMAKELISTS_CONTENT}")
+    if(CMAKE_MATCH_1)
+        set(PROJECT_VERSION "${CMAKE_MATCH_1}")
+        string(REPLACE "." ";" VERSION_LIST "${PROJECT_VERSION}")
+        list(GET VERSION_LIST 0 PROJECT_VERSION_MAJOR)
+        list(GET VERSION_LIST 1 PROJECT_VERSION_MINOR)
+        list(GET VERSION_LIST 2 PROJECT_VERSION_PATCH)
+    endif()
+endif()
+
 execute_process(
     COMMAND git rev-parse --short HEAD
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
