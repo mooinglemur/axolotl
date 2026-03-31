@@ -172,7 +172,7 @@ body {
 
 This is served at `/overview`.
 
-In order for it to display anything useful, you will need to open the Overview window in Axolotl, have the tracker URL (e.g. https://archipelago.gg/tracker/<id>) filled in (in the Overview window's Tracker URL field), and be connected to at least one slot in the associated multiworld.
+In order for it to display anything useful, you will need to open the Overview window in Axolotl, have the tracker URL (e.g. `https://archipelago.gg/tracker/iduWRXxiRt-geq9LZeP8vw`) filled in (in the Overview window's Tracker URL field), and be connected to at least one slot in the associated multiworld.
 
 ![OBS Overview Browser Source](images/obs_overview_browser_source.png)
 
