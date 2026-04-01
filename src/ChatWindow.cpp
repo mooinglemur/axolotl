@@ -258,7 +258,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       }
 
       bool in_bottom_zone =
-          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 64.0f);
+          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 128.0f);
 
       float min_h = ImGui::GetTextLineHeightWithSpacing();
       float avg_h = (measured_rows_count_ > 0)
@@ -272,19 +272,6 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       ImGuiListClipper clipper;
       bool use_clipper = (history.size() > 100);
-      if (use_clipper) {
-        clipper.Begin((int)history.size(), clipper_height);
-
-        // Gap fix at the top: force render enough to fill the window if we are
-        // there
-        int min_visible_top = (int)(ImGui::GetWindowHeight() / min_h) + 5;
-        clipper.IncludeItemsByIndex(0, min_visible_top);
-
-        if (locked_to_bottom_ || in_bottom_zone) {
-          clipper.IncludeItemsByIndex((int)history.size() - 20,
-                                      (int)history.size());
-        }
-      }
 
       bool force_bottom_render =
           (use_clipper && (locked_to_bottom_ || in_bottom_zone) &&
@@ -444,11 +431,44 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       };
 
       if (use_clipper) {
-        clipper.Begin((int)history.size(), clipper_height);
-        if (force_bottom_render) {
-          clipper.IncludeItemsByIndex(std::max(0, (int)history.size() - 20),
-                                      (int)history.size());
+        int count = (int)history.size();
+
+        // 1. Precise Viewport Calculation using Row Height Cache
+        int vis_start = 0;
+        int vis_end = 0;
+        float scroll_y = ImGui::GetScrollY();
+        float window_h = ImGui::GetWindowHeight();
+        float cumulative_h = 0;
+
+        for (int i = 0; i < count; ++i) {
+          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
+          if (cumulative_h + h > scroll_y) {
+            vis_start = i;
+            break;
+          }
+          cumulative_h += h;
         }
+        vis_end = vis_start;
+        for (int i = vis_start; i < count; ++i) {
+          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
+          cumulative_h += h;
+          vis_end = i + 1;
+          if (cumulative_h > scroll_y + window_h)
+            break;
+        }
+
+        clipper.Begin(count, clipper_height);
+
+        // 2. Apply Buffers (30 above, 50 below)
+        clipper.IncludeItemsByIndex(std::clamp(vis_start - 30, 0, count),
+                                    std::clamp(vis_end + 50, 0, count));
+
+        // 3. Absolute Boundary safety
+        clipper.IncludeItemsByIndex(0, std::clamp(20, 0, count));
+        if (force_bottom_render) {
+          clipper.IncludeItemsByIndex(std::clamp(count - 30, 0, count), count);
+        }
+
         while (clipper.Step()) {
           for (int row_idx = clipper.DisplayStart; row_idx < clipper.DisplayEnd;
                ++row_idx) {

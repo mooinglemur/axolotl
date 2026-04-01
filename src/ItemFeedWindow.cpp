@@ -114,7 +114,7 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
             display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
 
       bool in_bottom_zone =
-          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 64.0f);
+          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 128.0f);
 
       float min_h = ImGui::GetTextLineHeightWithSpacing();
       float avg_h = (measured_rows_count_ > 0)
@@ -127,17 +127,6 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       ImGuiListClipper clipper;
       bool use_clipper = (display_indices_.size() > 100);
-      if (use_clipper) {
-        clipper.Begin((int)display_indices_.size(), clipper_height);
-
-        int min_visible_top = (int)(ImGui::GetWindowHeight() / min_h) + 5;
-        clipper.IncludeItemsByIndex(0, min_visible_top);
-
-        if (locked_to_bottom_ || in_bottom_zone) {
-          clipper.IncludeItemsByIndex((int)display_indices_.size() - 20,
-                                      (int)display_indices_.size());
-        }
-      }
 
       bool force_bottom_render =
           (use_clipper && (locked_to_bottom_ || in_bottom_zone) &&
@@ -293,12 +282,44 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       };
 
       if (use_clipper) {
-        clipper.Begin((int)display_indices_.size(), clipper_height);
-        if (force_bottom_render) {
-          clipper.IncludeItemsByIndex(
-              std::max(0, (int)display_indices_.size() - 20),
-              (int)display_indices_.size());
+        int count = (int)display_indices_.size();
+
+        // 1. Precise Viewport Calculation using Row Height Cache
+        int vis_start = 0;
+        int vis_end = 0;
+        float scroll_y = ImGui::GetScrollY();
+        float window_h = ImGui::GetWindowHeight();
+        float cumulative_h = 0;
+
+        for (int i = 0; i < count; ++i) {
+          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
+          if (cumulative_h + h > scroll_y) {
+            vis_start = i;
+            break;
+          }
+          cumulative_h += h;
         }
+        vis_end = vis_start;
+        for (int i = vis_start; i < count; ++i) {
+          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
+          cumulative_h += h;
+          vis_end = i + 1;
+          if (cumulative_h > scroll_y + window_h)
+            break;
+        }
+
+        clipper.Begin(count, clipper_height);
+
+        // 2. Apply Buffers (30 above, 50 below)
+        clipper.IncludeItemsByIndex(std::clamp(vis_start - 30, 0, count),
+                                    std::clamp(vis_end + 50, 0, count));
+
+        // 3. Absolute Boundary safety
+        clipper.IncludeItemsByIndex(0, std::clamp(20, 0, count));
+        if (force_bottom_render) {
+          clipper.IncludeItemsByIndex(std::clamp(count - 30, 0, count), count);
+        }
+
         while (clipper.Step()) {
           for (int row_idx = clipper.DisplayStart; row_idx < clipper.DisplayEnd;
                ++row_idx) {
