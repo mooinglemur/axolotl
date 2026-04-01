@@ -28,7 +28,7 @@ As the project started becoming functional, it made sense to add a few more feat
 * Custom font support
 * Substring search filter for most windows
 
-With an increasing number of users, the feature set is continuing to expand and the project continues to be under active development as of March 2026.
+With an increasing number of users, the feature set is continuing to expand and the project continues to be under active development as of April 2026.
 
 ## Features
 
