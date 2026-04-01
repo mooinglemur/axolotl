@@ -23,11 +23,21 @@ static int64_t get_as_id(const json &j, int64_t default_val = -1) {
   return default_val;
 }
 
-static double GetCurrentTimestamp() {
+double ArchipelagoNetwork::GetCurrentTimestamp() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
              std::chrono::system_clock::now().time_since_epoch())
              .count() /
          1000000.0;
+}
+
+void ArchipelagoNetwork::UpdateSlotActivity(int packed_slot, double timestamp) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  if (timestamp < 0)
+    timestamp = GetCurrentTimestamp();
+  auto &slot_stats = global_stats_->slot_info[packed_slot];
+  if (timestamp > slot_stats.last_activity_time) {
+    slot_stats.last_activity_time = timestamp;
+  }
 }
 
 // --- ArchipelagoSession ---
@@ -114,14 +124,15 @@ void ArchipelagoSession::HandleMessage(const ix::WebSocketMessagePtr &msg) {
       auto j = json::parse(msg->str);
       if (j.is_array()) {
         for (auto &packet : j) {
-          message_queue_.push({packet, GetCurrentTimestamp()});
+          message_queue_.push(
+              {packet, ArchipelagoNetwork::GetCurrentTimestamp()});
         }
         manager_->WakeUp();
       }
     } catch (const std::exception &e) {
       std::lock_guard<std::mutex> status_lock(status_mutex_);
       status_messages_.push({"JSON parse error: " + std::string(e.what()),
-                             GetCurrentTimestamp()});
+                             ArchipelagoNetwork::GetCurrentTimestamp()});
       manager_->WakeUp(); // Added WakeUp call here
     }
   } else if (msg->type == ix::WebSocketMessageType::Open) {
@@ -130,13 +141,13 @@ void ArchipelagoSession::HandleMessage(const ix::WebSocketMessagePtr &msg) {
                               "WebSocket connected to " + webSocket_.getUrl());
   } else if (msg->type == ix::WebSocketMessageType::Close) {
     if (connection_error_time_ <= 0)
-      connection_error_time_ = GetCurrentTimestamp();
+      connection_error_time_ = ArchipelagoNetwork::GetCurrentTimestamp();
     is_connected_ = false;
     manager_->OnStatusMessage(this, "WebSocket disconnected from " +
                                         webSocket_.getUrl());
   } else if (msg->type == ix::WebSocketMessageType::Error) {
     if (connection_error_time_ <= 0)
-      connection_error_time_ = GetCurrentTimestamp();
+      connection_error_time_ = ArchipelagoNetwork::GetCurrentTimestamp();
     manager_->OnStatusMessage(this,
                               "WebSocket error: " + msg->errorInfo.reason);
 
@@ -175,10 +186,11 @@ bool ArchipelagoSession::Update() {
 
   // Timeout logic
   if (user_wants_connection_ && !is_connected_ && connection_error_time_ > 0) {
-    if (GetCurrentTimestamp() - connection_error_time_ > 300.0) {
+    if (ArchipelagoNetwork::GetCurrentTimestamp() - connection_error_time_ >
+        300.0) {
       Disconnect();
       RichMessage rm;
-      rm.timestamp = GetCurrentTimestamp();
+      rm.timestamp = ArchipelagoNetwork::GetCurrentTimestamp();
       rm.populate_local_time();
       rm.parts.push_back(
           {"[System][" + name_ +
@@ -391,7 +403,7 @@ bool ArchipelagoSession::Update() {
       manager_->ReResolveHistory();
     } else if (cmd == "ConnectionRefused") {
       if (connection_error_time_ <= 0)
-        connection_error_time_ = GetCurrentTimestamp();
+        connection_error_time_ = ArchipelagoNetwork::GetCurrentTimestamp();
       RichMessage rm;
       rm.timestamp = msg_time;
       rm.populate_local_time();
@@ -530,7 +542,7 @@ bool ArchipelagoSession::Update() {
       if (is_item_event) {
         if (packet.contains("type")) {
           std::string type = packet["type"];
-          if (type == "ItemSend" || type == "ItemCheat") {
+          if (type == "ItemSend") {
             int r_slot = (int)get_as_id(
                 packet.contains("receiving")
                     ? packet["receiving"]
@@ -544,6 +556,12 @@ bool ArchipelagoSession::Update() {
                     ? packet["item"]["player"]
                     : json(-1));
             rm.sender_slot = (s_slot != -1) ? ((team_ << 16) | s_slot) : -1;
+
+            // Live Activity Update (Location-based only: ItemSend)
+            if (rm.sender_slot != -1) {
+              manager_->UpdateSlotActivity(rm.sender_slot, ArchipelagoNetwork::GetCurrentTimestamp());
+            }
+
             if (packet.contains("item") &&
                 packet["item"].contains("location")) {
               int64_t loc_id = get_as_id(packet["item"]["location"]);
@@ -834,7 +852,7 @@ void ArchipelagoSession::SendDeathLink(const std::string &cause) {
   json packet = json::array();
   json data = {{"cmd", "DeathLink"},
                {"source", name_},
-               {"timestamp", GetCurrentTimestamp()},
+               {"timestamp", ArchipelagoNetwork::GetCurrentTimestamp()},
                {"cause", cause}};
   packet.push_back(
       {{"cmd", "Bounce"}, {"tags", {"DeathLink"}}, {"data", data}});
@@ -1082,7 +1100,10 @@ void ArchipelagoSession::ResolvePendingItems() {
 
 // --- ArchipelagoNetwork (Manager) ---
 
-ArchipelagoNetwork::ArchipelagoNetwork() {}
+ArchipelagoNetwork::ArchipelagoNetwork() {
+  global_stats_ = std::make_shared<MultiworldStats>();
+}
+
 
 void ArchipelagoNetwork::StartNetworkThread() {
   if (network_thread_running_)
@@ -1105,7 +1126,7 @@ void ArchipelagoNetwork::StopNetworkThread() {
   }
 }
 
-MultiworldStats ArchipelagoNetwork::GetGlobalStats() const {
+std::shared_ptr<const MultiworldStats> ArchipelagoNetwork::GetGlobalStats() const {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   return global_stats_;
 }
@@ -1238,31 +1259,34 @@ bool ArchipelagoNetwork::Update() {
 
 void ArchipelagoNetwork::ClearGlobalStats() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-  global_stats_ = MultiworldStats();
+  global_stats_ = std::make_shared<MultiworldStats>();
   sync_state_ = TrackerSyncState::Idle;
   initial_tracker_sync_time_ = 0.0;
   last_tracker_sync_time_ = -1.0;
   last_successful_sync_activity_time_ = -1.0;
   if (on_stats_updated)
-    on_stats_updated(global_stats_);
+    on_stats_updated(*global_stats_);
 }
 
 void ArchipelagoNetwork::ClearSessionStats(int global_slot) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-  if (global_stats_.slot_info.count(global_slot)) {
-    global_stats_.slot_info.erase(global_slot);
-    global_stats_.completed_slots.erase(global_slot);
+  if (global_stats_->slot_info.count(global_slot)) {
+    // Create new stats for thread safety (Copy-on-Write)
+    auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
+    new_stats->slot_info.erase(global_slot);
+    new_stats->completed_slots.erase(global_slot);
 
     // Re-calculate global totals
     int total_checked = 0;
-    for (auto const &[id, stats] : global_stats_.slot_info) {
+    for (auto const &[id, stats] : new_stats->slot_info) {
       total_checked += (int)stats.checked_location_ids.size();
     }
-    global_stats_.checked_locations = total_checked;
+    new_stats->checked_locations = total_checked;
     last_tracker_checked_count_ = total_checked;
+    global_stats_ = new_stats;
 
     if (on_stats_updated)
-      on_stats_updated(global_stats_);
+      on_stats_updated(*global_stats_);
   }
 }
 
@@ -1357,22 +1381,24 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
     if (msg.type == "ItemSend") {
       int sender = msg.sender_slot;
       if (sender != -1) {
-        auto &slot_stats = global_stats_.slot_info[sender];
+        // Create new stats for thread safety (Copy-on-Write)
+        auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
+        auto &slot_stats = new_stats->slot_info[sender];
         slot_stats.checked_location_ids.insert(msg.location_id);
         slot_stats.checked_locations =
             (int)slot_stats.checked_location_ids.size();
-        slot_stats.last_activity_time = msg.timestamp;
 
         // Re-calculate global count
         int total_checked = 0;
-        for (auto const &[id, stats] : global_stats_.slot_info) {
+        for (auto const &[id, stats] : new_stats->slot_info) {
           total_checked += (int)stats.checked_location_ids.size();
         }
-        global_stats_.checked_locations = total_checked;
+        new_stats->checked_locations = total_checked;
+        global_stats_ = new_stats;
+
+        if (on_stats_updated)
+          on_stats_updated(*global_stats_);
       }
-    }
-    if (on_stats_updated) {
-      on_stats_updated(global_stats_);
     }
   } else {
     CheckDayChange(chat_history_, msg.timestamp, last_chat_day_);
@@ -1392,18 +1418,25 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
         full_text += p.text;
       if (msg.type == "Goal" ||
           full_text.find(" completed their goal") != std::string::npos) {
+        // Create new stats for thread safety (Copy-on-Write)
+        auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
+        bool changed = false;
         if (msg.sender_slot != -1) {
-          global_stats_.completed_slots.insert(msg.sender_slot);
+          new_stats->completed_slots.insert(msg.sender_slot);
+          changed = true;
         } else {
           for (const auto &p : msg.parts) {
             if (p.player_id != -1) {
-              global_stats_.completed_slots.insert(p.player_id);
+              new_stats->completed_slots.insert(p.player_id);
+              changed = true;
               break;
             }
           }
         }
-        if (on_stats_updated) {
-          on_stats_updated(global_stats_);
+        if (changed) {
+          global_stats_ = new_stats;
+          if (on_stats_updated)
+            on_stats_updated(*global_stats_);
         }
       }
     }
@@ -1751,15 +1784,15 @@ void ArchipelagoNetwork::SyncTotalLocations() {
 
               int player_total = p["total_locations"].get<int>();
               total_l += player_total;
-              global_stats_.slot_info[packed_slot].total_locations =
+              global_stats_->slot_info[packed_slot].total_locations =
                   player_total;
             }
           }
 
-          global_stats_.total_locations = total_l;
+          global_stats_->total_locations = total_l;
 
           if (on_stats_updated) {
-            on_stats_updated(global_stats_);
+            on_stats_updated(*global_stats_);
           }
 
           if (debug_mode_) {
@@ -1855,6 +1888,7 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
           int checked_l = 0;
 
           std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+          auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
 
           if (j.contains("player_status") && j["player_status"].is_array()) {
             total_g = (int)j["player_status"].size();
@@ -1868,7 +1902,7 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
                 if (stats.contains("status") && stats["status"].is_number() &&
                     stats["status"].get<int>() == 30) {
                   completed_g++;
-                  global_stats_.completed_slots.insert(packed_slot);
+                  new_stats->completed_slots.insert(packed_slot);
                 }
               }
             }
@@ -1883,7 +1917,7 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
                 int team =
                     checks.contains("team") ? checks["team"].get<int>() : 0;
                 int packed_slot = (team << 16) | slot;
-                auto &slot_stats = global_stats_.slot_info[packed_slot];
+                auto &slot_stats = new_stats->slot_info[packed_slot];
                 for (const auto &loc : checks["locations"]) {
                   slot_stats.checked_location_ids.insert(get_as_id(loc));
                 }
@@ -1910,10 +1944,10 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
                 ss >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT");
                 if (!ss.fail()) {
 #ifdef _WIN32
-                  global_stats_.slot_info[packed_slot].last_activity_time =
+                  new_stats->slot_info[packed_slot].last_activity_time =
                       (double)_mkgmtime(&tm);
 #else
-                  global_stats_.slot_info[packed_slot].last_activity_time =
+                  new_stats->slot_info[packed_slot].last_activity_time =
                       (double)timegm(&tm);
 #endif
                 }
@@ -1931,14 +1965,14 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
           }
 
           if (total_g > 0)
-            global_stats_.total_games = total_g;
+            new_stats->total_games = total_g;
 
           // Re-calculate global count
           int total_checked = 0;
-          for (auto const &[id, stats] : global_stats_.slot_info) {
+          for (auto const &[id, stats] : new_stats->slot_info) {
             total_checked += (int)stats.checked_location_ids.size();
           }
-          global_stats_.checked_locations = total_checked;
+          new_stats->checked_locations = total_checked;
           last_tracker_checked_count_ = total_checked;
 
           // Handle two-poll strategy state
@@ -1960,8 +1994,10 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
             }
           }
 
+          global_stats_ = new_stats;
+
           if (on_stats_updated) {
-            on_stats_updated(global_stats_);
+            on_stats_updated(*global_stats_);
           }
           last_successful_sync_activity_time_ = last_item_activity_time_;
 
@@ -1990,8 +2026,10 @@ void ArchipelagoNetwork::ForceTrackerSync() {
 
 void ArchipelagoNetwork::SetTotalGames(int count) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-  if (global_stats_.total_games == 0) {
-    global_stats_.total_games = count;
+  if (global_stats_->total_games == 0) {
+    auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
+    new_stats->total_games = count;
+    global_stats_ = new_stats;
   }
 }
 

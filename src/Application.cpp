@@ -562,13 +562,13 @@ void Application::Run() {
     MTLRenderPassDescriptor *renderPassDescriptor = nil;
 #endif
     double t_start = glfwGetTime();
-    glfwWaitEventsTimeout(0.016); // 60 FPS base
+    glfwWaitEventsTimeout(0.1); // Wait up to 100ms
     double t_after_poll = glfwGetTime();
 
     // Render if we received a real window event (not a timeout)
     // OR if we are in a settlement period
     bool should_render =
-        (frames_to_render_ > 0) || (t_after_poll - t_start < 0.015);
+        (frames_to_render_ > 0) || (t_after_poll - t_start < 0.095);
 
     if (frames_to_render_ > 0)
       frames_to_render_--;

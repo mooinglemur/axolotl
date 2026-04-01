@@ -37,8 +37,6 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
     last_settings_tracker_url_ = settings_.tracker_url;
   }
 
-  // Tracker URL might have been cleared externally (e.g., server change)
-
   ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
   if (ImGui::Begin(name_.c_str(), &is_open_,
                    ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
@@ -48,8 +46,8 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
     int complete_without_goal = 0;
     int goal_without_complete = 0;
 
-    for (const auto &[slot_id, s_stats] : stats.slot_info) {
-      bool is_goal = stats.completed_slots.count(slot_id) > 0;
+    for (const auto &[slot_id, s_stats] : stats->slot_info) {
+      bool is_goal = stats->completed_slots.count(slot_id) > 0;
       bool is_100_percent =
           (s_stats.total_locations > 0 &&
            s_stats.checked_locations >= s_stats.total_locations);
@@ -70,13 +68,13 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       // Locations Checked
       float progress =
-          (stats.total_locations > 0)
-              ? (float)stats.checked_locations / stats.total_locations
+          (stats->total_locations > 0)
+              ? (float)stats->checked_locations / stats->total_locations
               : 0.0f;
 
       char overlay[64];
       snprintf(overlay, sizeof(overlay), "%.1f%% (%d/%d)", progress * 100.0f,
-               stats.checked_locations, stats.total_locations);
+               stats->checked_locations, stats->total_locations);
 
       ImVec2 pos = ImGui::GetCursorScreenPos();
       ImVec2 bar_size =
@@ -98,7 +96,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       ImGui::Spacing();
       ImGui::BulletText("Completion: %d/%d", fully_completed,
-                        stats.total_games);
+                        stats->total_games);
       if (complete_without_goal > 0) {
         ImGui::BulletText("Complete without goal: %d", complete_without_goal);
       }
@@ -136,7 +134,9 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       int row_bg_flag =
           settings_.shade_alternating_rows ? ImGuiTableFlags_RowBg : 0;
-      if (ImGui::BeginTable(
+
+
+    if (ImGui::BeginTable(
               "PlayerStats", 3,
               ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable |
                   ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
@@ -149,6 +149,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
         ImGui::TableSetupColumn("Last Activity",
                                 ImGuiTableColumnFlags_WidthFixed, 100.0f);
         ImGui::TableHeadersRow();
+
 
         struct SortEntry {
           int slot_id;
@@ -164,7 +165,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
                        ::tolower);
 
         std::vector<SortEntry> entries;
-        for (const auto &[slot_id, s_stats] : stats.slot_info) {
+        for (const auto &[slot_id, s_stats] : stats->slot_info) {
           std::string name = ap_network_.ResolvePlayerName(slot_id);
 
           if (!l_filter.empty()) {
@@ -175,7 +176,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
               continue;
           }
 
-          bool is_goal = stats.completed_slots.count(slot_id) > 0;
+          bool is_goal = stats->completed_slots.count(slot_id) > 0;
           bool is_100_percent =
               (s_stats.total_locations > 0 &&
                s_stats.checked_locations == s_stats.total_locations);
@@ -268,8 +269,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
           ImVec2 text_size = ImGui::CalcTextSize(overlay);
           ImVec2 text_pos = ImVec2(pos.x + (width - text_size.x) * 0.5f,
                                    pos.y + (height - text_size.y) * 0.5f);
-          ImGui::GetWindowDrawList()->AddText(text_pos, IM_COL32_WHITE,
-                                              overlay);
+          ImGui::GetWindowDrawList()->AddText(text_pos, IM_COL32_WHITE, overlay);
 
           ImGui::TableSetColumnIndex(2);
 
@@ -277,10 +277,10 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
           bool is_disabled = false;
 
           if (e.last_activity > 0) {
-            double now = (double)std::time(nullptr);
-            double delta = now - e.last_activity;
+            double now = ArchipelagoNetwork::GetCurrentTimestamp();
+            double delta = std::max(0.0, now - e.last_activity);
 
-            if (delta < 0) {
+            if (delta < 1.0) {
               snprintf(delta_str, sizeof(delta_str), "now");
             } else if (delta < 60) {
               snprintf(delta_str, sizeof(delta_str), "%ds", (int)delta);

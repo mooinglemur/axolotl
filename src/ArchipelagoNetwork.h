@@ -268,13 +268,16 @@ public:
     return item_history_;
   }
 
-  MultiworldStats GetGlobalStats() const;
+  std::shared_ptr<const MultiworldStats> GetGlobalStats() const;
   void UpdateTrackerStats();
   void ForceTrackerSync();
   double GetLastTrackerSyncTime() const { return last_tracker_sync_time_; }
   bool IsSyncCompleted() const {
     return sync_state_ == TrackerSyncState::Completed;
   }
+
+  void UpdateSlotActivity(int packed_slot, double timestamp = -1.0);
+  static double GetCurrentTimestamp();
 
   void SetTotalGames(int count);
   bool IsAnySessionConnected() const;
@@ -361,7 +364,7 @@ private:
   };
   std::unordered_map<size_t, MessageHashEntry> message_hash_history_;
   std::deque<size_t> message_hash_queue_;
-  MultiworldStats global_stats_;
+  std::shared_ptr<MultiworldStats> global_stats_;
   double last_tracker_sync_time_ = -1.0;
   bool force_tracker_sync_ = false;
   int64_t last_tracker_checked_count_ = -1;
