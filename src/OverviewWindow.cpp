@@ -18,9 +18,9 @@ OverviewWindow::OverviewWindow(ArchipelagoNetwork &ap_network,
                                ConnectionSettings &settings)
     : Window("Overview"), ap_network_(ap_network), settings_(settings) {
   std::memset(tracker_url_buf_, 0, sizeof(tracker_url_buf_));
-  if (!settings_.tracker_url.empty()) {
-    std::strncpy(tracker_url_buf_, settings_.tracker_url.c_str(),
-                 sizeof(tracker_url_buf_) - 1);
+  const std::string &url = ap_network_.GetTrackerUrl();
+  if (!url.empty()) {
+    std::strncpy(tracker_url_buf_, url.c_str(), sizeof(tracker_url_buf_) - 1);
   }
 }
 
@@ -31,10 +31,11 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
     return;
 
   // Tracker URL might have been cleared externally (e.g., server change)
-  if (settings_.tracker_url != last_settings_tracker_url_) {
-    std::strncpy(tracker_url_buf_, settings_.tracker_url.c_str(),
+  const std::string &live_url = ap_network_.GetTrackerUrl();
+  if (live_url != last_settings_tracker_url_) {
+    std::strncpy(tracker_url_buf_, live_url.c_str(),
                  sizeof(tracker_url_buf_) - 1);
-    last_settings_tracker_url_ = settings_.tracker_url;
+    last_settings_tracker_url_ = live_url;
   }
 
   ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
@@ -135,8 +136,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
       int row_bg_flag =
           settings_.shade_alternating_rows ? ImGuiTableFlags_RowBg : 0;
 
-
-    if (ImGui::BeginTable(
+      if (ImGui::BeginTable(
               "PlayerStats", 3,
               ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable |
                   ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
@@ -149,7 +149,6 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
         ImGui::TableSetupColumn("Last Activity",
                                 ImGuiTableColumnFlags_WidthFixed, 100.0f);
         ImGui::TableHeadersRow();
-
 
         struct SortEntry {
           int slot_id;
@@ -269,7 +268,8 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
           ImVec2 text_size = ImGui::CalcTextSize(overlay);
           ImVec2 text_pos = ImVec2(pos.x + (width - text_size.x) * 0.5f,
                                    pos.y + (height - text_size.y) * 0.5f);
-          ImGui::GetWindowDrawList()->AddText(text_pos, IM_COL32_WHITE, overlay);
+          ImGui::GetWindowDrawList()->AddText(text_pos, IM_COL32_WHITE,
+                                              overlay);
 
           ImGui::TableSetColumnIndex(2);
 
@@ -330,21 +330,33 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
       }
       ImGui::SameLine();
       if (ImGui::Button("Save & Sync")) {
-        settings_.tracker_url = tracker_url_buf_;
-        ap_network_.ForceTrackerSync();
+        ap_network_.SetTrackerUrl(tracker_url_buf_);
         sync_triggered_ = true;
       }
 
-      if (sync_triggered_ && !settings_.tracker_url.empty()) {
+      if (sync_triggered_ && !ap_network_.GetTrackerUrl().empty()) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0, 1, 0, 1), "Syncing...");
       }
 
-      if (settings_.tracker_url.empty()) {
+      if (ap_network_.GetTrackerUrl().empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
         ImGui::TextWrapped(
             "Enter an Archipelago tracker URL to see detailed global stats.");
         ImGui::PopStyleColor();
+      }
+
+      ImGui::Spacing();
+      if (ImGui::Button("Reset Stats", ImVec2(-1, 0))) {
+        ap_network_.ClearGlobalStats();
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Resets check totals and removes player slots that\n"
+            "don't exist in the current multiworld, then reloads\n"
+            "stats from the tracker URL.  This should not be needed\n"
+            "during normal use, but is provided to solve unforeseen\n"
+            "desynchronization issues.");
       }
     }
   }

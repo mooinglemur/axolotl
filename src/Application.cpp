@@ -83,6 +83,7 @@ void Application::CleanupUI() {
 
   current_config_.server_url = live_server_url_;
   current_config_.slots = live_slots_;
+  current_config_.tracker_url = ap_network_.GetTrackerUrl();
   Config::Save(current_config_);
 
   if (web_server_) {

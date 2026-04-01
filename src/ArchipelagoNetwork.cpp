@@ -1104,6 +1104,22 @@ ArchipelagoNetwork::ArchipelagoNetwork() {
   global_stats_ = std::make_shared<MultiworldStats>();
 }
 
+void ArchipelagoNetwork::SetSettings(const ConnectionSettings *settings) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  settings_ = settings;
+  if (settings_ && live_tracker_url_.empty()) {
+    live_tracker_url_ = settings_->tracker_url;
+  }
+}
+
+void ArchipelagoNetwork::SetTrackerUrl(const std::string &url) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  if (live_tracker_url_ != url) {
+    live_tracker_url_ = url;
+    ForceTrackerSync();
+  }
+}
+
 
 void ArchipelagoNetwork::StartNetworkThread() {
   if (network_thread_running_)
@@ -1247,6 +1263,16 @@ bool ArchipelagoNetwork::Update() {
         changed = true;
       }
     }
+
+    bool any_connected = IsAnySessionConnected();
+    if (any_connected != last_any_session_connected_) {
+      if (!any_connected) {
+        // Reset sync state when transitioning to no sessions connected
+        sync_state_ = TrackerSyncState::Idle;
+      }
+      last_any_session_connected_ = any_connected;
+    }
+
     UpdateTrackerStats();
   }
 
@@ -1259,11 +1285,36 @@ bool ArchipelagoNetwork::Update() {
 
 void ArchipelagoNetwork::ClearGlobalStats() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-  global_stats_ = std::make_shared<MultiworldStats>();
+
+  auto new_stats = std::make_shared<MultiworldStats>();
+  new_stats->total_games = global_stats_->total_games;
+
+  // 1. Identify current valid slots from all active sessions
+  std::set<int> current_multiworld_slots;
+  for (const auto &session : sessions_) {
+    if (session->metadata_) {
+      for (const auto &[slot_id, name] : session->metadata_->player_names) {
+        current_multiworld_slots.insert(slot_id);
+      }
+    }
+  }
+
+  // 2. Initialize those slots in the new stats (with 0 checks)
+  for (int slot_id : current_multiworld_slots) {
+    SlotStats s;
+    // Preserve total_locations if known (they are game-config, not activity)
+    if (global_stats_->slot_info.count(slot_id)) {
+      s.total_locations = global_stats_->slot_info.at(slot_id).total_locations;
+    }
+    new_stats->slot_info[slot_id] = s;
+  }
+
+  global_stats_ = new_stats;
   sync_state_ = TrackerSyncState::Idle;
   initial_tracker_sync_time_ = 0.0;
   last_tracker_sync_time_ = -1.0;
   last_successful_sync_activity_time_ = -1.0;
+
   if (on_stats_updated)
     on_stats_updated(*global_stats_);
 }
@@ -1736,10 +1787,10 @@ bool ArchipelagoNetwork::IsDataPackageReceived() const {
   return false;
 }
 void ArchipelagoNetwork::SyncTotalLocations() {
-  if (!settings_ || settings_->tracker_url.empty())
+  if (live_tracker_url_.empty())
     return;
 
-  std::string api_url = settings_->tracker_url;
+  std::string api_url = live_tracker_url_;
   size_t pos = api_url.find("/tracker/");
   if (pos != std::string::npos) {
     api_url.replace(pos, 9, "/api/static_tracker/");
@@ -1807,15 +1858,15 @@ void ArchipelagoNetwork::SyncTotalLocations() {
 }
 
 void ArchipelagoNetwork::UpdateTrackerStats() {
-  if (!settings_ || settings_->tracker_url.empty() ||
-      !IsAnySessionConnected() || !tracker_sync_active_)
+  if (live_tracker_url_.empty() || !IsAnySessionConnected() ||
+      !tracker_sync_active_)
     return;
 
   {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-    if (settings_->tracker_url != last_synced_tracker_url_) {
+    if (live_tracker_url_ != last_synced_tracker_url_) {
       ClearGlobalStats();
-      last_synced_tracker_url_ = settings_->tracker_url;
+      last_synced_tracker_url_ = live_tracker_url_;
     }
   }
 

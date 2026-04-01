@@ -248,6 +248,9 @@ public:
   void DisconnectAll();
   void ClearGlobalStats();
   void ClearSessionStats(int global_slot);
+
+  void SetTrackerUrl(const std::string &url);
+  const std::string &GetTrackerUrl() const { return live_tracker_url_; }
   ArchipelagoSession *GetSessionBySlot(int slot);
   const std::vector<std::unique_ptr<ArchipelagoSession>> &GetSessions() const {
     return sessions_;
@@ -317,7 +320,7 @@ public:
                        bool is_item_feed, size_t message_hash = 0,
                        bool always_show = false);
   void OnStatusMessage(ArchipelagoSession *session, const std::string &msg);
-  void SetSettings(const ConnectionSettings *settings) { settings_ = settings; }
+  void SetSettings(const ConnectionSettings *settings);
   static std::string MaskURL(const std::string &url);
   bool IsMasterSession(ArchipelagoSession *session) const;
   void ReResolveHistory();
@@ -370,6 +373,7 @@ private:
   int64_t last_tracker_checked_count_ = -1;
   std::map<std::string, ArchipelagoSession::State> last_session_states_;
   bool last_any_session_connected_ = false;
+  std::string live_tracker_url_;
   double last_item_activity_time_ = -1.0;
   double last_successful_sync_activity_time_ = -1.0;
   std::string last_synced_static_url_;
