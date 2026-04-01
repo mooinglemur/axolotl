@@ -82,11 +82,27 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       int current_yday = current_tm->tm_yday;
       int current_year = current_tm->tm_year;
 
-      float threshold = 4.0f * ImGui::GetTextLineHeightWithSpacing();
+      float threshold = 2.0f * ImGui::GetTextLineHeightWithSpacing();
       bool was_at_bottom =
           (last_scroll_max_y_ <= 0.0f ||
-           ImGui::GetScrollY() >= last_scroll_max_y_ - threshold ||
-           ImGui::GetScrollY() >= ImGui::GetScrollMaxY());
+           ImGui::GetScrollY() >= last_scroll_max_y_ - threshold);
+
+      bool interacting = (ImGui::IsWindowHovered(
+                              ImGuiHoveredFlags_RootAndChildWindows |
+                              ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                          (ImGui::GetIO().MouseWheel != 0.0f ||
+                           ImGui::IsMouseDown(0) || ImGui::IsMouseDown(1)));
+
+      // Re-lock ONLY if near bottom and NOT interacting
+      if (was_at_bottom && !interacting) {
+        locked_to_bottom_ = true;
+      }
+
+      // Unlock if user scrolls away manually while interacting
+      if (interacting && ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 5.0f) {
+        locked_to_bottom_ = false;
+      }
+
       bool history_grew =
           ((int)display_indices_.size() > last_display_indices_size_);
 
@@ -97,26 +113,35 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         selection_active_idx_ =
             display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
 
-      float measured_avg =
-          (measured_rows_count_ > 0)
-              ? (float)(measured_height_sum_ / measured_rows_count_)
-              : ImGui::GetTextLineHeightWithSpacing();
-      float clipper_height =
-          std::min(measured_avg, ImGui::GetTextLineHeightWithSpacing() * 1.5f);
+      bool in_bottom_zone =
+          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 64.0f);
+
+      float min_h = ImGui::GetTextLineHeightWithSpacing();
+      float avg_h = (measured_rows_count_ > 0)
+                        ? (float)(measured_height_sum_ / measured_rows_count_)
+                        : min_h;
+      if (avg_h > 10.0f * min_h)
+        avg_h = 10.0f * min_h;
+
+      float clipper_height = avg_h;
+
       ImGuiListClipper clipper;
       bool use_clipper = (display_indices_.size() > 100);
       if (use_clipper) {
         clipper.Begin((int)display_indices_.size(), clipper_height);
+
+        int min_visible_top = (int)(ImGui::GetWindowHeight() / min_h) + 5;
+        clipper.IncludeItemsByIndex(0, min_visible_top);
+
+        if (locked_to_bottom_ || in_bottom_zone) {
+          clipper.IncludeItemsByIndex((int)display_indices_.size() - 20,
+                                      (int)display_indices_.size());
+        }
       }
 
-      bool in_bottom_zone =
-          (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 500.0f);
       bool force_bottom_render =
-          (use_clipper && (was_at_bottom || history_grew || in_bottom_zone) &&
+          (use_clipper && (locked_to_bottom_ || in_bottom_zone) &&
            !display_indices_.empty());
-      int manual_tail_start =
-          force_bottom_render ? std::max(0, (int)display_indices_.size() - 200)
-                              : (int)display_indices_.size();
 
       auto render_row = [&](int row_idx) {
         int i = display_indices_[row_idx];
@@ -267,35 +292,22 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         ImGui::PopID();
       };
 
-      int pass = 0;
-      float max_y = ImGui::GetCursorPosY();
-      while ((use_clipper && clipper.Step()) || (!use_clipper && pass == 0)) {
-        int start = use_clipper ? clipper.DisplayStart : 0;
-        int end =
-            use_clipper ? clipper.DisplayEnd : (int)display_indices_.size();
-        pass++;
-
-        for (int row_idx = start; row_idx < end; ++row_idx) {
-          if (force_bottom_render && row_idx >= manual_tail_start)
-            break; // Handled by manual tail
-
-          render_row(row_idx);
-        }
-        if (!use_clipper)
-          break;
-      }
       if (use_clipper) {
-        ImGui::SetCursorPosY(max_y);
-        ImGui::Dummy(ImVec2(0.0f, 1e-6f)); // satisfy ImGui assertion about
-                                           // growing window via SetCursorPos
-      }
-
-      // Safe Bottom: Manually render the tail
-      // if needed to eliminate ghost space
-      if (force_bottom_render) {
-        ImGui::SetCursorPosY((float)manual_tail_start * clipper_height);
-        for (int row_idx = manual_tail_start;
-             row_idx < (int)display_indices_.size(); ++row_idx) {
+        clipper.Begin((int)display_indices_.size(), clipper_height);
+        if (force_bottom_render) {
+          clipper.IncludeItemsByIndex(
+              std::max(0, (int)display_indices_.size() - 20),
+              (int)display_indices_.size());
+        }
+        while (clipper.Step()) {
+          for (int row_idx = clipper.DisplayStart; row_idx < clipper.DisplayEnd;
+               ++row_idx) {
+            render_row(row_idx);
+          }
+        }
+      } else {
+        for (int row_idx = 0; row_idx < (int)display_indices_.size();
+             ++row_idx) {
           render_row(row_idx);
         }
       }
@@ -307,15 +319,12 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       float current_scroll_max_y = ImGui::GetScrollMaxY();
       float current_window_width = ImGui::GetWindowWidth();
-      if ((was_at_bottom &&
-           (history_grew || current_scroll_max_y != last_scroll_max_y_ ||
-            current_window_width != last_window_width_)) ||
-          filter_changed) {
-        // Idempotency check: only snap if we are NOT already at the bottom
-        float gap = current_scroll_max_y - ImGui::GetScrollY();
-        if (gap > 1.0f || filter_changed) {
-          ImGui::SetScrollY(current_scroll_max_y);
-        }
+      bool is_any_interaction =
+          (ImGui::IsWindowHovered() &&
+           (ImGui::GetIO().MouseWheel != 0.0f || ImGui::IsMouseDown(0) ||
+            ImGui::IsMouseDown(1)));
+      if ((locked_to_bottom_ && !is_any_interaction) || filter_changed) {
+        ImGui::SetScrollY(current_scroll_max_y);
       }
 
       if (current_window_width != last_window_width_) {

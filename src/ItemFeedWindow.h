@@ -35,4 +35,5 @@ private:
   float last_avg_height_ = -1.0f;
   double measured_height_sum_ = 0;
   int measured_rows_count_ = 0;
+  bool locked_to_bottom_ = true;
 };
