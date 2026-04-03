@@ -72,11 +72,9 @@ set(LUA_SOURCES
     ${LUA_DIR}/loadlib.c ${LUA_DIR}/loslib.c ${LUA_DIR}/lstrlib.c ${LUA_DIR}/ltablib.c ${LUA_DIR}/lutf8lib.c ${LUA_DIR}/linit.c
 )
 add_library(lua STATIC ${LUA_SOURCES})
-if (WIN32)
-    target_compile_definitions(lua PRIVATE LUA_USE_WINDOWS)
-elseif (APPLE)
+if (APPLE)
     target_compile_definitions(lua PRIVATE LUA_USE_MACOSX)
-else()
+elseif (UNIX AND NOT APPLE)
     target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
 endif()
 target_include_directories(lua PUBLIC ${LUA_DIR})
@@ -256,7 +254,7 @@ endif()
 
 if (WIN32)
     message(STATUS "Configuring Windows-specific dependencies...")
-    target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE)
+    target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE ZIP_STATIC)
     target_link_libraries(axolotl-apclient PRIVATE d3d11 dxgi d3dcompiler bcrypt)
 endif()
 
