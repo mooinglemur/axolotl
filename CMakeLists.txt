@@ -81,7 +81,6 @@ endif()
 
 if (UNIX AND NOT APPLE)
     pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET ${PKG_STATIC} fontconfig)
-    pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET ${PKG_STATIC} dbus-1)
 endif()
 
 # TLS Backend options
