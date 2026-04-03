@@ -25,7 +25,7 @@ find_package(Threads REQUIRED)
 find_package(nlohmann_json REQUIRED)
 # Try PkgConfig first for yaml-cpp to handle static linkage correctly on some distros
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(YAML_CPP QUIET IMPORTED_TARGET yaml-cpp)
+pkg_check_modules(YAML_CPP QUIET IMPORTED_TARGET STATIC yaml-cpp)
 if (YAML_CPP_FOUND)
     add_library(yaml-cpp::yaml-cpp ALIAS PkgConfig::YAML_CPP)
 else()
@@ -37,8 +37,7 @@ else()
 endif()
 
 # Find libzip (prefer PkgConfig over CONFIG to avoid brittle hard-coded paths in some distros)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
+pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET STATIC libzip)
 
 if (UNIX AND NOT APPLE)
     pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
@@ -51,8 +50,7 @@ endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
 # Prioritize PkgConfig to avoid brittle CONFIG files on some distros.
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(GLFW3 QUIET IMPORTED_TARGET glfw3)
+pkg_check_modules(GLFW3 QUIET IMPORTED_TARGET STATIC glfw3)
 if (GLFW3_FOUND)
     if (NOT TARGET glfw)
         add_library(glfw ALIAS PkgConfig::GLFW3)
@@ -269,19 +267,9 @@ endif()
 if (WIN32)
     message(STATUS "Configuring Windows-specific dependencies...")
     target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE ZIP_STATIC)
-    # Link against compression backends for static libzip if they are available
-    set(WIN_LIBS d3d11 dxgi d3dcompiler bcrypt)
-    foreach(LIB bz2 lzma zstd)
-        find_library(OPTIONAL_${LIB} NAMES ${LIB})
-        if (OPTIONAL_${LIB})
-            message(STATUS "Found optional Windows library: ${LIB} -> ${OPTIONAL_${LIB}}")
-            list(APPEND WIN_LIBS ${OPTIONAL_${LIB}})
-        else()
-            message(STATUS "Optional Windows library NOT found: ${LIB}")
-        endif()
-    endforeach()
-    message(STATUS "Final Windows linkage libraries: ${WIN_LIBS}")
-    target_link_libraries(axolotl-apclient PRIVATE ${WIN_LIBS})
+    # Link against essential Windows system libs. 
+    # Static dependencies for libzip (bz2, lzma, zstd) are now handled by PkgConfig::LIBZIP
+    target_link_libraries(axolotl-apclient PRIVATE d3d11 dxgi d3dcompiler bcrypt)
 endif()
 
 install(TARGETS axolotl-apclient
