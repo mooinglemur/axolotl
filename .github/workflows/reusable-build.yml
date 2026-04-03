@@ -131,16 +131,27 @@ jobs:
           msystem: MINGW64
           update: true
           install: >-
-            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-libzip
+            mingw-w64-x86_64-glfw
+            mingw-w64-x86_64-yaml-cpp
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-nlohmann-json
-            mingw-w64-x86_64-python
             git
-            curl
-            zip
-            unzip
-            mingw-w64-x86_64-libzip
+            wget
+            python3
+
+      - name: Aggressive Cleanup (Force Static Linkage)
+        shell: msys2 {0}
+        run: |
+          # Remove import libraries and DLLs to force absolute static linking for pacman-installed deps
+          find /mingw64/lib -name "libzip.dll.a" -delete
+          find /mingw64/bin -name "libzip*.dll" -delete
+          find /mingw64/lib -name "libglfw3.dll.a" -delete
+          find /mingw64/bin -name "libglfw*.dll" -delete
+          find /mingw64/lib -name "libyaml-cpp.dll.a" -delete
+          find /mingw64/bin -name "libyaml-cpp*.dll" -delete
 
       - name: Patch IXWebSocket
         shell: msys2 {0}
