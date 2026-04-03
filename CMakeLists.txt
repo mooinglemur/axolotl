@@ -312,7 +312,13 @@ if (APPLE AND USE_MBED_TLS)
 endif()
 
 # Final unified link command
-target_link_libraries(axolotl-apclient PRIVATE ${ALL_LIBS})
+if (MINGW)
+    # On Mingw, we use linker groups to handle the circular/order-dependent static 
+    # dependency chain (e.g. libzip needing symbols from bz2/lzma/zstd).
+    target_link_libraries(axolotl-apclient PRIVATE -Wl,--start-group ${ALL_LIBS} -Wl,--end-group)
+else()
+    target_link_libraries(axolotl-apclient PRIVATE ${ALL_LIBS})
+endif()
 
 
 install(TARGETS axolotl-apclient
