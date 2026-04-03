@@ -50,10 +50,16 @@ if (NOT LIBZIP_FOUND)
 endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
-find_package(glfw3 CONFIG QUIET)
-if (NOT glfw3_FOUND)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(GLFW3 REQUIRED glfw3)
+# Prioritize PkgConfig to avoid brittle CONFIG files on some distros.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLFW3 QUIET IMPORTED_TARGET glfw3)
+if (GLFW3_FOUND)
+    if (NOT TARGET glfw)
+        add_library(glfw ALIAS PkgConfig::GLFW3)
+    endif()
+    set(glfw3_FOUND TRUE)
+else()
+    find_package(glfw3 CONFIG QUIET)
 endif()
 
 # TLS Backend options
