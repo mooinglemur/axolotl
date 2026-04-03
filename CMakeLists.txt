@@ -32,50 +32,53 @@ set(PKG_STATIC "")
 find_package(PkgConfig REQUIRED)
 
 if (MINGW)
-    # For ALL Mingw builds (Native and Cross), we've for-deleted the DLLs/import-libs
-    # which makes the system-provided Config files strictly broken. Use PkgConfig.
-    pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET ${PKG_STATIC} yaml-cpp)
-    add_library(yaml-cpp::yaml-cpp ALIAS PkgConfig::YAML_CPP)
+    # Native MSYS2 build - we MUST use PkgConfig because we've for-deleted the DLLs/import-libs
+    # which makes the system-provided Config files strictly broken.
+    pkg_check_modules(YAML_CPP REQUIRED yaml-cpp)
+    set(YAML_CPP_TARGETS ${YAML_CPP_LINK_LIBRARIES})
 else()
-    # Other platforms (Linux/macOS) - try PkgConfig with graceful fallback to Config
+    # Cross build or other platforms - standard discovery is safer
+    find_package(PkgConfig REQUIRED)
     pkg_check_modules(YAML_CPP QUIET IMPORTED_TARGET ${PKG_STATIC} yaml-cpp)
     if (YAML_CPP_FOUND)
-        add_library(yaml-cpp::yaml-cpp ALIAS PkgConfig::YAML_CPP)
+        set(YAML_CPP_TARGETS PkgConfig::YAML_CPP)
     else()
         find_package(yaml-cpp CONFIG REQUIRED)
         if (NOT TARGET yaml-cpp::yaml-cpp)
             add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
         endif()
+        set(YAML_CPP_TARGETS yaml-cpp::yaml-cpp)
     endif()
 endif()
 
 # Find libzip
 if (MINGW)
-    pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET ${PKG_STATIC} libzip)
+    pkg_check_modules(LIBZIP REQUIRED libzip)
+    set(LIBZIP_TARGETS ${LIBZIP_LINK_LIBRARIES})
 else()
     pkg_check_modules(LIBZIP QUIET IMPORTED_TARGET ${PKG_STATIC} libzip)
     if (NOT LIBZIP_FOUND)
         find_package(libzip CONFIG REQUIRED)
+        set(LIBZIP_TARGETS libzip::zip)
+    else()
+        set(LIBZIP_TARGETS PkgConfig::LIBZIP)
     endif()
 endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
 # Prioritize PkgConfig to avoid brittle CONFIG files on some distros.
 if (MINGW)
-    pkg_check_modules(GLFW3 REQUIRED IMPORTED_TARGET ${PKG_STATIC} glfw3)
-    if (NOT TARGET glfw)
-        add_library(glfw ALIAS PkgConfig::GLFW3)
-    endif()
+    pkg_check_modules(GLFW3 REQUIRED glfw3)
+    set(GLFW3_TARGETS ${GLFW3_LINK_LIBRARIES})
     set(glfw3_FOUND TRUE)
 else()
     pkg_check_modules(GLFW3 QUIET IMPORTED_TARGET ${PKG_STATIC} glfw3)
     if (GLFW3_FOUND)
-        if (NOT TARGET glfw)
-            add_library(glfw ALIAS PkgConfig::GLFW3)
-        endif()
+        set(GLFW3_TARGETS PkgConfig::GLFW3)
         set(glfw3_FOUND TRUE)
     else()
         find_package(glfw3 CONFIG QUIET)
+        set(GLFW3_TARGETS glfw)
     endif()
 endif()
 
@@ -246,14 +249,12 @@ set(ALL_LIBS
     lua
     ixwebsocket
     nlohmann_json::nlohmann_json
-    yaml-cpp::yaml-cpp
+    ${YAML_CPP_TARGETS}
 )
 
 # 2. Windowing and Graphics
-if (glfw3_FOUND)
-    list(APPEND ALL_LIBS glfw)
-else()
-    list(APPEND ALL_LIBS ${GLFW3_LIBRARIES})
+list(APPEND ALL_LIBS ${GLFW3_TARGETS})
+if (NOT MINGW AND NOT glfw3_FOUND)
     target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
 endif()
 
@@ -267,11 +268,7 @@ endif()
 list(APPEND ALL_LIBS Threads::Threads)
 
 # 4. Archive Support (libzip MUST come BEFORE its backends)
-if (libzip_FOUND)
-    list(APPEND ALL_LIBS libzip::zip)
-else()
-    list(APPEND ALL_LIBS PkgConfig::LIBZIP)
-endif()
+list(APPEND ALL_LIBS ${LIBZIP_TARGETS})
 
 # 5. Linux-specific extras
 if (UNIX AND NOT APPLE)
