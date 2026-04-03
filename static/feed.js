@@ -9,6 +9,11 @@ function getTimestamp() {
     return `[${h}:${m}:${s}]`;
 }
 
+const urlParams = new URLSearchParams(window.location.search);
+const messageDelay = parseInt(urlParams.get('delay')) || 0;
+let messageQueue = [];
+let isProcessingQueue = false;
+
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${protocol}//${window.location.host}/feed${window.location.search}`;
 
@@ -25,7 +30,14 @@ function connect() {
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'feed_item') {
-                addFeedItem(data);
+                if (messageDelay > 0) {
+                    messageQueue.push(data);
+                    if (!isProcessingQueue) {
+                        processQueue();
+                    }
+                } else {
+                    addFeedItem(data);
+                }
             }
         } catch (e) {
             console.error('Error parsing message:', e);
@@ -41,6 +53,17 @@ function connect() {
         console.error('WebSocket error:', err);
         socket.close();
     };
+}
+
+function processQueue() {
+    if (messageQueue.length === 0) {
+        isProcessingQueue = false;
+        return;
+    }
+    isProcessingQueue = true;
+    const data = messageQueue.shift();
+    addFeedItem(data);
+    setTimeout(processQueue, messageDelay);
 }
 
 function addFeedItem(data) {
