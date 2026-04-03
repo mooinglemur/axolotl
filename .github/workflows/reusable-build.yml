@@ -188,10 +188,6 @@ jobs:
           cmake -S glfw -B glfw/build -GNinja -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
           cmake --build glfw/build --target install
 
-          # Build libzip
-          git clone --depth 1 -b v1.10.1 https://github.com/nih-at/libzip.git
-          cmake -S libzip -B libzip/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
-          cmake --build libzip/build --target install
 
       - name: Windows Native Build (with Static Enforcement)
         shell: msys2 {0}
@@ -282,7 +278,7 @@ jobs:
 
           # Build libzip for mingw
           git clone --depth 1 -b v1.10.1 https://github.com/nih-at/libzip.git
-          sudo cmake -S libzip -B libzip/build -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo cmake -S libzip -B libzip/build -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
           sudo cmake --build libzip/build --target install
           cd $ROOT_DIR
 

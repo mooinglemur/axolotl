@@ -13,7 +13,7 @@ using json = nlohmann::json;
 
 static sol::object JsonToLua(sol::state_view &lua, const nlohmann::json &j) {
   if (j.is_null())
-    return sol::nil;
+    return sol::lua_nil;
   if (j.is_boolean())
     return sol::make_object(lua, j.get<bool>());
   if (j.is_number())
@@ -35,7 +35,7 @@ static sol::object JsonToLua(sol::state_view &lua, const nlohmann::json &j) {
     }
     return t;
   }
-  return sol::nil;
+  return sol::lua_nil;
 }
 
 LogicManager::LogicManager() {

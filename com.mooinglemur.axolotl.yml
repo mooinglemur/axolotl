@@ -46,6 +46,9 @@ modules:
     buildsystem: cmake-ninja
     config-opts:
       - -DBUILD_SHARED_LIBS=OFF
+      - -DENABLE_BZIP2=OFF
+      - -DENABLE_LZMA=OFF
+      - -DENABLE_ZSTD=OFF
       - -DENABLE_COMMONCRYPTO=OFF
       - -DENABLE_GNUTLS=OFF
       - -DENABLE_MBEDTLS=OFF

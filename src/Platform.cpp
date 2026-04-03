@@ -1,6 +1,10 @@
 #include "Platform.h"
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#ifdef __APPLE__
+#include <vector>
+#endif
 
 #ifdef _WIN32
 #include <commdlg.h>
