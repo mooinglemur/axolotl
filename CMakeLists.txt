@@ -28,20 +28,17 @@ if (NOT TARGET yaml-cpp::yaml-cpp)
     add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
 endif()
 
+# Find libzip (prefer PkgConfig over CONFIG to avoid brittle hard-coded paths in some distros)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
+
 if (UNIX AND NOT APPLE)
-    # On pure Linux systems, we prefer PkgConfig for everything. 
-    # This avoids broken CMake config files found in some distros (like Ubuntu 22.04's libzip-dev).
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
     pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
-else()
-    # For Windows, macOS, and Cross-compilation, we prefer CMake CONFIG files 
-    # because we often build these dependencies from source ourselves.
+endif()
+
+# Fallback for platforms where PkgConfig might fail or for custom source builds
+if (NOT LIBZIP_FOUND)
     find_package(libzip CONFIG QUIET)
-    if (NOT libzip_FOUND)
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
-    endif()
 endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
@@ -213,7 +210,7 @@ if (APPLE)
         target_link_libraries(axolotl-apclient PRIVATE ${MBEDTLS_LIBRARIES})
         target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
     endif()
-    
+
     set(EXTRA_LIBS "")
     if (NOT libzip_FOUND)
         list(APPEND EXTRA_LIBS PkgConfig::LIBZIP)
