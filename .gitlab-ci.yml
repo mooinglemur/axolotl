@@ -53,11 +53,10 @@ linux-appimage:
     - chmod +x linuxdeploy-x86_64.AppImage
     - wget https://curl.se/ca/cacert.pem
   script:
-    - |
-      mkdir build && cd build
-      cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON ..
-      cd ..
-      cat <<'EOF' > mbed_patch.py
+    - mkdir build && cd build
+    - cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} -DAXOLOTL_IGNORE_DIRTY=ON ..
+    - cd ..
+    - cat <<'EOF' > mbed_patch.py
       import sys
       file_path = "thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
       with open(file_path, 'r') as f:
@@ -106,7 +105,16 @@ windows:
       c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
       c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
       echo "Installing build tools and dependencies..."
-      c:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-glfw mingw-w64-x86_64-yaml-cpp mingw-w64-x86_64-nlohmann-json mingw-w64-x86_64-mbedtls mingw-w64-x86_64-libzip mingw-w64-x86_64-zlib mingw-w64-x86_64-python"
+      c:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-glfw mingw-w64-x86_64-yaml-cpp mingw-w64-x86_64-nlohmann-json mingw-w64-x86_64-mbedtls mingw-w64-x86_64-libzip mingw-w64-x86_64-zlib mingw-w64-x86_64-python mingw-w64-x86_64-bzip2 mingw-w64-x86_64-xz mingw-w64-x86_64-zstd"
+      echo "Aggressive Cleanup (Force Static Linkage)..."
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'libzip.dll.a' -delete"
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'libglfw3.dll.a' -delete"
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'libyaml-cpp.dll.a' -delete"
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'libbz2.dll.a' -delete"
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'liblzma.dll.a' -delete"
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'libzstd.dll.a' -delete"
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'libz.dll.a' -delete"
+      c:\msys64\usr\bin\bash -lc "find /mingw64/lib -name 'libmbed*.dll.a' -delete"
       echo "Downloading WiX Toolset..."
       Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip" -OutFile "wix.zip"
       Expand-Archive -Path "wix.zip" -DestinationPath "C:\wix"
@@ -132,7 +140,7 @@ windows:
       cd build
 
       echo "Configuring with CMake..."
-      Run-Bash "cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON .."
+      Run-Bash "cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} -DCMAKE_EXE_LINKER_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_FIND_LIBRARY_SUFFIXES='.a' -DZLIB_USE_STATIC_LIBS=ON .."
 
       echo "Patching IXWebSocket..."
       $patchScript = @'
@@ -149,6 +157,8 @@ windows:
       '@
       $patchScript | Out-File -FilePath ../mbed_patch.py -Encoding ascii
       Run-Bash "cd .. && python3 mbed_patch.py"
+      echo "Patching IXWebSocket dependency order..."
+      Run-Bash "sed -i 's/Crypt32/crypt32 bcrypt/g' ../thirdparty/IXWebSocket/CMakeLists.txt"
 
       echo "Building..."
       Run-Bash "ninja"
@@ -215,7 +225,7 @@ windows-cross:
     - ninja install
     - cd $ROOT_DIR
     # Build yaml-cpp for mingw
-    - git clone --depth 1 -b 0.8.0 https://github.com/jbeder/yaml-cpp.git
+    - git clone --depth 1 -b yaml-cpp-0.9.0 https://github.com/jbeder/yaml-cpp.git
     - mkdir yaml-cpp/build && cd yaml-cpp/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
@@ -231,10 +241,9 @@ windows-cross:
     - find /usr/x86_64-w64-mingw32 -name "*.dll" -delete
     - find /usr/x86_64-w64-mingw32 -name "*.dll.a" -delete
   script:
-    - |
-      mkdir build-cross && cd build-cross
-      cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON ..
-      cd ..
+    - mkdir build-cross && cd build-cross
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} ..
+    - cd ..
       sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
       cat <<'EOF' > mbed_patch.py
       import sys
