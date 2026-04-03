@@ -32,14 +32,14 @@ set(PKG_STATIC "")
 find_package(PkgConfig REQUIRED)
 
 if (MINGW)
-    # Native MSYS2 build - we MUST use PkgConfig because we've for-deleted the DLLs/import-libs
+    # Native MSYS2/Cross build - we MUST use PkgConfig because we've for-deleted the DLLs/import-libs
     # which makes the system-provided Config files strictly broken.
     pkg_check_modules(YAML_CPP REQUIRED yaml-cpp)
     add_library(yaml-cpp::yaml-cpp INTERFACE IMPORTED GLOBAL)
     set_target_properties(yaml-cpp::yaml-cpp PROPERTIES INTERFACE_LINK_LIBRARIES "${YAML_CPP_LINK_LIBRARIES}")
     set(YAML_CPP_TARGETS yaml-cpp::yaml-cpp)
 else()
-    # Cross build or other platforms - standard discovery is safer
+    # Others - standard discovery is safer
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(YAML_CPP QUIET IMPORTED_TARGET ${PKG_STATIC} yaml-cpp)
     if (YAML_CPP_FOUND)
@@ -53,11 +53,31 @@ else()
     endif()
 endif()
 
-# Find libzip
+# Find libzip and its compression backends
 if (MINGW)
+    # 1. Discover backends first so we can attach them to libzip properly
+    set(ZIP_BACKENDS "")
+    foreach(BACKEND bzip2 liblzma libzstd)
+        pkg_check_modules(BE_${BACKEND} QUIET ${BACKEND})
+        if (BE_${BACKEND}_FOUND)
+            # Create a target for the backend using its full library path
+            add_library(backend::${BACKEND} INTERFACE IMPORTED GLOBAL)
+            set_target_properties(backend::${BACKEND} PROPERTIES INTERFACE_LINK_LIBRARIES "${BE_${BACKEND}_LINK_LIBRARIES}")
+            list(APPEND ZIP_BACKENDS backend::${BACKEND})
+            message(STATUS "Found libzip backend: ${BACKEND} -> ${BE_${BACKEND}_LINK_LIBRARIES}")
+        else()
+            message(WARNING "Could not find libzip backend via PkgConfig: ${BACKEND}")
+        endif()
+    endforeach()
+
+    # 2. Discover libzip itself
     pkg_check_modules(LIBZIP REQUIRED libzip)
     add_library(libzip::zip INTERFACE IMPORTED GLOBAL)
-    set_target_properties(libzip::zip PROPERTIES INTERFACE_LINK_LIBRARIES "${LIBZIP_LINK_LIBRARIES}")
+
+    # 3. CONSOLIDATE: Attach backends to libzip inside a linker group for robustness
+    set_target_properties(libzip::zip PROPERTIES INTERFACE_LINK_LIBRARIES 
+        "-Wl,--start-group;${LIBZIP_LINK_LIBRARIES};${ZIP_BACKENDS};-Wl,--end-group"
+    )
     set(LIBZIP_TARGETS libzip::zip)
 else()
     pkg_check_modules(LIBZIP QUIET IMPORTED_TARGET ${PKG_STATIC} libzip)
@@ -294,23 +314,6 @@ if (WIN32)
     # Core Windows system libs
     list(APPEND ALL_LIBS d3d11 dxgi d3dcompiler bcrypt)
 
-    # Static compression backends for libzip (critical to link AFTER libzip)
-    if (MINGW)
-        foreach(LIB bz2 lzma zstd)
-            find_library(OPTIONAL_${LIB} NAMES ${LIB})
-            if (OPTIONAL_${LIB})
-                # Create a proper imported target to ensure CMake respects the link order
-                # and doesn't push absolute paths to the start of the link line.
-                if (NOT TARGET backend::${LIB})
-                    add_library(backend::${LIB} UNKNOWN IMPORTED)
-                    set_target_properties(backend::${LIB} PROPERTIES IMPORTED_LOCATION "${OPTIONAL_${LIB}}")
-                endif()
-                message(STATUS "Ensuring static backend order: linking backend::${LIB} at end of chain")
-                list(APPEND ALL_LIBS backend::${LIB})
-            endif()
-        endforeach()
-    endif()
-
     # Networking and other system fallbacks
     list(APPEND ALL_LIBS wsock32 ws2_32 shlwapi crypt32)
 endif()
@@ -321,13 +324,8 @@ if (APPLE AND USE_MBED_TLS)
 endif()
 
 # Final unified link command
-if (MINGW)
-    # On Mingw, we use linker groups to handle the circular/order-dependent static 
-    # dependency chain (e.g. libzip needing symbols from bz2/lzma/zstd).
-    target_link_libraries(axolotl-apclient PRIVATE -Wl,--start-group ${ALL_LIBS} -Wl,--end-group)
-else()
-    target_link_libraries(axolotl-apclient PRIVATE ${ALL_LIBS})
-endif()
+# libzip and its grouped dependencies are already handled by CMake's dependency resolution.
+target_link_libraries(axolotl-apclient PRIVATE ${ALL_LIBS})
 
 
 install(TARGETS axolotl-apclient
