@@ -4,3 +4,9 @@
 [submodule "thirdparty/IXWebSocket"]
 	path = thirdparty/IXWebSocket
 	url = https://github.com/machinezone/IXWebSocket.git
+[submodule "thirdparty/sol2"]
+	path = thirdparty/sol2
+	url = https://github.com/ThePhD/sol2.git
+[submodule "thirdparty/lua"]
+	path = thirdparty/lua
+	url = https://github.com/lua/lua.git

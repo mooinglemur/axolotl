@@ -559,7 +559,8 @@ bool ArchipelagoSession::Update() {
 
             // Live Activity Update (Location-based only: ItemSend)
             if (rm.sender_slot != -1) {
-              manager_->UpdateSlotActivity(rm.sender_slot, ArchipelagoNetwork::GetCurrentTimestamp());
+              manager_->UpdateSlotActivity(
+                  rm.sender_slot, ArchipelagoNetwork::GetCurrentTimestamp());
             }
 
             if (packet.contains("item") &&
@@ -627,11 +628,13 @@ bool ArchipelagoSession::Update() {
       if (index == 0) {
         for (auto &rm : received_items_history_)
           rm.is_reconciled = false;
+        received_item_counts_.clear();
       }
 
       int last_match_idx = 0;
       for (const auto &item : packet["items"]) {
         int64_t iid = get_as_id(item["item"]);
+        received_item_counts_[iid]++;
         int flags = item.contains("flags") ? item["flags"].get<int>() : 0;
         int sid = item.contains("player") ? item["player"].get<int>() : -1;
         std::string name = ResolveItemName(iid, local_slot_);
@@ -962,6 +965,8 @@ void ArchipelagoSession::ClearData() {
   hints_.clear();
   checked_locations_.clear();
   missing_locations_.clear();
+  received_item_counts_.clear();
+  slot_data_ = nlohmann::json::object();
 
   if (manager_ && local_slot_ != -1) {
     manager_->ClearSessionStats((team_ << 16) | local_slot_);
@@ -1120,7 +1125,6 @@ void ArchipelagoNetwork::SetTrackerUrl(const std::string &url) {
   }
 }
 
-
 void ArchipelagoNetwork::StartNetworkThread() {
   if (network_thread_running_)
     return;
@@ -1142,7 +1146,8 @@ void ArchipelagoNetwork::StopNetworkThread() {
   }
 }
 
-std::shared_ptr<const MultiworldStats> ArchipelagoNetwork::GetGlobalStats() const {
+std::shared_ptr<const MultiworldStats>
+ArchipelagoNetwork::GetGlobalStats() const {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   return global_stats_;
 }

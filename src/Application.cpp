@@ -323,7 +323,7 @@ bool Application::InitializeUI() {
   AddWindow(std::make_unique<HintWindow>(ap_network_, current_config_));
   AddWindow(std::make_unique<SpoilerSphereTrackerWindow>(ap_network_,
                                                          current_config_));
-  AddWindow(std::make_unique<TrackerWindow>(ap_network_, current_config_));
+  AddWindow(std::make_unique<TrackerWindow>(ap_network_, current_config_, *this));
   AddWindow(std::make_unique<OverviewWindow>(ap_network_, current_config_));
 
   if (is_first_launch_) {

@@ -1,11 +1,17 @@
 #include "TrackerWindow.h"
+#include "Application.h"
 #include "Config.h"
+#include "LogicManager.h"
+#include "PackStore.h"
+#include "Platform.h"
 #include <algorithm>
 #include <imgui.h>
 
 TrackerWindow::TrackerWindow(ArchipelagoNetwork &ap_network,
-                             const ConnectionSettings &settings)
-    : Window("Tracker"), ap_network_(ap_network), settings_(settings) {}
+                             const ConnectionSettings &settings,
+                             Application &app)
+    : Window("Tracker"), ap_network_(ap_network), settings_(settings),
+      app_(app) {}
 
 void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                            ImFont *preview_font,
@@ -55,14 +61,14 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
             if (cache.data_version != ap_network_.GetDataVersion()) {
               cache.data_version = ap_network_.GetDataVersion();
               cache.game = session->ResolvePlayerGame(global_slot_id);
-              cache.unchecked_names.clear();
+              cache.unchecked.clear();
               cache.checked_names.clear();
 
               for (int64_t id : missing_ids) {
                 std::string name =
                     session->ResolveLocationName(id, global_slot_id);
                 if (!name.empty())
-                  cache.unchecked_names.push_back(name);
+                  cache.unchecked.push_back({id, name});
               }
               for (int64_t id : checked_ids) {
                 std::string name =
@@ -72,10 +78,9 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
               }
 
               // Natural sort
-              std::sort(cache.unchecked_names.begin(),
-                        cache.unchecked_names.end(),
-                        [](const std::string &a, const std::string &b) {
-                          return NaturalCompare(a, b) < 0;
+              std::sort(cache.unchecked.begin(), cache.unchecked.end(),
+                        [](const LocationInfo &a, const LocationInfo &b) {
+                          return NaturalCompare(a.name, b.name) < 0;
                         });
               std::sort(cache.checked_names.begin(), cache.checked_names.end(),
                         [](const std::string &a, const std::string &b) {
@@ -91,13 +96,75 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
             ImGui::Separator();
 
             if (ImGui::BeginChild("LocationsChild")) {
+              if (ImGui::CollapsingHeader("Logical Progression",
+                                          ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (cache.game.empty()) {
+                  ImGui::TextDisabled("Waiting for game metadata...");
+                } else if (!PackStore::HasPack(cache.game)) {
+                  ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+                                     "No PopTracker pack found for %s",
+                                     cache.game.c_str());
+                  if (ImGui::Button("Import PopTracker Pack")) {
+                    std::string path = Platform::PickOpenFileName(
+                        "PopTracker Pack (*.zip)\0*.zip\0All Files "
+                        "(*.*)\0*.*\0");
+                    if (!path.empty()) {
+                      if (PackStore::ImportPack(cache.game, path)) {
+                        app_.GetLogic().LoadPack(cache.game);
+                      }
+                    }
+                  }
+                } else {
+                  if (app_.GetLogic().GetCurrentGame() != cache.game) {
+                    app_.GetLogic().LoadPack(cache.game);
+                  }
+                  // Push current session data to LogicManager
+                  app_.GetLogic().UpdateLogic(session->GetReceivedItemCounts(),
+                                              session->GetSlotData(),
+                                              session->GetCheckedLocations(),
+                                              session->GetMissingLocations(),
+                                              (int)session->GetLocalSlot());
+
+                  const auto &accessible = app_.GetLogic().GetLocations();
+                  if (accessible.empty()) {
+                    ImGui::TextDisabled(
+                        "No locations currently accessible in logic.");
+                  } else {
+                    ImGui::Text("%zu locations accessible", accessible.size());
+                    if (custom_font)
+                      ImGui::PushFont(custom_font);
+                    for (const auto &loc : accessible) {
+                      if (matches_filter(loc.name)) {
+                        ImGui::BulletText("%s", loc.name.c_str());
+                      }
+                    }
+                    if (custom_font)
+                      ImGui::PopFont();
+                  }
+                }
+              }
+
               if (ImGui::CollapsingHeader("Unchecked Locations",
                                           ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (custom_font)
                   ImGui::PushFont(custom_font);
-                for (const auto &name : cache.unchecked_names) {
-                  if (matches_filter(name)) {
-                    ImGui::BulletText("%s", name.c_str());
+                for (const auto &loc : cache.unchecked) {
+                  if (matches_filter(loc.name)) {
+                    int access = app_.GetLogic().GetAccessibility(loc.id);
+
+                    if (access == 2) {
+                      ImGui::PushStyleColor(ImGuiCol_Text,
+                                            ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+                    } else if (access == 1) {
+                      ImGui::PushStyleColor(ImGuiCol_Text,
+                                            ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                    } else {
+                      ImGui::PushStyleColor(ImGuiCol_Text,
+                                            ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                    }
+
+                    ImGui::BulletText("%s", loc.name.c_str());
+                    ImGui::PopStyleColor();
                   }
                 }
                 if (custom_font)

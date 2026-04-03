@@ -135,6 +135,8 @@ public:
   int GetHintPoints() const { return hint_points_; }
   int GetHintCost() const { return hint_cost_; }
 
+  const std::map<int64_t, int>& GetReceivedItemCounts() const { return received_item_counts_; }
+
   // Metadata accessors
   std::string ResolveItemName(int64_t id, int slot = -1);
   std::string ResolveLocationName(int64_t id, int slot = -1);
@@ -223,6 +225,7 @@ private:
   int64_t last_received_day_ = -1;
   int hint_points_ = 0;
   int hint_cost_ = 0;
+  std::map<int64_t, int> received_item_counts_;
 };
 
 struct ConnectionSettings;

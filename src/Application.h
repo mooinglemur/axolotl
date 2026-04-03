@@ -1,6 +1,7 @@
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
 #include "EmbeddedWebServer.h"
+#include "LogicManager.h"
 #include "Window.h"
 #include <atomic>
 #include <imgui.h>
@@ -43,6 +44,7 @@ public:
 
   void AddWindow(std::unique_ptr<Window> window);
   ArchipelagoNetwork &GetNetwork() { return ap_network_; }
+  LogicManager &GetLogic() { return logic_manager_; }
 
 private:
   void RenderUI(std::tm *current_tm);
@@ -90,6 +92,7 @@ private:
   std::string glsl_version_;
   std::string imgui_ini_path_;
   ArchipelagoNetwork ap_network_;
+  LogicManager logic_manager_;
   std::unique_ptr<EmbeddedWebServer> web_server_;
   std::vector<std::unique_ptr<Window>> windows_;
   bool show_about_ = false;

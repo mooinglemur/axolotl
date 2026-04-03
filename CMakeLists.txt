@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Axolotl VERSION 0.1.4 LANGUAGES CXX)
+project(Axolotl VERSION 0.1.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,6 +31,14 @@ endif()
 if (UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
+    pkg_check_modules(LIBZIP REQUIRED libzip)
+endif()
+
+if (APPLE OR WIN32)
+    # On macOS/Windows we might need a different way to find libzip, 
+    # but for now we follow the PkgConfig path if possible or assume system availability.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBZIP REQUIRED libzip)
 endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
@@ -53,6 +61,20 @@ endif()
 set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
 set(USE_TLS ON CACHE BOOL "" FORCE)
 add_subdirectory(thirdparty/IXWebSocket)
+
+# Lua dependency (defined locally to avoid modifying submodule dir)
+set(LUA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/lua)
+set(LUA_SOURCES
+    ${LUA_DIR}/lapi.c ${LUA_DIR}/lcode.c ${LUA_DIR}/lctype.c ${LUA_DIR}/ldebug.c ${LUA_DIR}/ldo.c ${LUA_DIR}/ldump.c ${LUA_DIR}/lfunc.c ${LUA_DIR}/lgc.c ${LUA_DIR}/llex.c
+    ${LUA_DIR}/lmem.c ${LUA_DIR}/lobject.c ${LUA_DIR}/lopcodes.c ${LUA_DIR}/lparser.c ${LUA_DIR}/lstate.c ${LUA_DIR}/lstring.c ${LUA_DIR}/ltable.c
+    ${LUA_DIR}/ltm.c ${LUA_DIR}/lundump.c ${LUA_DIR}/lvm.c ${LUA_DIR}/lzio.c
+    ${LUA_DIR}/lauxlib.c ${LUA_DIR}/lbaselib.c ${LUA_DIR}/lcorolib.c ${LUA_DIR}/ldblib.c ${LUA_DIR}/liolib.c ${LUA_DIR}/lmathlib.c
+    ${LUA_DIR}/loadlib.c ${LUA_DIR}/loslib.c ${LUA_DIR}/lstrlib.c ${LUA_DIR}/ltablib.c ${LUA_DIR}/lutf8lib.c ${LUA_DIR}/linit.c
+)
+add_library(lua STATIC ${LUA_SOURCES})
+target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
+target_include_directories(lua PUBLIC ${LUA_DIR})
+target_link_libraries(lua INTERFACE dl m)
 
 # ImGui submodule
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
@@ -113,7 +135,9 @@ set(SRC_FILES
     src/FontScanner.cpp
     src/HintWindow.cpp
     src/ItemFeedWindow.cpp
+    src/LogicManager.cpp
     src/OverviewWindow.cpp
+    src/PackStore.cpp
     src/Platform.cpp
     src/ReceivedItemsWindow.cpp
     src/SettingsWindow.cpp
@@ -157,8 +181,16 @@ add_custom_target(GenerateStaticEmbedded ALL DEPENDS ${CMAKE_BINARY_DIR}/embedde
 
 add_executable(axolotl-apclient WIN32 ${SRC_FILES})
 add_dependencies(axolotl-apclient UpdateVersion GenerateStaticEmbedded)
-target_include_directories(axolotl-apclient PRIVATE src ${CMAKE_BINARY_DIR})
-target_compile_definitions(axolotl-apclient PRIVATE IMGUI_USE_WCHAR32)
+target_include_directories(axolotl-apclient PRIVATE
+    src
+    ${CMAKE_BINARY_DIR}
+    thirdparty/sol2/include
+    ${LIBZIP_INCLUDE_DIRS}
+)
+target_compile_definitions(axolotl-apclient PRIVATE
+    IMGUI_USE_WCHAR32
+    SOL_ALL_SAFETIES_ON=1
+)
 
 if (AXOLOTL_OFFICIAL_RELEASE)
     target_compile_definitions(axolotl-apclient PRIVATE AXOLOTL_OFFICIAL_RELEASE)
@@ -170,24 +202,26 @@ if (APPLE)
         target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
     endif()
     if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${LIBZIP_LIBRARIES} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
     else()
-        target_link_libraries(axolotl-apclient PRIVATE imgui ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+        target_link_libraries(axolotl-apclient PRIVATE imgui lua ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${LIBZIP_LIBRARIES} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
         target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
     endif()
 else()
     if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui glfw OpenGL::GL Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${FONTCONFIG_LIBRARIES} ixwebsocket)
+        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw OpenGL::GL Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${FONTCONFIG_LIBRARIES} ${LIBZIP_LIBRARIES} ixwebsocket)
         target_include_directories(axolotl-apclient PRIVATE ${FONTCONFIG_INCLUDE_DIRS})
     else()
         target_link_libraries(axolotl-apclient PRIVATE
-            imgui 
+            imgui
+            lua
             ${GLFW3_LIBRARIES}
             OpenGL::GL
             Threads::Threads
             nlohmann_json::nlohmann_json
             yaml-cpp::yaml-cpp
             ${FONTCONFIG_LIBRARIES}
+            ${LIBZIP_LIBRARIES}
             ixwebsocket
         )
         if (USE_MBED_TLS)
