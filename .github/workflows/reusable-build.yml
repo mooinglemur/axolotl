@@ -44,7 +44,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev git wget file python3
+          sudo apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev libzip-dev git wget file python3
 
       - name: Download Tools
         run: |
@@ -96,7 +96,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          brew install cmake ninja glfw yaml-cpp nlohmann-json
+          brew install cmake ninja glfw yaml-cpp nlohmann-json libzip
           echo "CPATH=/opt/homebrew/include" >> $GITHUB_ENV
           echo "LIBRARY_PATH=/opt/homebrew/lib" >> $GITHUB_ENV
 
@@ -140,6 +140,7 @@ jobs:
             curl
             zip
             unzip
+            mingw-w64-x86_64-libzip
 
       - name: Patch IXWebSocket
         shell: msys2 {0}
@@ -186,6 +187,11 @@ jobs:
           git clone --depth 1 -b 3.3.10 https://github.com/glfw/glfw.git
           cmake -S glfw -B glfw/build -GNinja -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
           cmake --build glfw/build --target install
+
+          # Build libzip
+          git clone --depth 1 -b v1.10.1 https://github.com/nih-at/libzip.git
+          cmake -S libzip -B libzip/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DCMAKE_INSTALL_PREFIX=$ROOT_DIR/deps
+          cmake --build libzip/build --target install
 
       - name: Windows Native Build (with Static Enforcement)
         shell: msys2 {0}
@@ -271,9 +277,13 @@ jobs:
 
           # Build glfw for mingw
           git clone --depth 1 -b 3.3.10 https://github.com/glfw/glfw.git
-          mkdir glfw/build && cd glfw/build
-          sudo cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
-          sudo ninja install
+          sudo cmake -S glfw -B glfw/build -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo cmake --build glfw/build --target install
+
+          # Build libzip for mingw
+          git clone --depth 1 -b v1.10.1 https://github.com/nih-at/libzip.git
+          sudo cmake -S libzip -B libzip/build -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+          sudo cmake --build libzip/build --target install
           cd $ROOT_DIR
 
           # -- AGGRESSIVE CLEANUP: Remove ANY and ALL dll and import library remnants to force absolute static linking

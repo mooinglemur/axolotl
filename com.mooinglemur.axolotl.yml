@@ -42,6 +42,19 @@ modules:
         url: https://github.com/glfw/glfw.git
         tag: 3.3.10
 
+  - name: libzip
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_SHARED_LIBS=OFF
+      - -DENABLE_COMMONCRYPTO=OFF
+      - -DENABLE_GNUTLS=OFF
+      - -DENABLE_MBEDTLS=OFF
+      - -DENABLE_OPENSSL=OFF
+    sources:
+      - type: git
+        url: https://github.com/nih-at/libzip.git
+        tag: v1.10.1
+
   - name: axolotl-apclient
     buildsystem: cmake-ninja
     post-install:

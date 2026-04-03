@@ -48,7 +48,7 @@ linux-appimage:
     pre_get_sources_script:
       - apt update && DEBIAN_FRONTEND=noninteractive apt install -y git
   before_script:
-    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev git wget file python3
+    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev libzip-dev git wget file python3
     - wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
     - chmod +x linuxdeploy-x86_64.AppImage
     - wget https://curl.se/ca/cacert.pem
@@ -106,7 +106,7 @@ windows:
       c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
       c:\msys64\usr\bin\bash -lc "pacman --noconfirm -Syu"
       echo "Installing build tools and dependencies..."
-      c:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-glfw mingw-w64-x86_64-yaml-cpp mingw-w64-x86_64-nlohmann-json mingw-w64-x86_64-mbedtls mingw-w64-x86_64-zlib mingw-w64-x86_64-python"
+      c:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-glfw mingw-w64-x86_64-yaml-cpp mingw-w64-x86_64-nlohmann-json mingw-w64-x86_64-mbedtls mingw-w64-x86_64-libzip mingw-w64-x86_64-zlib mingw-w64-x86_64-python"
       echo "Downloading WiX Toolset..."
       Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip" -OutFile "wix.zip"
       Expand-Archive -Path "wix.zip" -DestinationPath "C:\wix"
@@ -193,6 +193,11 @@ windows-cross:
     - git clone --depth 1 -b v1.3.1 https://github.com/madler/zlib.git
     - mkdir zlib/build && cd zlib/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
+    - ninja install
+    # Build libzip for mingw
+    - git clone --depth 1 -b v1.10.1 https://github.com/nih-at/libzip.git
+    - mkdir libzip/build && cd libzip/build
+    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
     - ninja install
     # -- Remove the dll and dll.a files so that the static library is used
     - rm -f /usr/x86_64-w64-mingw32/lib/libzlib.dll.a /usr/x86_64-w64-mingw32/bin/libzlib.dll
