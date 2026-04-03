@@ -114,6 +114,9 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                       }
                     }
                   }
+                  ImGui::SameLine();
+                  ImGui::TextColored(ImVec4(1, 0, 0, 1),
+                                     "EXPERIMENTAL FEATURE");
                 } else {
                   if (app_.GetLogic().GetCurrentGame() != cache.game) {
                     app_.GetLogic().LoadPack(cache.game);

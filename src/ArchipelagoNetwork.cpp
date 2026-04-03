@@ -1294,18 +1294,18 @@ bool ArchipelagoNetwork::Update() {
 void ArchipelagoNetwork::ClearGlobalStats() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
 
-  auto new_stats = std::make_shared<MultiworldStats>();
-  new_stats->total_games = global_stats_->total_games;
-
   // 1. Identify current valid slots from all active sessions
   std::set<int> current_multiworld_slots;
   for (const auto &session : sessions_) {
-    if (session->metadata_) {
+    if (session->IsConnected() && session->metadata_) {
       for (const auto &[slot_id, name] : session->metadata_->player_names) {
         current_multiworld_slots.insert(slot_id);
       }
     }
   }
+
+  auto new_stats = std::make_shared<MultiworldStats>();
+  new_stats->total_games = (int)current_multiworld_slots.size();
 
   // 2. Initialize those slots in the new stats (with 0 checks)
   for (int slot_id : current_multiworld_slots) {
