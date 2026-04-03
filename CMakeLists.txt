@@ -255,7 +255,15 @@ endif()
 if (WIN32)
     message(STATUS "Configuring Windows-specific dependencies...")
     target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE ZIP_STATIC)
-    target_link_libraries(axolotl-apclient PRIVATE d3d11 dxgi d3dcompiler bcrypt)
+    # Link against compression backends for static libzip if they are available
+    set(WIN_LIBS d3d11 dxgi d3dcompiler bcrypt)
+    foreach(LIB bz2 lzma zstd)
+        find_library(OPTIONAL_${LIB} NAMES ${LIB})
+        if (OPTIONAL_${LIB})
+            list(APPEND WIN_LIBS ${OPTIONAL_${LIB}})
+        endif()
+    endforeach()
+    target_link_libraries(axolotl-apclient PRIVATE ${WIN_LIBS})
 endif()
 
 install(TARGETS axolotl-apclient

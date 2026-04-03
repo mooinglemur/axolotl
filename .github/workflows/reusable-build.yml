@@ -138,6 +138,9 @@ jobs:
             mingw-w64-x86_64-yaml-cpp
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-nlohmann-json
+            mingw-w64-x86_64-bzip2
+            mingw-w64-x86_64-xz
+            mingw-w64-x86_64-zstd
             git
             wget
             python3
@@ -152,6 +155,12 @@ jobs:
           find /mingw64/bin -name "libglfw*.dll" -delete
           find /mingw64/lib -name "libyaml-cpp.dll.a" -delete
           find /mingw64/bin -name "libyaml-cpp*.dll" -delete
+          find /mingw64/lib -name "libbz2.dll.a" -delete
+          find /mingw64/bin -name "libbz2*.dll" -delete
+          find /mingw64/lib -name "liblzma.dll.a" -delete
+          find /mingw64/bin -name "liblzma*.dll" -delete
+          find /mingw64/lib -name "libzstd.dll.a" -delete
+          find /mingw64/bin -name "libzstd*.dll" -delete
 
       - name: Patch IXWebSocket
         shell: msys2 {0}
