@@ -53,10 +53,11 @@ linux-appimage:
     - chmod +x linuxdeploy-x86_64.AppImage
     - wget https://curl.se/ca/cacert.pem
   script:
-    - mkdir build && cd build
-    - cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} -DAXOLOTL_IGNORE_DIRTY=ON ..
-    - cd ..
-    - cat <<'EOF' > mbed_patch.py
+    - |
+      mkdir build && cd build
+      cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} -DAXOLOTL_IGNORE_DIRTY=ON ..
+      cd ..
+      cat <<'EOF' > mbed_patch.py
       import sys
       file_path = "thirdparty/IXWebSocket/ixwebsocket/IXSocketMbedTLS.cpp"
       with open(file_path, 'r') as f:
@@ -241,9 +242,10 @@ windows-cross:
     - find /usr/x86_64-w64-mingw32 -name "*.dll" -delete
     - find /usr/x86_64-w64-mingw32 -name "*.dll.a" -delete
   script:
-    - mkdir build-cross && cd build-cross
-    - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} ..
-    - cd ..
+    - |
+      mkdir build-cross && cd build-cross
+      cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} ..
+      cd ..
       sed -i 's/Crypt32/crypt32 bcrypt/g' thirdparty/IXWebSocket/CMakeLists.txt
       cat <<'EOF' > mbed_patch.py
       import sys
