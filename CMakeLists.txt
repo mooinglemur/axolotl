@@ -198,8 +198,8 @@ endif()
 
 # Dynamic version generation
 add_custom_target(UpdateVersion ALL
-    COMMAND ${CMAKE_COMMAND} 
-        -DS_DIR=${CMAKE_SOURCE_DIR} 
+    COMMAND ${CMAKE_COMMAND}
+        -DS_DIR=${CMAKE_SOURCE_DIR}
         -DAXOLOTL_IGNORE_DIRTY=${AXOLOTL_IGNORE_DIRTY}
         -DPROJECT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
         -DPROJECT_VERSION_MINOR=${PROJECT_VERSION_MINOR}
@@ -238,75 +238,76 @@ if (AXOLOTL_OFFICIAL_RELEASE)
     target_compile_definitions(axolotl-apclient PRIVATE AXOLOTL_OFFICIAL_RELEASE)
 endif()
 
-if (APPLE)
-    if (USE_MBED_TLS)
-        target_link_libraries(axolotl-apclient PRIVATE ${MBEDTLS_LIBRARIES})
-        target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
-    endif()
+# --- Linkage Section ---
 
-    set(EXTRA_LIBS "")
-    if (NOT libzip_FOUND)
-        list(APPEND EXTRA_LIBS PkgConfig::LIBZIP)
-    else()
-        list(APPEND EXTRA_LIBS libzip::zip)
-    endif()
+# 1. Base dependencies (common to all platforms)
+set(ALL_LIBS
+    imgui
+    lua
+    ixwebsocket
+    nlohmann_json::nlohmann_json
+    yaml-cpp::yaml-cpp
+)
 
-    if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${EXTRA_LIBS} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
-    else()
-        target_link_libraries(axolotl-apclient PRIVATE imgui lua ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${EXTRA_LIBS} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
-        target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
-    endif()
+# 2. Windowing and Graphics
+if (glfw3_FOUND)
+    list(APPEND ALL_LIBS glfw)
 else()
-    set(EXTRA_LIBS "")
-    if (UNIX AND NOT APPLE)
-        list(APPEND EXTRA_LIBS PkgConfig::LIBZIP PkgConfig::FONTCONFIG)
-    else()
-        if (NOT libzip_FOUND)
-            list(APPEND EXTRA_LIBS PkgConfig::LIBZIP)
-        else()
-            list(APPEND EXTRA_LIBS libzip::zip)
-        endif()
-    endif()
-
-    if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw OpenGL::GL Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${EXTRA_LIBS} ixwebsocket)
-    else()
-        target_link_libraries(axolotl-apclient PRIVATE
-            imgui
-            lua
-            ${GLFW3_LIBRARIES}
-            OpenGL::GL
-            Threads::Threads
-            nlohmann_json::nlohmann_json
-            yaml-cpp::yaml-cpp
-            ${EXTRA_LIBS}
-            ixwebsocket
-        )
-        target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
-    endif()
+    list(APPEND ALL_LIBS ${GLFW3_LIBRARIES})
+    target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
 endif()
 
-if (WIN32)
-    message(STATUS "Configuring Windows-specific dependencies...")
-    target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE ZIP_STATIC)
-    # Link against essential Windows system libs.
-    set(WIN_LIBS d3d11 dxgi d3dcompiler bcrypt)
+if (APPLE)
+    list(APPEND ALL_LIBS ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+else()
+    list(APPEND ALL_LIBS OpenGL::GL)
+endif()
 
-    # On Mingwplatforms (Native and Cross), we must manually ensure bz2, lzma, and zstd
-    # are linked AFTER libzip for static builds to resolve undefined references.
+# 3. Threads
+list(APPEND ALL_LIBS Threads::Threads)
+
+# 4. Archive Support (libzip MUST come BEFORE its backends)
+if (libzip_FOUND)
+    list(APPEND ALL_LIBS libzip::zip)
+else()
+    list(APPEND ALL_LIBS PkgConfig::LIBZIP)
+endif()
+
+# 5. Linux-specific extras
+if (UNIX AND NOT APPLE)
+    list(APPEND ALL_LIBS PkgConfig::FONTCONFIG)
+endif()
+
+# 6. Platform-specific System Libs and Archive Backends (MUST be last)
+if (WIN32)
+    target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE ZIP_STATIC)
+
+    # Core Windows system libs
+    list(APPEND ALL_LIBS d3d11 dxgi d3dcompiler bcrypt)
+
+    # Static compression backends for libzip (critical to link AFTER libzip)
     if (MINGW)
         foreach(LIB bz2 lzma zstd)
             find_library(OPTIONAL_${LIB} NAMES ${LIB})
             if (OPTIONAL_${LIB})
-                message(STATUS "Manually linking static dependency: ${LIB} -> ${OPTIONAL_${LIB}}")
-                list(APPEND WIN_LIBS ${OPTIONAL_${LIB}})
+                message(STATUS "Ensuring static backend order: linking ${LIB} at end of chain")
+                list(APPEND ALL_LIBS ${OPTIONAL_${LIB}})
             endif()
         endforeach()
     endif()
 
-    target_link_libraries(axolotl-apclient PRIVATE ${WIN_LIBS})
+    # Networking and other system fallbacks
+    list(APPEND ALL_LIBS wsock32 ws2_32 shlwapi crypt32)
 endif()
+
+if (APPLE AND USE_MBED_TLS)
+    target_link_libraries(axolotl-apclient PRIVATE ${MBEDTLS_LIBRARIES})
+    target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
+endif()
+
+# Final unified link command
+target_link_libraries(axolotl-apclient PRIVATE ${ALL_LIBS})
+
 
 install(TARGETS axolotl-apclient
         RUNTIME DESTINATION bin)
