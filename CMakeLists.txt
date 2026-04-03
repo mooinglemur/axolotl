@@ -23,41 +23,65 @@ endif()
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(nlohmann_json REQUIRED)
-# Try PkgConfig first for yaml-cpp to handle static linkage correctly on some distros
+
+# Use an empty string for PKG_STATIC to avoid the 'STATIC' keyword, which is buggy on some CMake versions.
+# Our 'Aggressive Cleanup' already forces PkgConfig to find static libraries on Windows.
+set(PKG_STATIC "")
+
+# Try PkgConfig first for yaml-cpp
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(YAML_CPP QUIET IMPORTED_TARGET STATIC yaml-cpp)
-if (YAML_CPP_FOUND)
+
+if (MINGW)
+    # For ALL Mingw builds (Native and Cross), we've for-deleted the DLLs/import-libs
+    # which makes the system-provided Config files strictly broken. Use PkgConfig.
+    pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET ${PKG_STATIC} yaml-cpp)
     add_library(yaml-cpp::yaml-cpp ALIAS PkgConfig::YAML_CPP)
 else()
-    find_package(yaml-cpp CONFIG REQUIRED)
-    if (NOT TARGET yaml-cpp::yaml-cpp)
-        # some older versions or custom builds might just have yaml-cpp
-        add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
+    # Other platforms (Linux/macOS) - try PkgConfig with graceful fallback to Config
+    pkg_check_modules(YAML_CPP QUIET IMPORTED_TARGET ${PKG_STATIC} yaml-cpp)
+    if (YAML_CPP_FOUND)
+        add_library(yaml-cpp::yaml-cpp ALIAS PkgConfig::YAML_CPP)
+    else()
+        find_package(yaml-cpp CONFIG REQUIRED)
+        if (NOT TARGET yaml-cpp::yaml-cpp)
+            add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
+        endif()
     endif()
 endif()
 
-# Find libzip (prefer PkgConfig over CONFIG to avoid brittle hard-coded paths in some distros)
-pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET STATIC libzip)
-
-if (UNIX AND NOT APPLE)
-    pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
-endif()
-
-# Fallback for platforms where PkgConfig might fail or for custom source builds
-if (NOT LIBZIP_FOUND)
-    find_package(libzip CONFIG QUIET)
+# Find libzip
+if (MINGW)
+    pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET ${PKG_STATIC} libzip)
+else()
+    pkg_check_modules(LIBZIP QUIET IMPORTED_TARGET ${PKG_STATIC} libzip)
+    if (NOT LIBZIP_FOUND)
+        find_package(libzip CONFIG REQUIRED)
+    endif()
 endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
 # Prioritize PkgConfig to avoid brittle CONFIG files on some distros.
-pkg_check_modules(GLFW3 QUIET IMPORTED_TARGET STATIC glfw3)
-if (GLFW3_FOUND)
+if (MINGW)
+    pkg_check_modules(GLFW3 REQUIRED IMPORTED_TARGET ${PKG_STATIC} glfw3)
     if (NOT TARGET glfw)
         add_library(glfw ALIAS PkgConfig::GLFW3)
     endif()
     set(glfw3_FOUND TRUE)
 else()
-    find_package(glfw3 CONFIG QUIET)
+    pkg_check_modules(GLFW3 QUIET IMPORTED_TARGET ${PKG_STATIC} glfw3)
+    if (GLFW3_FOUND)
+        if (NOT TARGET glfw)
+            add_library(glfw ALIAS PkgConfig::GLFW3)
+        endif()
+        set(glfw3_FOUND TRUE)
+    else()
+        find_package(glfw3 CONFIG QUIET)
+    endif()
+endif()
+
+if (UNIX AND NOT APPLE)
+    pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET ${PKG_STATIC} fontconfig)
+    pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET ${PKG_STATIC} dbus-1)
 endif()
 
 # TLS Backend options
@@ -267,9 +291,22 @@ endif()
 if (WIN32)
     message(STATUS "Configuring Windows-specific dependencies...")
     target_compile_definitions(axolotl-apclient PRIVATE YAML_CPP_STATIC_DEFINE ZIP_STATIC)
-    # Link against essential Windows system libs. 
-    # Static dependencies for libzip (bz2, lzma, zstd) are now handled by PkgConfig::LIBZIP
-    target_link_libraries(axolotl-apclient PRIVATE d3d11 dxgi d3dcompiler bcrypt)
+    # Link against essential Windows system libs.
+    set(WIN_LIBS d3d11 dxgi d3dcompiler bcrypt)
+
+    # On Mingwplatforms (Native and Cross), we must manually ensure bz2, lzma, and zstd
+    # are linked AFTER libzip for static builds to resolve undefined references.
+    if (MINGW)
+        foreach(LIB bz2 lzma zstd)
+            find_library(OPTIONAL_${LIB} NAMES ${LIB})
+            if (OPTIONAL_${LIB})
+                message(STATUS "Manually linking static dependency: ${LIB} -> ${OPTIONAL_${LIB}}")
+                list(APPEND WIN_LIBS ${OPTIONAL_${LIB}})
+            endif()
+        endforeach()
+    endif()
+
+    target_link_libraries(axolotl-apclient PRIVATE ${WIN_LIBS})
 endif()
 
 install(TARGETS axolotl-apclient
