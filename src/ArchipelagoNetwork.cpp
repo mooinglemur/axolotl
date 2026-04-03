@@ -967,6 +967,9 @@ void ArchipelagoSession::ClearData() {
   missing_locations_.clear();
   received_item_counts_.clear();
   slot_data_ = nlohmann::json::object();
+  metadata_ = nullptr;
+  local_slot_ = -1;
+  team_ = -1;
 
   if (manager_ && local_slot_ != -1) {
     manager_->ClearSessionStats((team_ << 16) | local_slot_);
@@ -1552,6 +1555,9 @@ void ArchipelagoNetwork::ClearAllData(bool keep_chat) {
   aggregated_items_dirty_ = true;
   aggregated_hints_dirty_ = true;
   data_version_++;
+
+  url_to_metadata_.clear();
+  ClearGlobalStats();
 
   if (on_history_updated)
     on_history_updated();

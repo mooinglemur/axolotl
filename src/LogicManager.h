@@ -31,10 +31,13 @@ public:
                    int playerNumber);
 
   const std::vector<LocationLogic> &GetLocations() const { return locations_; }
+  void SetDebugMode(bool debug);
+  bool GetDebugMode() const { return debug_mode_; }
   int GetAccessibility(int locationId) const;
   const std::string &GetCurrentGame() const { return currentGame_; }
 
 private:
+  bool debug_mode_ = false;
   sol::state lua_;
   std::string currentGame_;
   std::vector<LocationLogic> locations_;

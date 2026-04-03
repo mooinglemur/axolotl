@@ -46,6 +46,11 @@ LogicManager::LogicManager() {
 
 LogicManager::~LogicManager() {}
 
+void LogicManager::SetDebugMode(bool debug) {
+  debug_mode_ = debug;
+  lua_["AUTOTRACKER_ENABLE_DEBUG_LOGGING_AP"] = debug;
+}
+
 bool LogicManager::LoadPack(const std::string &game) {
   std::cerr << "LogicManager: Starting load for game: " << game << std::endl;
   fs::path packPath = PackStore::GetPackPath(game);
@@ -138,8 +143,10 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
 
   // Update slot data in Lua
   if (slotData != lastSlotData_) {
-    std::cout << "LogicManager [DEBUG]: New Slot Data received: "
-              << slotData.dump(2) << std::endl;
+    if (debug_mode_) {
+      std::cout << "LogicManager [DEBUG]: New Slot Data received: "
+                << slotData.dump(2) << std::endl;
+    }
     lastSlotData_ = slotData;
     lua_["SLOT_DATA"] = JsonToLua(lua_, slotData);
     for (auto &cb : clearHandlers_) {

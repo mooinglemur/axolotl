@@ -335,8 +335,13 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
       }
 
       if (sync_triggered_ && !ap_network_.GetTrackerUrl().empty()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0, 1, 0, 1), "Syncing...");
+        if (ap_network_.IsAnySessionConnected()) {
+          ImGui::SameLine();
+          ImGui::TextColored(ImVec4(0, 1, 0, 1), "Syncing...");
+        } else {
+          ImGui::TextColored(ImVec4(1, 1, 0, 1),
+                             "Awaiting connection to AP server...");
+        }
       }
 
       if (ap_network_.GetTrackerUrl().empty()) {

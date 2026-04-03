@@ -58,6 +58,7 @@ bool Application::InitializeNetwork() {
   ix::initNetSystem();
 #endif
   ap_network_.SetDebugMode(debug_mode_);
+  logic_manager_.SetDebugMode(debug_mode_);
   ap_network_.SetSettings(&current_config_);
   ap_network_.on_history_updated = [this]() {};
   for (const auto &slot : live_slots_) {
