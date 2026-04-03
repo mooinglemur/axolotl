@@ -58,15 +58,34 @@ if (MINGW)
     # 1. Discover backends first so we can attach them to libzip properly
     set(ZIP_BACKENDS "")
     foreach(BACKEND bzip2 liblzma libzstd)
+        # Try PkgConfig first to get hints
         pkg_check_modules(BE_${BACKEND} QUIET ${BACKEND})
-        if (BE_${BACKEND}_FOUND)
-            # Create a target for the backend using its full library path
-            add_library(backend::${BACKEND} INTERFACE IMPORTED GLOBAL)
-            set_target_properties(backend::${BACKEND} PROPERTIES INTERFACE_LINK_LIBRARIES "${BE_${BACKEND}_LINK_LIBRARIES}")
-            list(APPEND ZIP_BACKENDS backend::${BACKEND})
-            message(STATUS "Found libzip backend: ${BACKEND} -> ${BE_${BACKEND}_LINK_LIBRARIES}")
+
+        # Determine search names based on backend
+        if ("${BACKEND}" STREQUAL "bzip2")
+            set(SEARCH_NAMES bz2 bzip2)
+        elseif ("${BACKEND}" STREQUAL "liblzma")
+            set(SEARCH_NAMES lzma liblzma)
         else()
-            message(WARNING "Could not find libzip backend via PkgConfig: ${BACKEND}")
+            set(SEARCH_NAMES zstd libzstd)
+        endif()
+
+        # Resolve to absolute path using hints from PkgConfig
+        find_library(LIB_PATH_${BACKEND} 
+            NAMES ${SEARCH_NAMES}
+            HINTS ${BE_${BACKEND}_LIBRARY_DIRS}
+        )
+
+        if (LIB_PATH_${BACKEND})
+            # Create a target for the backend using its absolute library path
+            if (NOT TARGET backend::${BACKEND})
+                add_library(backend::${BACKEND} INTERFACE IMPORTED GLOBAL)
+                set_target_properties(backend::${BACKEND} PROPERTIES INTERFACE_LINK_LIBRARIES "${LIB_PATH_${BACKEND}}")
+            endif()
+            list(APPEND ZIP_BACKENDS backend::${BACKEND})
+            message(STATUS "Resolved libzip backend to absolute path: ${BACKEND} -> ${LIB_PATH_${BACKEND}}")
+        else()
+            message(WARNING "Could not resolve libzip backend to absolute path: ${BACKEND}")
         endif()
     endforeach()
 
