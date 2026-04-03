@@ -48,7 +48,7 @@ linux-appimage:
     pre_get_sources_script:
       - apt update && DEBIAN_FRONTEND=noninteractive apt install -y git
   before_script:
-    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev libzip-dev git wget file python3
+    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential libgl1-mesa-dev libfontconfig1-dev libglfw3-dev nlohmann-json3-dev libyaml-cpp-dev libssl-dev libmbedtls-dev libzip-dev git wget file python3 pkg-config
     - wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
     - chmod +x linuxdeploy-x86_64.AppImage
     - wget https://curl.se/ca/cacert.pem
@@ -195,7 +195,7 @@ windows-cross:
       - curl -L -o /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
       - chmod +x /usr/local/bin/gitlab-runner
   before_script:
-    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools wixl zip curl git python3
+    - apt update && DEBIAN_FRONTEND=noninteractive apt install -y cmake ninja-build build-essential binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 msitools wixl zip curl git python3 pkg-config
     - export ROOT_DIR=$PWD
     - export CMAKE_GENERATOR=Ninja
     # Patch IXWebSocket for case-insensitive linking on Linux and missing bcrypt dependency for mbedtls
