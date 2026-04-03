@@ -28,17 +28,16 @@ if (NOT TARGET yaml-cpp::yaml-cpp)
     add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
 endif()
 
-if (UNIX AND NOT APPLE)
+# Find libzip (prefer CONFIG over PkgConfig for better cross-compilation support)
+find_package(libzip CONFIG QUIET)
+if (NOT libzip_FOUND)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
     pkg_check_modules(LIBZIP REQUIRED libzip)
 endif()
 
-if (APPLE OR WIN32)
-    # On macOS/Windows we might need a different way to find libzip, 
-    # but for now we follow the PkgConfig path if possible or assume system availability.
+if (UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBZIP REQUIRED libzip)
+    pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
 endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
@@ -72,9 +71,18 @@ set(LUA_SOURCES
     ${LUA_DIR}/loadlib.c ${LUA_DIR}/loslib.c ${LUA_DIR}/lstrlib.c ${LUA_DIR}/ltablib.c ${LUA_DIR}/lutf8lib.c ${LUA_DIR}/linit.c
 )
 add_library(lua STATIC ${LUA_SOURCES})
-target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
+if (WIN32)
+    target_compile_definitions(lua PRIVATE LUA_USE_WINDOWS)
+elseif (APPLE)
+    target_compile_definitions(lua PRIVATE LUA_USE_MACOSX)
+else()
+    target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
+endif()
 target_include_directories(lua PUBLIC ${LUA_DIR})
-target_link_libraries(lua INTERFACE dl m)
+
+if (NOT WIN32)
+    target_link_libraries(lua INTERFACE dl m)
+endif()
 
 # ImGui submodule
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)

@@ -288,6 +288,7 @@ jobs:
 
       - name: Patch and Build
         run: |
+          export PKG_CONFIG_PATH=/usr/x86_64-w64-mingw32/lib/pkgconfig
           mkdir build-cross && cd build-cross
           cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_OFFICIAL_RELEASE=${{ inputs.official_release && 'ON' || 'OFF' }} -DAXOLOTL_IGNORE_DIRTY=ON ..
           cd ..
