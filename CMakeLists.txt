@@ -28,16 +28,20 @@ if (NOT TARGET yaml-cpp::yaml-cpp)
     add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
 endif()
 
-# Find libzip (prefer CONFIG over PkgConfig for better cross-compilation support)
-find_package(libzip CONFIG QUIET)
-if (NOT libzip_FOUND)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBZIP REQUIRED libzip)
-endif()
-
 if (UNIX AND NOT APPLE)
+    # On pure Linux systems, we prefer PkgConfig for everything. 
+    # This avoids broken CMake config files found in some distros (like Ubuntu 22.04's libzip-dev).
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
+    pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
+    pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
+else()
+    # For Windows, macOS, and Cross-compilation, we prefer CMake CONFIG files 
+    # because we often build these dependencies from source ourselves.
+    find_package(libzip CONFIG QUIET)
+    if (NOT libzip_FOUND)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
+    endif()
 endif()
 
 # glfw or sdl2 for windowing backend. Let's use glfw as standard.
@@ -209,16 +213,34 @@ if (APPLE)
         target_link_libraries(axolotl-apclient PRIVATE ${MBEDTLS_LIBRARIES})
         target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
     endif()
-    if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${LIBZIP_LIBRARIES} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+    
+    set(EXTRA_LIBS "")
+    if (NOT libzip_FOUND)
+        list(APPEND EXTRA_LIBS PkgConfig::LIBZIP)
     else()
-        target_link_libraries(axolotl-apclient PRIVATE imgui lua ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${LIBZIP_LIBRARIES} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+        list(APPEND EXTRA_LIBS libzip::zip)
+    endif()
+
+    if (glfw3_FOUND)
+        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${EXTRA_LIBS} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
+    else()
+        target_link_libraries(axolotl-apclient PRIVATE imgui lua ${GLFW3_LIBRARIES} Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${EXTRA_LIBS} ixwebsocket ${METAL_LIBRARY} ${QUARTZ_LIBRARY} ${FOUNDATION_LIBRARY} ${APPKIT_LIBRARY})
         target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
     endif()
 else()
+    set(EXTRA_LIBS "")
+    if (UNIX AND NOT APPLE)
+        list(APPEND EXTRA_LIBS PkgConfig::LIBZIP PkgConfig::FONTCONFIG)
+    else()
+        if (NOT libzip_FOUND)
+            list(APPEND EXTRA_LIBS PkgConfig::LIBZIP)
+        else()
+            list(APPEND EXTRA_LIBS libzip::zip)
+        endif()
+    endif()
+
     if (glfw3_FOUND)
-        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw OpenGL::GL Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${FONTCONFIG_LIBRARIES} ${LIBZIP_LIBRARIES} ixwebsocket)
-        target_include_directories(axolotl-apclient PRIVATE ${FONTCONFIG_INCLUDE_DIRS})
+        target_link_libraries(axolotl-apclient PRIVATE imgui lua glfw OpenGL::GL Threads::Threads nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp ${EXTRA_LIBS} ixwebsocket)
     else()
         target_link_libraries(axolotl-apclient PRIVATE
             imgui
@@ -228,15 +250,10 @@ else()
             Threads::Threads
             nlohmann_json::nlohmann_json
             yaml-cpp::yaml-cpp
-            ${FONTCONFIG_LIBRARIES}
-            ${LIBZIP_LIBRARIES}
+            ${EXTRA_LIBS}
             ixwebsocket
         )
-        if (USE_MBED_TLS)
-            target_link_libraries(axolotl-apclient PRIVATE ${MBEDTLS_LIBRARIES})
-            target_include_directories(axolotl-apclient PRIVATE ${MBEDTLS_INCLUDE_DIRS})
-        endif()
-        target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
+        target_include_directories(axolotl-apclient PRIVATE ${GLFW3_INCLUDE_DIRS})
     endif()
 endif()
 

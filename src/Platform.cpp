@@ -7,9 +7,9 @@
 #endif
 
 #ifdef _WIN32
+#include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
-#include <windows.h>
 #endif
 
 namespace Platform {
