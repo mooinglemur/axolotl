@@ -243,6 +243,7 @@ windows-cross:
     - find /usr/x86_64-w64-mingw32 -name "*.dll.a" -delete
   script:
     - |
+      export PKG_CONFIG_PATH=/usr/x86_64-w64-mingw32/lib/pkgconfig
       mkdir build-cross && cd build-cross
       cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$PWD/../Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DUSE_MBED_TLS=ON -DUSE_OPEN_SSL=OFF -DAXOLOTL_IGNORE_DIRTY=ON -DAXOLOTL_OFFICIAL_RELEASE=${OFFICIAL_RELEASE:-OFF} ..
       cd ..
