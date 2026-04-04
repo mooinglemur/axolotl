@@ -10,6 +10,8 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#else
+#include <sys/wait.h>
 #endif
 
 namespace Platform {
@@ -80,12 +82,13 @@ std::string PickOpenFileName(const std::string &filter) {
   }
 #else
   // Extract first found extension for Zenity/KDialog fallback
-  std::string first_ext = "*.txt";
-  const char *ptr = filter.c_str();
-  while (*ptr) {
+  std::string first_ext = "*.*";
+  const char *ptr = filter.data();
+  const char *end = filter.data() + filter.size();
+  while (ptr < end && *ptr) {
     std::string desc = ptr;
     ptr += desc.length() + 1;
-    if (!*ptr)
+    if (ptr >= end || !*ptr)
       break;
     std::string ext = ptr;
     if (ext.find("*.") == 0) {
@@ -106,11 +109,23 @@ std::string PickOpenFileName(const std::string &filter) {
       result = buffer;
     }
     int status = pclose(pipe);
+#ifndef _WIN32
+    int exit_code = WEXITSTATUS(status);
+    if (exit_code == 0 && !result.empty()) { // Success
+      if (result.back() == '\n')
+        result.pop_back();
+      return result;
+    } else if (exit_code == 1) { // User Cancel
+      return "";
+    }
+    // Fallback on 127 or other errors
+#else
     if (status == 0 && !result.empty()) {
       if (result.back() == '\n')
         result.pop_back();
       return result;
     }
+#endif
   }
 
   // Fallback to kdialog
@@ -123,11 +138,20 @@ std::string PickOpenFileName(const std::string &filter) {
       result = buffer;
     }
     int status = pclose(pipe);
+#ifndef _WIN32
+    int exit_code = WEXITSTATUS(status);
+    if (exit_code == 0 && !result.empty()) {
+      if (result.back() == '\n')
+        result.pop_back();
+      return result;
+    }
+#else
     if (status == 0 && !result.empty()) {
       if (result.back() == '\n')
         result.pop_back();
       return result;
     }
+#endif
   }
 #endif
   return "";

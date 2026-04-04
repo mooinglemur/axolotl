@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <set>
+#include <mutex>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -46,12 +47,37 @@ LogicManager::LogicManager() {
 
 LogicManager::~LogicManager() {}
 
+void LogicManager::Reset() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  currentGame_ = "";
+  locations_.clear();
+  allLocations_.clear();
+  accessibilityCache_.clear();
+  ruleCache_.clear();
+  uniqueRules_.clear();
+  reportedFailedRules_.clear();
+  nameToCode_.clear();
+  lastItemNameCounts_.clear();
+  lastItemCounts_.clear();
+  lastCheckedLocationIds_.clear();
+  lastMissingLocationIds_.clear();
+  lastPlayerNumber_ = -1;
+  firstRun_ = true;
+
+  // Reset Lua state
+  lua_ = sol::state();
+  lua_.open_libraries(sol::lib::base, sol::lib::package, sol::lib::table,
+                      sol::lib::string, sol::lib::math, sol::lib::bit32);
+  BindGlobals();
+}
+
 void LogicManager::SetDebugMode(bool debug) {
   debug_mode_ = debug;
   lua_["AUTOTRACKER_ENABLE_DEBUG_LOGGING_AP"] = debug;
 }
 
 bool LogicManager::LoadPack(const std::string &game) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   if (debug_mode_)
     std::cerr << "LogicManager: Starting load for game: " << game << std::endl;
   fs::path packPath = PackStore::GetPackPath(game);
@@ -115,6 +141,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
                                const std::set<int64_t> &checkedLocationIds,
                                const std::set<int64_t> &missingLocationIds,
                                int playerNumber) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   if (currentGame_.empty())
     return;
 
@@ -333,8 +360,19 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
 }
 
 int LogicManager::GetAccessibility(int64_t locationId) const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   auto it = accessibilityCache_.find(locationId);
   return (it != accessibilityCache_.end()) ? it->second : 0;
+}
+
+const std::vector<LocationLogic> &LogicManager::GetLocations() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return locations_;
+}
+
+const std::string &LogicManager::GetCurrentGame() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return currentGame_;
 }
 
 void LogicManager::BindGlobals() {

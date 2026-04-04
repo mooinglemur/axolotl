@@ -1,8 +1,10 @@
 #include "PackStore.h"
 #include "Config.h"
-#include <iostream>
-#include <zip.h>
+#include "Platform.h"
 #include <fstream>
+#include <iostream>
+#include <nlohmann/json.hpp>
+#include <zip.h>
 #include <vector>
 
 fs::path PackStore::GetCacheDir() { return Config::GetCacheDir() / "packs"; }
@@ -98,4 +100,49 @@ std::string PackStore::SanitizeFileName(const std::string &name) {
     }
   }
   return sanitized;
+}
+
+std::vector<PackStore::PackInfo> PackStore::ListPacks() {
+  std::vector<PackInfo> packs;
+  fs::path cache = GetCacheDir();
+  if (!fs::exists(cache))
+    return packs;
+
+  for (const auto &entry : fs::directory_iterator(cache)) {
+    if (entry.is_directory()) {
+      fs::path manifestPath = entry.path() / "manifest.json";
+      if (fs::exists(manifestPath)) {
+        PackInfo info;
+        info.dir_name = entry.path().filename().string();
+        info.display_name = info.dir_name; // Fallback
+
+        try {
+          std::ifstream f(manifestPath);
+          nlohmann::json j = nlohmann::json::parse(f, nullptr, true, true);
+          if (j.contains("name") && j["name"].is_string()) {
+            info.display_name = j["name"].get<std::string>();
+          }
+        } catch (...) {
+          // Keep fallback
+        }
+        packs.push_back(info);
+      }
+    }
+  }
+  return packs;
+}
+
+bool PackStore::RemovePack(const std::string &game) {
+  if (game.empty())
+    return false;
+  fs::path target = GetPackPath(game);
+  if (fs::exists(target)) {
+    try {
+      fs::remove_all(target);
+      return true;
+    } catch (const fs::filesystem_error &e) {
+      std::cerr << "PackStore Error: " << e.what() << std::endl;
+    }
+  }
+  return false;
 }

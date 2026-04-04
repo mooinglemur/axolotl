@@ -106,8 +106,9 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                      cache.game.c_str());
                   if (ImGui::Button("Import PopTracker Pack")) {
                     std::string path = Platform::PickOpenFileName(
-                        "PopTracker Pack (*.zip)\0*.zip\0All Files "
-                        "(*.*)\0*.*\0");
+                        std::string("PopTracker Pack (*.zip)\0*.zip\0All Files "
+                                    "(*.*)\0*.*\0",
+                                    51));
                     if (!path.empty()) {
                       if (PackStore::ImportPack(cache.game, path)) {
                         app_.GetLogic().LoadPack(cache.game);

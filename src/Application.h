@@ -41,6 +41,7 @@ public:
   ImFont *GetPreviewFallbackFont() const { return preview_fallback_font_; }
   void SetPreviewFont(const std::string &font_path);
   void SetPreviewFallbackFont(const std::string &font_path);
+  void RemovePopTrackerPack(const std::string &game);
 
   void AddWindow(std::unique_ptr<Window> window);
   ArchipelagoNetwork &GetNetwork() { return ap_network_; }

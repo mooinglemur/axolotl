@@ -3,6 +3,7 @@
 #include "FontScanner.h"
 #include "HintWindow.h"
 #include "ItemFeedWindow.h"
+#include "PackStore.h"
 #include "OverviewWindow.h"
 #include "Platform.h"
 #include "ReceivedItemsWindow.h"
@@ -310,7 +311,8 @@ bool Application::InitializeUI() {
         settings_changed_pending_ = true;
       },
       [this](const std::string &p) { SetPreviewFont(p); },
-      [this](const std::string &p) { SetPreviewFallbackFont(p); }));
+      [this](const std::string &p) { SetPreviewFallbackFont(p); },
+      [this](const std::string &g) { RemovePopTrackerPack(g); }));
 
   AddWindow(
       std::make_unique<ReceivedItemsWindow>(ap_network_, current_config_));
@@ -552,6 +554,14 @@ void Application::ParseArguments(int argc, char **argv) {
 void Application::SetPreviewFallbackFont(const std::string &path) {
   preview_fallback_font_path_ = path;
   fonts_reload_pending_ = true;
+}
+
+void Application::RemovePopTrackerPack(const std::string &game) {
+  if (PackStore::RemovePack(game)) {
+    if (logic_manager_.GetCurrentGame() == game) {
+      logic_manager_.Reset();
+    }
+  }
 }
 
 void Application::Run() {

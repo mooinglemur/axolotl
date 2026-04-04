@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <mutex>
 
 struct LocationLogic {
   std::string name;
@@ -29,12 +30,13 @@ public:
                    const std::set<int64_t> &checkedLocationIds,
                    const std::set<int64_t> &missingLocationIds,
                    int playerNumber);
+  void Reset();
 
-  const std::vector<LocationLogic> &GetLocations() const { return locations_; }
+  const std::vector<LocationLogic> &GetLocations() const;
   void SetDebugMode(bool debug);
   bool GetDebugMode() const { return debug_mode_; }
   int GetAccessibility(int64_t locationId) const;
-  const std::string &GetCurrentGame() const { return currentGame_; }
+  const std::string &GetCurrentGame() const;
 
 private:
   bool debug_mode_ = false;
@@ -61,4 +63,6 @@ private:
   void LoadLocationsFromPack(const std::filesystem::path &packPath);
   void LoadItemsFromPack(const std::filesystem::path &packPath);
   std::string TranspileRule(const std::string &rule);
+
+  mutable std::mutex state_mutex_;
 };

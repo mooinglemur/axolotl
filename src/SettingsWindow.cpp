@@ -1,6 +1,7 @@
 #include "SettingsWindow.h"
 #include "Config.h"
 #include "FontScanner.h"
+#include "PackStore.h"
 #include "Platform.h"
 #include <ctime>
 #include <imgui.h>
@@ -10,9 +11,11 @@ SettingsWindow::SettingsWindow(
     std::function<void(const ConnectionSettings &)> on_save,
     std::function<void(const std::string &)> on_preview,
     std::function<void(const std::string &)> on_fallback_preview,
+    std::function<void(const std::string &)> on_remove_pack,
     const std::string &name)
     : Window(name), settings_(settings), on_save_(on_save),
-      on_preview_(on_preview), on_fallback_preview_(on_fallback_preview) {
+      on_preview_(on_preview), on_fallback_preview_(on_fallback_preview),
+      on_remove_pack_(on_remove_pack) {
   available_fonts_ = FontScanner::GetAvailableFonts();
 
   // Load initial previews if fonts are already selected
@@ -43,8 +46,10 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
     }
   }
 
-  if (!is_open_)
+  if (!is_open_) {
+    packs_cache_valid_ = false;
     return;
+  }
 
   ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
@@ -364,6 +369,83 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
       ImGui::InputInt("Port", &settings_.http_server_port);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("TCP port for the embedded HTTP server.");
+
+      ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    }
+
+    if (ImGui::CollapsingHeader("PopTracker Packs")) {
+      ImGui::Text("Installed PopTracker Packs");
+      ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70.0f);
+      if (ImGui::Button("Refresh")) {
+        packs_cache_valid_ = false;
+      }
+      ImGui::Separator();
+
+      if (!packs_cache_valid_) {
+        cached_packs_ = PackStore::ListPacks();
+        packs_cache_valid_ = true;
+      }
+
+      if (cached_packs_.empty()) {
+        ImGui::TextDisabled("No packs installed.");
+      } else {
+        if (ImGui::BeginTable("PackTable", 2,
+                               ImGuiTableFlags_Borders |
+                                   ImGuiTableFlags_RowBg)) {
+          ImGui::TableSetupColumn("Pack Name",
+                                  ImGuiTableColumnFlags_WidthStretch);
+          ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed,
+                                  100.0f);
+          ImGui::TableHeadersRow();
+
+          for (size_t i = 0; i < cached_packs_.size(); ++i) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%s", cached_packs_[i].display_name.c_str());
+            if (cached_packs_[i].display_name != cached_packs_[i].dir_name) {
+              ImGui::SameLine();
+              ImGui::TextDisabled(" (%s)", cached_packs_[i].dir_name.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            std::string btn_label = "Remove##" + std::to_string(i);
+            if (ImGui::Button(btn_label.c_str())) {
+              selected_pack_to_remove_ = cached_packs_[i].dir_name;
+              show_remove_popup_ = true;
+            }
+          }
+          ImGui::EndTable();
+        }
+      }
+
+      last_packs_header_open_ = true;
+      if (show_remove_popup_) {
+        ImGui::OpenPopup("Remove PopTracker Pack?");
+        show_remove_popup_ = false;
+      }
+
+      if (ImGui::BeginPopupModal("Remove PopTracker Pack?", NULL,
+                                 ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to remove the PopTracker pack "
+                    "for:\n'%s'?\n\nThis will permanently delete the "
+                    "directory.",
+                    selected_pack_to_remove_.c_str());
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes, Delete", ImVec2(120, 0))) {
+          if (on_remove_pack_) {
+            on_remove_pack_(selected_pack_to_remove_);
+          }
+          packs_cache_valid_ = false;
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+      }
 
       ImGui::Dummy(ImVec2(0.0f, 10.0f));
     }
