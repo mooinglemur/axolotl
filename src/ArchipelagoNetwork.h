@@ -137,6 +137,8 @@ public:
 
   const std::map<int64_t, int>& GetReceivedItemCounts() const { return received_item_counts_; }
 
+  std::shared_ptr<ServerMetadata> GetMetadata() const { return metadata_; }
+
   // Metadata accessors
   std::string ResolveItemName(int64_t id, int slot = -1);
   std::string ResolveLocationName(int64_t id, int slot = -1);

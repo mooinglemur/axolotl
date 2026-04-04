@@ -1,13 +1,16 @@
 #include "ChatWindow.h"
 #include "Config.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <ctime>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
+#include <random>
 #include <set>
+#include <thread>
 
 ChatWindow::ChatWindow(ArchipelagoNetwork &ap_network,
                        ConnectionSettings &settings,
@@ -203,8 +206,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     ImGui::Separator();
 
     // History
-    std::lock_guard<std::recursive_mutex> lock(
-        ap_network_.GetStateMutex());
+    std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
     const auto &history = ap_network_.GetChatHistory();
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
@@ -230,11 +232,11 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           (last_scroll_max_y_ <= 0.0f ||
            ImGui::GetScrollY() >= last_scroll_max_y_ - threshold);
 
-      bool interacting =
-          (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
-                                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-           (ImGui::GetIO().MouseWheel != 0.0f || ImGui::IsMouseDown(0) ||
-            ImGui::IsMouseDown(1)));
+      bool interacting = (ImGui::IsWindowHovered(
+                              ImGuiHoveredFlags_RootAndChildWindows |
+                              ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                          (ImGui::GetIO().MouseWheel != 0.0f ||
+                           ImGui::IsMouseDown(0) || ImGui::IsMouseDown(1)));
 
       // Re-lock ONLY if near bottom and NOT interacting
       if (was_at_bottom && !interacting) {
@@ -252,33 +254,62 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       ImGui::GetWindowDrawList()->ChannelsSplit(2);
 
-      const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
+      // Part 26: Acquire history lock before accessing vectors
+      std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
 
+      const auto &history = ap_network_.GetChatHistory();
       if (history.size() != last_history_size_) {
-        row_height_cache_.resize(history.size(), -1.0f);
+        row_height_cache_.resize(history.size(), -1.0);
       }
 
       bool in_bottom_zone =
           (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 128.0f);
 
-      float min_h = ImGui::GetTextLineHeightWithSpacing();
-      float avg_h = (measured_rows_count_ > 0)
-                        ? (float)(measured_height_sum_ / measured_rows_count_)
-                        : min_h;
+      double min_h = (double)ImGui::GetTextLineHeightWithSpacing();
+      double avg_h = (measured_rows_count_ > 0)
+                         ? (double)(measured_height_sum_ / measured_rows_count_)
+                         : min_h;
       // Cap average to avoid crazy scrollbar behavior if one message is huge
-      if (avg_h > 10.0f * min_h)
-        avg_h = 10.0f * min_h;
-
-      float clipper_height = avg_h;
+      if (avg_h > 10.0 * min_h)
+        avg_h = 10.0 * min_h;
 
       ImGuiListClipper clipper;
-      bool use_clipper = (history.size() > 100);
+      int history_count = (int)history.size();
+      bool use_clipper = (history_count > 100);
+
+      double current_window_width = (double)ImGui::GetWindowWidth();
+      double current_scroll_max_y = (double)ImGui::GetScrollMaxY();
+
+      // Part 28: Million-Pixel Absolute Alignment (Prefix-Sum Cache)
+      cumulative_heights_.resize(history_count + 1);
+      double current_y_sum = 0;
+      for (int i = 0; i < history_count; ++i) {
+        cumulative_heights_[i] = current_y_sum;
+        double h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
+        current_y_sum += h;
+      }
+      cumulative_heights_[history_count] = current_y_sum;
+      double total_content_height = current_y_sum;
 
       bool force_bottom_render =
           (use_clipper && (locked_to_bottom_ || in_bottom_zone) &&
            !history.empty());
 
-      float actual_bottom_y = -1.0f;
+      double actual_bottom_y = -1.0;
+      bool is_any_interaction =
+          (ImGui::IsWindowHovered(
+               ImGuiHoveredFlags_RootAndChildWindows |
+               ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+           (ImGui::GetIO().MouseWheel != 0.0f || ImGui::IsMouseDown(0) ||
+            ImGui::IsMouseDown(1))) ||
+          (ImGui::IsWindowFocused() &&
+           (ImGui::IsKeyDown(ImGuiKey_UpArrow) ||
+            ImGui::IsKeyDown(ImGuiKey_DownArrow) ||
+            ImGui::IsKeyDown(ImGuiKey_PageUp) ||
+            ImGui::IsKeyDown(ImGuiKey_PageDown) ||
+            ImGui::IsKeyDown(ImGuiKey_Home) || ImGui::IsKeyDown(ImGuiKey_End)));
+
+      int rendered_count = 0;
       auto render_row = [&](int row_idx) {
         const auto &rm = history[row_idx];
         ImGui::PushID(row_idx);
@@ -293,16 +324,16 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           is_selected = (row_idx >= sel_start && row_idx <= sel_end);
         }
 
-        float row_h = row_height_cache_[row_idx];
+        double row_h = row_height_cache_[row_idx];
         if (row_h < 0)
-          row_h = ImGui::GetTextLineHeightWithSpacing();
+          row_h = (double)ImGui::GetTextLineHeightWithSpacing();
 
         char label[32];
         snprintf(label, sizeof(label), "##row_%d", row_idx);
         if (ImGui::Selectable(label, is_selected,
                               ImGuiSelectableFlags_SpanAllColumns |
                                   ImGuiSelectableFlags_AllowOverlap,
-                              ImVec2(0, row_h))) {
+                              ImVec2(0, (float)row_h))) {
         }
         if (rm.sender_slot != -1 && ImGui::IsItemHovered()) {
           std::string game = ap_network_.ResolvePlayerGame(rm.sender_slot);
@@ -348,6 +379,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           time_ptr = time_buf;
         }
 
+        const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
         RenderRichMessageWrapped(time_ptr, rm.parts, &ap_network_, &my_slots);
         ImGui::EndGroup();
         ImVec2 item_size = ImGui::GetItemRectSize();
@@ -363,7 +395,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
               ImVec2(x_max, pos_start.y + item_size.y),
               ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
         }
-        float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+        double h =
+            (double)item_size.y + (double)ImGui::GetStyle().ItemSpacing.y;
         if (row_height_cache_[row_idx] < 0) {
           measured_height_sum_ += h;
           measured_rows_count_++;
@@ -371,7 +404,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         row_height_cache_[row_idx] = h;
 
         if (row_idx == (int)history.size() - 1) {
-          actual_bottom_y = ImGui::GetCursorPosY();
+          actual_bottom_y = (double)ImGui::GetCursorPosY();
         }
 
         if (ImGui::BeginPopupContextItem("ChatLineCtx",
@@ -432,86 +465,90 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           }
           ImGui::EndPopup();
         }
-
         ImGui::PopID();
       };
 
-      if (use_clipper) {
-        int count = (int)history.size();
-
+      if (history_count > 0) {
         // 1. Precise Viewport Calculation using Row Height Cache
         int vis_start = 0;
         int vis_end = 0;
-        float scroll_y = ImGui::GetScrollY();
-        float window_h = ImGui::GetWindowHeight();
-        float cumulative_h = 0;
+        double scroll_y = (double)ImGui::GetScrollY();
+        double window_h = (double)ImGui::GetWindowHeight();
 
-        for (int i = 0; i < count; ++i) {
-          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
-          if (cumulative_h + h > scroll_y) {
-            vis_start = i;
-            break;
-          }
-          cumulative_h += h;
-        }
-        vis_end = vis_start;
-        for (int i = vis_start; i < count; ++i) {
-          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
-          cumulative_h += h;
-          vis_end = i + 1;
-          if (cumulative_h > scroll_y + window_h)
-            break;
-        }
+        // Optimized binary viewport search (O(log N))
+        auto it_start = std::lower_bound(cumulative_heights_.begin(),
+                                         cumulative_heights_.end(), scroll_y);
+        vis_start = std::clamp(
+            (int)std::distance(cumulative_heights_.begin(), it_start) - 1, 0,
+            history_count - 1);
 
-        clipper.Begin(count, clipper_height);
+        auto it_end =
+            std::lower_bound(cumulative_heights_.begin() + vis_start,
+                             cumulative_heights_.end(), scroll_y + window_h);
+        vis_end = std::clamp(
+            (int)std::distance(cumulative_heights_.begin(), it_end), 0,
+            history_count);
+
+        clipper.Begin(history_count, (float)avg_h);
 
         // 2. Apply Buffers (30 above, 50 below)
-        clipper.IncludeItemsByIndex(std::clamp(vis_start - 30, 0, count),
-                                    std::clamp(vis_end + 50, 0, count));
+        clipper.IncludeItemsByIndex(std::clamp(vis_start - 30, 0, history_count),
+                                    std::clamp(vis_end + 50, 0, history_count));
 
         // 3. Absolute Boundary safety
-        clipper.IncludeItemsByIndex(0, std::clamp(20, 0, count));
+        clipper.IncludeItemsByIndex(0, std::clamp(20, 0, history_count));
         if (force_bottom_render) {
-          clipper.IncludeItemsByIndex(std::clamp(count - 30, 0, count), count);
+          clipper.IncludeItemsByIndex(
+              std::clamp(history_count - 128, 0, history_count), history_count);
         }
 
+        int lowest_rendered_idx = -1;
+        double lowest_rendered_y = -1.0;
+        rendered_count = 0;
+
         while (clipper.Step()) {
+          // Force alignment for this range (Overrides clipper's internal inaccurate skip)
+          ImGui::SetCursorPosY((float)cumulative_heights_[clipper.DisplayStart]);
+
           for (int row_idx = clipper.DisplayStart; row_idx < clipper.DisplayEnd;
                ++row_idx) {
             render_row(row_idx);
+            if (row_idx > lowest_rendered_idx) {
+              lowest_rendered_idx = row_idx;
+              lowest_rendered_y = (double)ImGui::GetCursorPosY();
+            }
+            rendered_count++;
           }
         }
-      } else {
-        for (int row_idx = 0; row_idx < (int)history.size(); ++row_idx) {
-          render_row(row_idx);
+
+        // Part 23/27/28/29: Deterministic LACH anchored to prefix sum
+        if (lowest_rendered_idx >= 0) {
+          double convergent_total = lowest_rendered_y;
+          // The rest of the list comes from the prefix sum delta
+          convergent_total +=
+              (cumulative_heights_[history_count] -
+               cumulative_heights_[lowest_rendered_idx + 1]);
+
+          if (std::abs(convergent_total - total_content_height) > 0.001) {
+            total_content_height = convergent_total;
+          }
         }
       }
 
-      // Part 13: Stable Total Height with Hysteresis
-      float raw_total_height = 0;
-      for (int i = 0; i < (int)history.size(); ++i) {
-        raw_total_height +=
-            (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
-      }
-
-      // Round to nearest pixel to prevent float precision jitter
-      float total_content_height = std::round(raw_total_height);
-
-      // Part 14: Bottom-Anchored Convergence
-      if (actual_bottom_y > 0) {
-        total_content_height = actual_bottom_y;
-      }
-
-      // Only allow height to change if history grew or it moved significantly (>0.5px)
-      if ((int)history.size() == last_history_size_ &&
-          actual_bottom_y < 0 &&
-          std::abs(total_content_height - last_stable_height_) < 1.0f) {
+      // Part 24/27/30/31: Threshold-based Stability (Hysteresis)
+      // Only apply stabilization if NOT locked to bottom.
+      // At the bottom, we want the layout to converge immediately to the true MaxY.
+      double stability_threshold = 2.0 * avg_h;
+      if (!locked_to_bottom_ && history.size() == last_history_size_ &&
+          current_window_width == last_window_width_ &&
+          std::abs(total_content_height - last_stable_height_) <
+              stability_threshold) {
         total_content_height = last_stable_height_;
       }
       last_stable_height_ = total_content_height;
 
       // Part 12: Force content height to match our estimate
-      ImGui::SetCursorPosY(total_content_height);
+      ImGui::SetCursorPosY((float)total_content_height);
       ImGui::Dummy(ImVec2(0.0f, 0.0f));
 
       ImGui::GetWindowDrawList()->ChannelsMerge();
@@ -522,49 +559,43 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         selection_anchor_idx_ = -1;
       }
 
-      float current_scroll_max_y = ImGui::GetScrollMaxY();
-      float current_window_width = ImGui::GetWindowWidth();
-      bool is_any_interaction =
-          (ImGui::IsWindowHovered() &&
-           (ImGui::GetIO().MouseWheel != 0.0f || ImGui::IsMouseDown(0) ||
-            ImGui::IsMouseDown(1))) ||
-          (ImGui::IsWindowFocused() &&
-           (ImGui::IsKeyDown(ImGuiKey_UpArrow) ||
-            ImGui::IsKeyDown(ImGuiKey_DownArrow) ||
-            ImGui::IsKeyDown(ImGuiKey_PageUp) ||
-            ImGui::IsKeyDown(ImGuiKey_PageDown) ||
-            ImGui::IsKeyDown(ImGuiKey_Home) || ImGui::IsKeyDown(ImGuiKey_End)));
+      // Re-read scroll max because Dummy updated it
+      current_scroll_max_y = (double)ImGui::GetScrollMaxY();
       if (is_any_interaction) {
         locked_to_bottom_ =
-            (ImGui::GetScrollY() >= current_scroll_max_y - 20.0f) ||
+            (ImGui::GetScrollY() >= (float)current_scroll_max_y - 20.0f) ||
             ImGui::IsKeyDown(ImGuiKey_End);
       }
       if (locked_to_bottom_ && !is_any_interaction) {
-        ImGui::SetScrollY(current_scroll_max_y);
+        ImGui::SetScrollHereY(1.0f);
+        // Ensure MaxY is up to date for telemetry
+        current_scroll_max_y = (double)ImGui::GetScrollMaxY();
       }
 
       if (current_window_width != last_window_width_) {
-        std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0f);
-        last_avg_height_ = -1.0f;
+        std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0);
+        last_avg_height_ = -1.0;
         measured_height_sum_ = 0;
         measured_rows_count_ = 0;
       }
 
-      last_history_size_ = (int)history.size();
+      last_history_size_ = history.size();
       last_scroll_max_y_ = current_scroll_max_y;
       last_window_width_ = current_window_width;
 
       if (ap_network_.IsScrollStatsEnabled()) {
-        float cur_y = ImGui::GetScrollY();
-        float cur_h = ImGui::GetWindowHeight();
-        if (cur_y != last_reported_scroll_y_ ||
+        double cur_y = (double)ImGui::GetScrollY();
+        double cur_h = (double)ImGui::GetWindowHeight();
+        if (cur_y != (double)last_reported_scroll_y_ ||
             current_scroll_max_y != last_reported_scroll_max_y_ ||
-            cur_h != last_reported_window_h_ ||
+            cur_h != (double)last_reported_window_h_ ||
             locked_to_bottom_ != last_reported_locked_) {
-          char msg[256];
+          char msg[512];
           snprintf(msg, sizeof(msg),
-                   "[Chat Scroll] Y=%.1f MaxY=%.1f H=%.1f Locked=%d Int=%d",
-                   cur_y, current_scroll_max_y, cur_h, (int)locked_to_bottom_,
+                   "[Chat Scroll] Y=%.1f MaxY=%.1f H=%.1f EstH=%.1f "
+                   "Items=%d/%d Locked=%d Int=%d",
+                   cur_y, current_scroll_max_y, cur_h, total_content_height,
+                   rendered_count, (int)history.size(), (int)locked_to_bottom_,
                    (int)is_any_interaction);
           std::cout << msg << std::endl;
 
@@ -890,6 +921,23 @@ bool ChatWindow::HandleCommand(const std::string &line) {
       }
       return true;
     } else if (subcmd == "fillfeed") {
+      int n = 1;
+      int d = 0;
+      {
+        std::stringstream ss(args);
+        std::string part;
+        if (ss >> part)
+          try {
+            n = std::stoi(part);
+          } catch (...) {
+          }
+        if (ss >> part)
+          try {
+            d = std::stoi(part);
+          } catch (...) {
+          }
+      }
+
       std::string slot_name = selected_send_slot_name_.empty()
                                   ? "Player"
                                   : selected_send_slot_name_;
@@ -900,39 +948,128 @@ bool ChatWindow::HandleCommand(const std::string &line) {
         }
       }
 
-      for (int i = 0; i < n; ++i) {
-        RichMessage rm;
-        rm.timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
-                           std::chrono::system_clock::now().time_since_epoch())
-                           .count() /
-                       1000000.0;
-        rm.populate_local_time();
-        rm.source_slot = slot_name;
-        rm.sender_slot = slot_id;
-        rm.receiver_slot = slot_id;
-        rm.type = "ItemSend";
+      auto generate_fill = [this, n, d, slot_name, slot_id]() {
+        struct MetadataRef {
+          int slot;
+          std::string name;
+        };
+        std::vector<MetadataRef> players;
+        std::vector<std::pair<int64_t, std::string>> items;
+        std::vector<std::pair<int64_t, std::string>> locations;
 
-        rm.parts.push_back(
-            MessagePart{slot_name, 0xFFFF00FF, -1,
-                        "player_id player_self"}); // Player color (Magenta)
-        rm.parts.push_back(
-            MessagePart{" found their ", 0xFFFFFFFF, -1, "text"});
-        rm.parts.push_back(
-            MessagePart{"Item " + std::to_string(i + 1), 0xFFFFFF00, -1,
-                        "item_id item_filler"}); // Item color (Cyan)
-        rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
-        rm.parts.push_back(
-            MessagePart{"Location " + std::to_string(i + 1), 0xFF00FF00, -1,
-                        "location_id"}); // Location color (Green)
-        rm.parts.push_back(MessagePart{")", 0xFFFFFFFF, -1, "text"});
+        {
+          std::lock_guard<std::recursive_mutex> lock(
+              ap_network_.GetStateMutex());
+          for (const auto &session : ap_network_.GetSessions()) {
+            auto meta = session->GetMetadata();
+            if (meta && meta->data_package_received) {
+              for (auto const &[id, name] : meta->player_names)
+                players.push_back({id, name});
+              for (auto const &[game, item_map] : meta->item_names)
+                for (auto const &[id, name] : item_map)
+                  items.push_back({id, name});
+              for (auto const &[game, loc_map] : meta->location_names)
+                for (auto const &[id, name] : loc_map)
+                  locations.push_back({id, name});
+              if (!players.empty())
+                break;
+            }
+          }
+        }
 
-        ap_network_.OnGlobalMessage(nullptr, rm, true, 0, true);
+        std::random_device rd;
+        std::mt19937 gen(rd());
+
+        for (int i = 0; i < n; ++i) {
+          RichMessage rm;
+          rm.timestamp =
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::system_clock::now().time_since_epoch())
+                  .count() /
+              1000000.0;
+          rm.populate_local_time();
+          rm.source_slot = slot_name;
+          rm.type = "ItemSend";
+
+          if (!players.empty() && !items.empty() && !locations.empty()) {
+            std::uniform_int_distribution<> dis_p(0, players.size() - 1);
+            std::uniform_int_distribution<> dis_i(0, items.size() - 1);
+            std::uniform_int_distribution<> dis_l(0, locations.size() - 1);
+            std::uniform_int_distribution<> dis_type(0, 99);
+
+            auto &p1 = players[dis_p(gen)];
+            auto &item = items[dis_i(gen)];
+            auto &loc = locations[dis_l(gen)];
+
+            rm.sender_slot = p1.slot;
+            rm.item_id = item.first;
+            rm.location_id = loc.first;
+
+            if (dis_type(gen) < 30) {
+              rm.receiver_slot = p1.slot;
+              rm.parts.push_back(
+                  MessagePart{p1.name, 0xFFFF00FF, p1.slot, "player_id"});
+              rm.parts.push_back(
+                  MessagePart{" found their ", 0xFFFFFFFF, -1, "text"});
+            } else {
+              auto &p2 = players[dis_p(gen)];
+              rm.receiver_slot = p2.slot;
+              rm.parts.push_back(
+                  MessagePart{p1.name, 0xFFFF00FF, p1.slot, "player_id"});
+              rm.parts.push_back(MessagePart{" sent ", 0xFFFFFFFF, -1, "text"});
+              rm.parts.push_back(
+                  MessagePart{item.second, 0xFFFFFF00, -1, "item_id"});
+              rm.parts.push_back(MessagePart{" to ", 0xFFFFFFFF, -1, "text"});
+              rm.parts.push_back(
+                  MessagePart{p2.name, 0xFFFF00FF, p2.slot, "player_id"});
+              rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
+            }
+
+            if (rm.parts.size() <= 2) {
+              rm.parts.push_back(
+                  MessagePart{item.second, 0xFFFFFF00, -1, "item_id"});
+              rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
+            }
+
+            rm.parts.push_back(
+                MessagePart{loc.second, 0xFF00FF00, -1, "location_id"});
+            rm.parts.push_back(MessagePart{")", 0xFFFFFFFF, -1, "text"});
+
+          } else {
+            rm.sender_slot = slot_id;
+            rm.receiver_slot = slot_id;
+            rm.parts.push_back(MessagePart{slot_name, 0xFFFF00FF, -1,
+                                           "player_id player_self"});
+            rm.parts.push_back(
+                MessagePart{" found their ", 0xFFFFFFFF, -1, "text"});
+            rm.parts.push_back(MessagePart{"Item " + std::to_string(i + 1),
+                                           0xFFFFFF00, -1, "item_id"});
+            rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
+            rm.parts.push_back(MessagePart{"Location " + std::to_string(i + 1),
+                                           0xFF00FF00, -1, "location_id"});
+            rm.parts.push_back(MessagePart{")", 0xFFFFFFFF, -1, "text"});
+          }
+
+          ap_network_.OnGlobalMessage(nullptr, rm, true, 0, true);
+
+          if (d > 0 && i < n - 1) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(d));
+          }
+        }
+      };
+
+      if (d > 0) {
+        std::thread(generate_fill).detach();
+      } else {
+        generate_fill();
       }
       return true;
     } else if (subcmd == "deathlink") {
       if (!selected_send_slot_name_.empty()) {
         if (auto session = ap_network_.GetSession(selected_send_slot_name_)) {
-          std::string cause = selected_send_slot_name_ + " wielded the power of the Axolotl debug command.";
+          std::string cause =
+              selected_send_slot_name_ +
+              " wielded the power of the Axolotl debug command.";
           session->SendDeathLink(cause);
         }
       }

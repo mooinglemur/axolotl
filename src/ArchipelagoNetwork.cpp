@@ -1384,6 +1384,7 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
                                          const RichMessage &msg,
                                          bool is_item_feed, size_t message_hash,
                                          bool always_show) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   // Identify status messages for specialized handling (colors, goal detection)
   bool is_status =
       always_show ||
@@ -1427,8 +1428,6 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
       }
     }
   }
-
-  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
 
   if (is_item_feed) {
     SetItemsDirty(); // Replaced aggregated_items_dirty_ = true;
@@ -1727,6 +1726,7 @@ void ArchipelagoNetwork::CheckDayChange(std::vector<RichMessage> &history,
 
 void ArchipelagoNetwork::ReResolveHistoryVector(
     std::vector<RichMessage> &history) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto &rm : history) {
     auto session = GetSession(rm.source_slot);
     if (!session)
@@ -1783,6 +1783,7 @@ void ArchipelagoNetwork::ClearChatHistory() {
 }
 
 void ArchipelagoNetwork::ClearItemHistory() {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   item_history_.clear();
   last_item_day_ = -1;
   if (on_history_updated)

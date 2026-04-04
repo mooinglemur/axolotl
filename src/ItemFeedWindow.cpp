@@ -84,10 +84,10 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       int current_yday = current_tm->tm_yday;
       int current_year = current_tm->tm_year;
 
-      float threshold = 2.0f * ImGui::GetTextLineHeightWithSpacing();
+      double threshold = 2.0 * (double)ImGui::GetTextLineHeightWithSpacing();
       bool was_at_bottom =
-          (last_scroll_max_y_ <= 0.0f ||
-           ImGui::GetScrollY() >= last_scroll_max_y_ - threshold);
+          (last_scroll_max_y_ <= 0.0 ||
+           (double)ImGui::GetScrollY() >= last_scroll_max_y_ - threshold);
 
       bool interacting = (ImGui::IsWindowHovered(
                               ImGuiHoveredFlags_RootAndChildWindows |
@@ -105,36 +105,44 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         locked_to_bottom_ = false;
       }
 
-      bool history_grew =
-          ((int)display_indices_.size() > last_display_indices_size_);
+      int current_display_size = (int)display_indices_.size();
 
-      if (selection_anchor_idx_ >= (int)display_indices_.size())
+      if (selection_anchor_idx_ >= current_display_size)
         selection_anchor_idx_ =
-            display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
-      if (selection_active_idx_ >= (int)display_indices_.size())
+            display_indices_.empty() ? -1 : current_display_size - 1;
+      if (selection_active_idx_ >= current_display_size)
         selection_active_idx_ =
-            display_indices_.empty() ? -1 : (int)display_indices_.size() - 1;
+            display_indices_.empty() ? -1 : current_display_size - 1;
 
       bool in_bottom_zone =
           (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 128.0f);
 
-      float min_h = ImGui::GetTextLineHeightWithSpacing();
-      float avg_h = (measured_rows_count_ > 0)
-                        ? (float)(measured_height_sum_ / measured_rows_count_)
-                        : min_h;
-      if (avg_h > 10.0f * min_h)
-        avg_h = 10.0f * min_h;
+      double min_h = (double)ImGui::GetTextLineHeightWithSpacing();
+      double avg_h = (measured_rows_count_ > 0)
+                         ? (double)(measured_height_sum_ / measured_rows_count_)
+                         : min_h;
+      if (avg_h > 10.0 * min_h)
+        avg_h = 10.0 * min_h;
 
-      float clipper_height = avg_h;
+      // Part 28: Million-Pixel Absolute Alignment (Prefix-Sum Cache)
+      cumulative_heights_.resize(current_display_size + 1);
+      double current_y_sum = 0;
+      for (int i = 0; i < current_display_size; ++i) {
+        cumulative_heights_[i] = current_y_sum;
+        int hist_idx = display_indices_[i];
+        double h = (row_height_cache_[hist_idx] > 0) ? row_height_cache_[hist_idx] : avg_h;
+        current_y_sum += h;
+      }
+      cumulative_heights_[current_display_size] = current_y_sum;
+      double total_content_height = current_y_sum;
 
       ImGuiListClipper clipper;
-      bool use_clipper = (display_indices_.size() > 100);
+      bool use_clipper = (current_display_size > 100);
 
       bool force_bottom_render =
           (use_clipper && (locked_to_bottom_ || in_bottom_zone) &&
            !display_indices_.empty());
 
-      float actual_bottom_y = -1.0f;
       auto render_row = [&](int row_idx) {
         int i = display_indices_[row_idx];
         const auto &rm = history[i];
@@ -149,16 +157,16 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           is_selected = (row_idx >= s_start && row_idx <= s_end);
         }
 
-        float row_h = row_height_cache_[i];
+        double row_h = row_height_cache_[i];
         if (row_h < 0)
-          row_h = ImGui::GetTextLineHeightWithSpacing();
+          row_h = (double)ImGui::GetTextLineHeightWithSpacing();
 
         char label[32];
         snprintf(label, sizeof(label), "##row_%d", i);
         if (ImGui::Selectable(label, is_selected,
                               ImGuiSelectableFlags_SpanAllColumns |
                                   ImGuiSelectableFlags_AllowOverlap,
-                              ImVec2(0, row_h))) {
+                              ImVec2(0, (float)row_h))) {
         }
         if (ImGui::IsItemClicked(0)) {
           if (ImGui::GetIO().KeyShift && selection_anchor_idx_ != -1)
@@ -213,7 +221,8 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
               ImVec2(x_max, pos_start.y + item_size.y),
               ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
         }
-        float h = item_size.y + ImGui::GetStyle().ItemSpacing.y;
+        double h =
+            (double)item_size.y + (double)ImGui::GetStyle().ItemSpacing.y;
         if (row_height_cache_[i] < 0) {
           measured_height_sum_ += h;
           measured_rows_count_++;
@@ -280,99 +289,10 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           }
           ImGui::EndPopup();
         }
-
         ImGui::PopID();
       };
 
-      if (use_clipper) {
-        int count = (int)display_indices_.size();
-
-        // 1. Precise Viewport Calculation using Row Height Cache
-        int vis_start = 0;
-        int vis_end = 0;
-        float scroll_y = ImGui::GetScrollY();
-        float window_h = ImGui::GetWindowHeight();
-        float cumulative_h = 0;
-
-        for (int i = 0; i < count; ++i) {
-          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
-          if (cumulative_h + h > scroll_y) {
-            vis_start = i;
-            break;
-          }
-          cumulative_h += h;
-        }
-        vis_end = vis_start;
-        for (int i = vis_start; i < count; ++i) {
-          float h = (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
-          cumulative_h += h;
-          vis_end = i + 1;
-          if (cumulative_h > scroll_y + window_h)
-            break;
-        }
-
-        clipper.Begin(count, clipper_height);
-
-        // 2. Apply Buffers (30 above, 50 below)
-        clipper.IncludeItemsByIndex(std::clamp(vis_start - 30, 0, count),
-                                    std::clamp(vis_end + 50, 0, count));
-
-        // 3. Absolute Boundary safety
-        clipper.IncludeItemsByIndex(0, std::clamp(20, 0, count));
-        if (force_bottom_render) {
-          clipper.IncludeItemsByIndex(std::clamp(count - 30, 0, count), count);
-        }
-
-        while (clipper.Step()) {
-          for (int row_idx = clipper.DisplayStart; row_idx < clipper.DisplayEnd;
-               ++row_idx) {
-            render_row(row_idx);
-          }
-        }
-      } else {
-        for (int row_idx = 0; row_idx < (int)display_indices_.size();
-             ++row_idx) {
-          render_row(row_idx);
-        }
-      }
-
-      // Part 13: Stable Total Height with Hysteresis
-      float raw_total_height = 0;
-      for (int i : display_indices_) {
-        raw_total_height +=
-            (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
-      }
-
-      // Round to nearest pixel to prevent float precision jitter
-      float total_content_height = std::round(raw_total_height);
-
-      // Part 14: Bottom-Anchored Convergence
-      // If we rendered the bottom, use the actual bottom coordinate
-      if (actual_bottom_y > 0) {
-        total_content_height = actual_bottom_y;
-      }
-
-      // Only allow height to change if history grew or it moved significantly (>0.5px)
-      if ((int)display_indices_.size() == last_display_indices_size_ &&
-          actual_bottom_y < 0 &&
-          std::abs(total_content_height - last_stable_height_) < 1.0f) {
-        total_content_height = last_stable_height_;
-      }
-      last_stable_height_ = total_content_height;
-
-      // Part 12: Force content height to match our estimate
-      ImGui::SetCursorPosY(total_content_height);
-      ImGui::Dummy(ImVec2(0.0f, 0.0f));
-
-      if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
-          !ImGui::IsAnyItemHovered()) {
-        selection_active_idx_ = -1;
-        selection_anchor_idx_ = -1;
-      }
-
-      float current_scroll_max_y = ImGui::GetScrollMaxY();
-      float current_window_width = ImGui::GetWindowWidth();
-      bool is_any_interaction =
+      bool is_any_interaction_val =
           (ImGui::IsWindowHovered() &&
            (ImGui::GetIO().MouseWheel != 0.0f || ImGui::IsMouseDown(0) ||
             ImGui::IsMouseDown(1))) ||
@@ -382,18 +302,118 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
             ImGui::IsKeyDown(ImGuiKey_PageUp) ||
             ImGui::IsKeyDown(ImGuiKey_PageDown) ||
             ImGui::IsKeyDown(ImGuiKey_Home) || ImGui::IsKeyDown(ImGuiKey_End)));
-      if (is_any_interaction) {
+
+      int rendered_count = 0;
+      double current_window_width = (double)ImGui::GetWindowWidth();
+      double current_scroll_max_y = (double)ImGui::GetScrollMaxY();
+
+      if (use_clipper) {
+        int count = current_display_size;
+
+        int vis_start = 0;
+        int vis_end = 0;
+        double scroll_y = (double)ImGui::GetScrollY();
+        double window_h = (double)ImGui::GetWindowHeight();
+
+        // Optimized binary viewport search (O(log N))
+        auto it_start = std::lower_bound(cumulative_heights_.begin(),
+                                         cumulative_heights_.end(), scroll_y);
+        vis_start = std::clamp(
+            (int)std::distance(cumulative_heights_.begin(), it_start) - 1, 0,
+            count - 1);
+
+        auto it_end =
+            std::lower_bound(cumulative_heights_.begin() + vis_start,
+                             cumulative_heights_.end(), scroll_y + window_h);
+        vis_end = std::clamp(
+            (int)std::distance(cumulative_heights_.begin(), it_end), 0, count);
+
+        clipper.Begin(count, (float)avg_h);
+        clipper.IncludeItemsByIndex(std::clamp(vis_start - 30, 0, count),
+                                    std::clamp(vis_end + 50, 0, count));
+        clipper.IncludeItemsByIndex(0, std::clamp(20, 0, count));
+        if (force_bottom_render) {
+          clipper.IncludeItemsByIndex(std::clamp(count - 128, 0, count), count);
+        }
+
+        int lowest_rendered_idx = -1;
+        double lowest_rendered_y = -1.0;
+
+        while (clipper.Step()) {
+          // Force alignment for this range (Overrides clipper's internal inaccurate skip)
+          ImGui::SetCursorPosY((float)cumulative_heights_[clipper.DisplayStart]);
+
+          for (int row_idx = clipper.DisplayStart; row_idx < clipper.DisplayEnd;
+               ++row_idx) {
+            render_row(row_idx);
+            if (row_idx > lowest_rendered_idx) {
+              lowest_rendered_idx = row_idx;
+              lowest_rendered_y = (double)ImGui::GetCursorPosY();
+            }
+            rendered_count++;
+          }
+        }
+
+        // Part 23/27/28/29: Deterministic LACH anchored to prefix sum
+        if (lowest_rendered_idx >= 0) {
+          double convergent_total = lowest_rendered_y;
+          convergent_total +=
+              (cumulative_heights_[current_display_size] -
+               cumulative_heights_[lowest_rendered_idx + 1]);
+
+          if (std::abs(convergent_total - total_content_height) > 0.001) {
+            total_content_height = convergent_total;
+          }
+        }
+      } else {
+        for (int row_idx = 0; row_idx < (int)display_indices_.size();
+             ++row_idx) {
+          render_row(row_idx);
+          rendered_count++;
+        }
+      }
+
+      // Part 24/27/30/31: Threshold-based Stability (Hysteresis)
+      // Only apply stabilization if NOT locked to bottom.
+      // At the bottom, we want the layout to converge immediately to the true MaxY.
+      double stability_threshold = 2.0 * avg_h;
+      if (!locked_to_bottom_ &&
+          (int)display_indices_.size() == last_display_indices_size_ &&
+          current_window_width == last_window_width_ &&
+          std::abs(total_content_height - last_stable_height_) <
+              stability_threshold) {
+        total_content_height = last_stable_height_;
+      }
+      last_stable_height_ = total_content_height;
+
+      ImGui::SetCursorPosY((float)total_content_height);
+      ImGui::Dummy(ImVec2(0.0f, 0.0f));
+
+      // Part 25: Absolute Bottom Alignment
+      if (locked_to_bottom_ && !is_any_interaction_val) {
+        ImGui::SetScrollHereY(1.0f);
+      }
+
+      if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
+          !ImGui::IsAnyItemHovered()) {
+        selection_active_idx_ = -1;
+        selection_anchor_idx_ = -1;
+      }
+
+      current_scroll_max_y = (double)ImGui::GetScrollMaxY();
+      if (is_any_interaction_val) {
         locked_to_bottom_ =
-            (ImGui::GetScrollY() >= current_scroll_max_y - 20.0f) ||
+            (ImGui::GetScrollY() >= (float)current_scroll_max_y - 20.0f) ||
             ImGui::IsKeyDown(ImGuiKey_End);
       }
-      if ((locked_to_bottom_ && !is_any_interaction) || filter_changed) {
-        ImGui::SetScrollY(current_scroll_max_y);
+      if (locked_to_bottom_ && !is_any_interaction_val) {
+        // Ensure MaxY is up to date for stats
+        current_scroll_max_y = (double)ImGui::GetScrollMaxY();
       }
 
       if (current_window_width != last_window_width_) {
-        std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0f);
-        last_avg_height_ = -1.0f;
+        std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0);
+        last_avg_height_ = -1.0;
         measured_height_sum_ = 0;
         measured_rows_count_ = 0;
       }
@@ -404,22 +424,24 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       last_filter_text_ = filter_text_;
 
       if (ap_network_.IsScrollStatsEnabled()) {
-        float cur_y = ImGui::GetScrollY();
-        float cur_h = ImGui::GetWindowHeight();
-        if (cur_y != last_reported_scroll_y_ ||
+        double cur_y = (double)ImGui::GetScrollY();
+        double cur_h = (double)ImGui::GetWindowHeight();
+        if (cur_y != (double)last_reported_scroll_y_ ||
             current_scroll_max_y != last_reported_scroll_max_y_ ||
-            cur_h != last_reported_window_h_ ||
+            cur_h != (double)last_reported_window_h_ ||
             locked_to_bottom_ != last_reported_locked_) {
-          char msg[256];
+          char msg[512];
           snprintf(msg, sizeof(msg),
-                   "[Feed Scroll] Y=%.1f MaxY=%.1f H=%.1f Locked=%d Int=%d",
-                   cur_y, current_scroll_max_y, cur_h, (int)locked_to_bottom_,
-                   (int)is_any_interaction);
+                   "[Feed Scroll] Y=%.1f MaxY=%.1f H=%.1f EstH=%.1f "
+                   "Items=%d/%d Locked=%d Int=%d",
+                   cur_y, current_scroll_max_y, cur_h, total_content_height,
+                   rendered_count, (int)display_indices_.size(),
+                   (int)locked_to_bottom_, (int)is_any_interaction_val);
           std::cout << msg << std::endl;
 
-          last_reported_scroll_y_ = cur_y;
-          last_reported_scroll_max_y_ = current_scroll_max_y;
-          last_reported_window_h_ = cur_h;
+          last_reported_scroll_y_ = (float)cur_y;
+          last_reported_scroll_max_y_ = (float)current_scroll_max_y;
+          last_reported_window_h_ = (float)cur_h;
           last_reported_locked_ = locked_to_bottom_;
         }
       }
