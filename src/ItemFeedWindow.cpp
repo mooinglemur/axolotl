@@ -1,7 +1,9 @@
 #include "ItemFeedWindow.h"
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <imgui.h>
+#include <iostream>
 #include <set>
 
 ItemFeedWindow::ItemFeedWindow(ArchipelagoNetwork &ap_network,
@@ -132,6 +134,7 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           (use_clipper && (locked_to_bottom_ || in_bottom_zone) &&
            !display_indices_.empty());
 
+      float actual_bottom_y = -1.0f;
       auto render_row = [&](int row_idx) {
         int i = display_indices_[row_idx];
         const auto &rm = history[i];
@@ -332,6 +335,35 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           render_row(row_idx);
         }
       }
+
+      // Part 13: Stable Total Height with Hysteresis
+      float raw_total_height = 0;
+      for (int i : display_indices_) {
+        raw_total_height +=
+            (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
+      }
+
+      // Round to nearest pixel to prevent float precision jitter
+      float total_content_height = std::round(raw_total_height);
+
+      // Part 14: Bottom-Anchored Convergence
+      // If we rendered the bottom, use the actual bottom coordinate
+      if (actual_bottom_y > 0) {
+        total_content_height = actual_bottom_y;
+      }
+
+      // Only allow height to change if history grew or it moved significantly (>0.5px)
+      if ((int)display_indices_.size() == last_display_indices_size_ &&
+          actual_bottom_y < 0 &&
+          std::abs(total_content_height - last_stable_height_) < 1.0f) {
+        total_content_height = last_stable_height_;
+      }
+      last_stable_height_ = total_content_height;
+
+      // Part 12: Force content height to match our estimate
+      ImGui::SetCursorPosY(total_content_height);
+      ImGui::Dummy(ImVec2(0.0f, 0.0f));
+
       if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
           !ImGui::IsAnyItemHovered()) {
         selection_active_idx_ = -1;
@@ -343,7 +375,18 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       bool is_any_interaction =
           (ImGui::IsWindowHovered() &&
            (ImGui::GetIO().MouseWheel != 0.0f || ImGui::IsMouseDown(0) ||
-            ImGui::IsMouseDown(1)));
+            ImGui::IsMouseDown(1))) ||
+          (ImGui::IsWindowFocused() &&
+           (ImGui::IsKeyDown(ImGuiKey_UpArrow) ||
+            ImGui::IsKeyDown(ImGuiKey_DownArrow) ||
+            ImGui::IsKeyDown(ImGuiKey_PageUp) ||
+            ImGui::IsKeyDown(ImGuiKey_PageDown) ||
+            ImGui::IsKeyDown(ImGuiKey_Home) || ImGui::IsKeyDown(ImGuiKey_End)));
+      if (is_any_interaction) {
+        locked_to_bottom_ =
+            (ImGui::GetScrollY() >= current_scroll_max_y - 20.0f) ||
+            ImGui::IsKeyDown(ImGuiKey_End);
+      }
       if ((locked_to_bottom_ && !is_any_interaction) || filter_changed) {
         ImGui::SetScrollY(current_scroll_max_y);
       }
@@ -359,6 +402,27 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       last_scroll_max_y_ = current_scroll_max_y;
       last_window_width_ = current_window_width;
       last_filter_text_ = filter_text_;
+
+      if (ap_network_.IsScrollStatsEnabled()) {
+        float cur_y = ImGui::GetScrollY();
+        float cur_h = ImGui::GetWindowHeight();
+        if (cur_y != last_reported_scroll_y_ ||
+            current_scroll_max_y != last_reported_scroll_max_y_ ||
+            cur_h != last_reported_window_h_ ||
+            locked_to_bottom_ != last_reported_locked_) {
+          char msg[256];
+          snprintf(msg, sizeof(msg),
+                   "[Feed Scroll] Y=%.1f MaxY=%.1f H=%.1f Locked=%d Int=%d",
+                   cur_y, current_scroll_max_y, cur_h, (int)locked_to_bottom_,
+                   (int)is_any_interaction);
+          std::cout << msg << std::endl;
+
+          last_reported_scroll_y_ = cur_y;
+          last_reported_scroll_max_y_ = current_scroll_max_y;
+          last_reported_window_h_ = cur_h;
+          last_reported_locked_ = locked_to_bottom_;
+        }
+      }
 
       ImGui::GetWindowDrawList()->ChannelsMerge();
       if (custom_font)

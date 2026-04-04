@@ -330,6 +330,8 @@ public:
   void ReResolveHistoryVector(std::vector<RichMessage> &history);
   void SetDebugMode(bool debug) { debug_mode_ = debug; }
   bool IsDebugMode() const { return debug_mode_; }
+  void SetScrollStatsEnabled(bool enabled) { scroll_stats_enabled_ = enabled; }
+  bool IsScrollStatsEnabled() const { return scroll_stats_enabled_; }
 
   uint64_t GetDataVersion() const { return data_version_; }
   const ConnectionSettings *GetSettings() const { return settings_; }
@@ -337,6 +339,7 @@ public:
 private:
   mutable std::recursive_mutex state_mutex_; // Protects all manager state
   bool debug_mode_ = false;
+  bool scroll_stats_enabled_ = false;
   std::vector<RichMessage> history_;
 
 private:

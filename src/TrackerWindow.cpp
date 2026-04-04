@@ -138,7 +138,19 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                       ImGui::PushFont(custom_font);
                     for (const auto &loc : accessible) {
                       if (matches_filter(loc.name)) {
+                        int access = loc.accessibility;
+                        if (access == 2) {
+                          ImGui::PushStyleColor(ImGuiCol_Text,
+                                                ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+                        } else if (access == 1) {
+                          ImGui::PushStyleColor(ImGuiCol_Text,
+                                                ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                        } else {
+                          ImGui::PushStyleColor(ImGuiCol_Text,
+                                                ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                        }
                         ImGui::BulletText("%s", loc.name.c_str());
+                        ImGui::PopStyleColor();
                       }
                     }
                     if (custom_font)

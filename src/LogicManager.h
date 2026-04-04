@@ -11,7 +11,7 @@
 
 struct LocationLogic {
   std::string name;
-  int id;
+  int64_t id;
   std::string rule;
   std::string transpiledRule;
   int ruleIndex = -1; // Index into uniqueRules_
@@ -33,7 +33,7 @@ public:
   const std::vector<LocationLogic> &GetLocations() const { return locations_; }
   void SetDebugMode(bool debug);
   bool GetDebugMode() const { return debug_mode_; }
-  int GetAccessibility(int locationId) const;
+  int GetAccessibility(int64_t locationId) const;
   const std::string &GetCurrentGame() const { return currentGame_; }
 
 private:
@@ -42,7 +42,7 @@ private:
   std::string currentGame_;
   std::vector<LocationLogic> locations_;
   std::vector<LocationLogic> allLocations_;
-  std::map<int, int> accessibilityCache_;
+  std::map<int64_t, int> accessibilityCache_;
   std::unordered_set<std::string> reportedFailedRules_;
   std::map<std::string, int> lastItemNameCounts_;
   std::map<std::string, std::string> nameToCode_;

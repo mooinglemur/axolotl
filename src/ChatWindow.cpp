@@ -1,6 +1,7 @@
 #include "ChatWindow.h"
 #include "Config.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <imgui.h>
@@ -277,6 +278,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           (use_clipper && (locked_to_bottom_ || in_bottom_zone) &&
            !history.empty());
 
+      float actual_bottom_y = -1.0f;
       auto render_row = [&](int row_idx) {
         const auto &rm = history[row_idx];
         ImGui::PushID(row_idx);
@@ -367,6 +369,10 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           measured_rows_count_++;
         }
         row_height_cache_[row_idx] = h;
+
+        if (row_idx == (int)history.size() - 1) {
+          actual_bottom_y = ImGui::GetCursorPosY();
+        }
 
         if (ImGui::BeginPopupContextItem("ChatLineCtx",
                                          ImGuiPopupFlags_MouseButtonRight)) {
@@ -481,6 +487,33 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         }
       }
 
+      // Part 13: Stable Total Height with Hysteresis
+      float raw_total_height = 0;
+      for (int i = 0; i < (int)history.size(); ++i) {
+        raw_total_height +=
+            (row_height_cache_[i] > 0) ? row_height_cache_[i] : avg_h;
+      }
+
+      // Round to nearest pixel to prevent float precision jitter
+      float total_content_height = std::round(raw_total_height);
+
+      // Part 14: Bottom-Anchored Convergence
+      if (actual_bottom_y > 0) {
+        total_content_height = actual_bottom_y;
+      }
+
+      // Only allow height to change if history grew or it moved significantly (>0.5px)
+      if ((int)history.size() == last_history_size_ &&
+          actual_bottom_y < 0 &&
+          std::abs(total_content_height - last_stable_height_) < 1.0f) {
+        total_content_height = last_stable_height_;
+      }
+      last_stable_height_ = total_content_height;
+
+      // Part 12: Force content height to match our estimate
+      ImGui::SetCursorPosY(total_content_height);
+      ImGui::Dummy(ImVec2(0.0f, 0.0f));
+
       ImGui::GetWindowDrawList()->ChannelsMerge();
 
       if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) &&
@@ -494,7 +527,18 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       bool is_any_interaction =
           (ImGui::IsWindowHovered() &&
            (ImGui::GetIO().MouseWheel != 0.0f || ImGui::IsMouseDown(0) ||
-            ImGui::IsMouseDown(1)));
+            ImGui::IsMouseDown(1))) ||
+          (ImGui::IsWindowFocused() &&
+           (ImGui::IsKeyDown(ImGuiKey_UpArrow) ||
+            ImGui::IsKeyDown(ImGuiKey_DownArrow) ||
+            ImGui::IsKeyDown(ImGuiKey_PageUp) ||
+            ImGui::IsKeyDown(ImGuiKey_PageDown) ||
+            ImGui::IsKeyDown(ImGuiKey_Home) || ImGui::IsKeyDown(ImGuiKey_End)));
+      if (is_any_interaction) {
+        locked_to_bottom_ =
+            (ImGui::GetScrollY() >= current_scroll_max_y - 20.0f) ||
+            ImGui::IsKeyDown(ImGuiKey_End);
+      }
       if (locked_to_bottom_ && !is_any_interaction) {
         ImGui::SetScrollY(current_scroll_max_y);
       }
@@ -509,6 +553,27 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       last_history_size_ = (int)history.size();
       last_scroll_max_y_ = current_scroll_max_y;
       last_window_width_ = current_window_width;
+
+      if (ap_network_.IsScrollStatsEnabled()) {
+        float cur_y = ImGui::GetScrollY();
+        float cur_h = ImGui::GetWindowHeight();
+        if (cur_y != last_reported_scroll_y_ ||
+            current_scroll_max_y != last_reported_scroll_max_y_ ||
+            cur_h != last_reported_window_h_ ||
+            locked_to_bottom_ != last_reported_locked_) {
+          char msg[256];
+          snprintf(msg, sizeof(msg),
+                   "[Chat Scroll] Y=%.1f MaxY=%.1f H=%.1f Locked=%d Int=%d",
+                   cur_y, current_scroll_max_y, cur_h, (int)locked_to_bottom_,
+                   (int)is_any_interaction);
+          std::cout << msg << std::endl;
+
+          last_reported_scroll_y_ = cur_y;
+          last_reported_scroll_max_y_ = current_scroll_max_y;
+          last_reported_window_h_ = cur_h;
+          last_reported_locked_ = locked_to_bottom_;
+        }
+      }
 
       if (custom_font)
         ImGui::PopFont();
@@ -808,6 +873,14 @@ bool ChatWindow::HandleCommand(const std::string &line) {
     if (ap_network_.IsDebugMode()) {
       std::cout << "[Debug] subcmd: " << subcmd << ", args: " << args
                 << ", n: " << n << std::endl;
+    }
+
+    if (subcmd == "scrollstats") {
+      bool active = !ap_network_.IsScrollStatsEnabled();
+      ap_network_.SetScrollStatsEnabled(active);
+      std::cout << "Scroll debug stats: " << (active ? "ENABLED" : "DISABLED")
+                << std::endl;
+      return true;
     }
 
     if (subcmd == "fillchat") {

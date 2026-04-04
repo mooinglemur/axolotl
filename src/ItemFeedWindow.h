@@ -36,4 +36,9 @@ private:
   double measured_height_sum_ = 0;
   int measured_rows_count_ = 0;
   bool locked_to_bottom_ = true;
+  float last_reported_scroll_y_ = -1.0f;
+  float last_reported_scroll_max_y_ = -1.0f;
+  float last_reported_window_h_ = -1.0f;
+  bool last_reported_locked_ = false;
+  float last_stable_height_ = 0.0f;
 };

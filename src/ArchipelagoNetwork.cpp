@@ -1122,10 +1122,9 @@ void ArchipelagoNetwork::SetSettings(const ConnectionSettings *settings) {
 
 void ArchipelagoNetwork::SetTrackerUrl(const std::string &url) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-  if (live_tracker_url_ != url) {
-    live_tracker_url_ = url;
-    ForceTrackerSync();
-  }
+  live_tracker_url_ = url;
+  SetTrackerSyncActive(true); // Force sync and allow polls
+  ForceTrackerSync();
 }
 
 void ArchipelagoNetwork::StartNetworkThread() {
@@ -1810,7 +1809,9 @@ void ArchipelagoNetwork::SyncTotalLocations() {
     if (pos != std::string::npos) {
       api_url.replace(pos, 13, "/api/static_tracker/");
     } else {
-      return;
+      // Fallback for direct API URLs
+      if (api_url.find("/api/static_tracker/") == std::string::npos)
+        return;
     }
   }
 
@@ -1869,6 +1870,19 @@ void ArchipelagoNetwork::SyncTotalLocations() {
 }
 
 void ArchipelagoNetwork::UpdateTrackerStats() {
+  if (debug_mode_) {
+    // Regular debug info to see if we're even trying
+    static double last_debug_time = 0;
+    double now = GetCurrentTimestamp();
+    if (now - last_debug_time > 5.0) {
+      std::cout << "[Overview] UpdateTrackerStats: url=" << live_tracker_url_
+                << " connected=" << IsAnySessionConnected()
+                << " active=" << tracker_sync_active_
+                << " state=" << (int)sync_state_ << std::endl;
+      last_debug_time = now;
+    }
+  }
+
   if (live_tracker_url_.empty() || !IsAnySessionConnected() ||
       !tracker_sync_active_)
     return;
@@ -1911,14 +1925,18 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
   if (!trigger_poll)
     return;
 
-  std::string api_url = settings_->tracker_url;
+  std::string api_url = live_tracker_url_;
   size_t pos = api_url.find("/tracker/");
   if (pos != std::string::npos) {
     api_url.replace(pos, 9, "/api/tracker/");
   } else {
-    // Check if it's already an API URL
-    if (api_url.find("/api/tracker/") == std::string::npos)
+    // Check if it's already an API URL or static tracker
+    pos = api_url.find("/api/static_tracker/");
+    if (pos != std::string::npos) {
+      api_url.replace(pos, 20, "/api/tracker/");
+    } else if (api_url.find("/api/tracker/") == std::string::npos) {
       return; // Invalid URL
+    }
   }
 
   last_tracker_sync_time_ = now;

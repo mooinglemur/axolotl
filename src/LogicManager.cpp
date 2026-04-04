@@ -52,7 +52,8 @@ void LogicManager::SetDebugMode(bool debug) {
 }
 
 bool LogicManager::LoadPack(const std::string &game) {
-  std::cerr << "LogicManager: Starting load for game: " << game << std::endl;
+  if (debug_mode_)
+    std::cerr << "LogicManager: Starting load for game: " << game << std::endl;
   fs::path packPath = PackStore::GetPackPath(game);
   if (!fs::exists(packPath / "manifest.json"))
     return false;
@@ -92,9 +93,10 @@ bool LogicManager::LoadPack(const std::string &game) {
       }
     }
 
-    std::cerr << "LogicManager: Loaded " << allLocations_.size()
-              << " nodes and " << uniqueRules_.size() << " unique rules."
-              << std::endl;
+    if (debug_mode_)
+      std::cerr << "LogicManager: Loaded " << allLocations_.size()
+                << " nodes and " << uniqueRules_.size() << " unique rules."
+                << std::endl;
 
     firstRun_ = true;
     lastItemNameCounts_.clear();
@@ -102,7 +104,8 @@ bool LogicManager::LoadPack(const std::string &game) {
     lua_.script_file((packPath / entry).string());
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "LogicManager Load Error: " << e.what() << std::endl;
+    if (debug_mode_)
+      std::cerr << "LogicManager Load Error: " << e.what() << std::endl;
     return false;
   }
 }
@@ -165,33 +168,41 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
               if type(v) == "number" then SLOT_DATA.AreaRando[k] = string.format("%d", v) end
           end
       end
+      -- Restore critical autotracking settings
       local s = Tracker:FindObjectForCode("__setting_auto_ent")
       if s then s.CurrentStage = 1 end
       local r = Tracker:FindObjectForCode("__setting_spoil_reqs")
       if r then r.CurrentStage = 1 end
 
-      function SyncArchipelagoItems(id_counts)
-          if not ITEM_MAPPING then return end
-          -- Clear counts for items we're about to sync
-          -- We iterate everything to be safe
-          for id, v in pairs(ITEM_MAPPING) do
-              local obj = Tracker:FindObjectForCode(v[1])
+      -- Safe Slot Data sync loop for various pack settings
+      if SLOT_DATA then
+          for k, v in pairs(SLOT_DATA) do
+              local code = "__setting_" .. k
+              local obj = Tracker:FindObjectForCode(code)
               if obj then
-                  obj.Active = false
-                  obj.CurrentStage = 0
-                  obj.AcquiredCount = 0
+                  if type(v) == "number" then obj.CurrentStage = v
+                  elseif type(v) == "boolean" then obj.Active = v end
               end
           end
+      end
 
+      function SyncArchipelagoItems(id_counts)
+          if not ITEM_MAPPING then return end
+          local key_bits = 0
           for id, count in pairs(id_counts) do
-              local v = ITEM_MAPPING[tonumber(id)]
+              local num_id = tonumber(id)
+              local v = ITEM_MAPPING[num_id]
               if v then
                   local obj = Tracker:FindObjectForCode(v[1])
                   if obj then
                       if v[1] == "item__key" then
-                          -- Special handling for keys
-                          if v[2] == 0 then obj.CurrentStage = (count >= 1 and 1 or 0) | (count >= 2 and 2 or 0)
-                          else obj.CurrentStage = obj.CurrentStage | (count > 0 and v[2] or 0) end
+                          -- Aggregate key bits (1=Basement, 2=Upstairs)
+                          if v[2] == 0 then -- Progressive
+                              if count >= 1 then key_bits = key_bits | 1 end
+                              if count >= 2 then key_bits = key_bits | 2 end
+                          else -- Distinct bits
+                              if count > 0 then key_bits = key_bits | v[2] end
+                          end
                       elseif v[2] == "toggle" then
                           obj.Active = count > 0
                           obj.CurrentStage = count
@@ -205,7 +216,19 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
                           obj.CurrentStage = count
                           obj.AcquiredCount = count
                       end
+                      if AUTOTRACKER_ENABLE_DEBUG_LOGGING_AP then
+                          print(string.format("LogicManager [DEBUG]: Syncing item %s (id %s), count %d, result=%s", 
+                                              v[1], tostring(num_id), count, tostring(obj.Active or obj.CurrentStage)))
+                      end
                   end
+              end
+          end
+          -- Apply aggregated key bits
+          local k = Tracker:FindObjectForCode("item__key")
+          if k then 
+              k.CurrentStage = key_bits 
+              if AUTOTRACKER_ENABLE_DEBUG_LOGGING_AP then
+                  print(string.format("LogicManager [DEBUG]: Final key_bits = %d", key_bits))
               end
           end
       end
@@ -227,55 +250,69 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
 
   firstRun_ = false;
 
-  // Batch evaluation function
-  lua_.safe_script(R"LUA(
-    _results = {}
-    for i = 1, #_rules do
-        local ok, res = pcall(_rules[i])
-        if ok then
-            if type(res) == "boolean" then _results[i] = res and 2 or 0
-            elseif type(res) == "number" then _results[i] = res > 0 and 2 or 0
-            else _results[i] = 2 end
-        else _results[i] = 0 end
-    end
-  )LUA");
+  // Define rule evaluation helper
+  auto evaluateRules = [this]() {
+    lua_.safe_script(R"LUA(
+      _results = {}
+      for i = 1, _num_rules do
+          local rule = _rules[i]
+          if rule then
+              local ok, res = pcall(rule)
+              if ok then
+                  if type(res) == "boolean" then _results[i] = res and 2 or 0
+                  elseif type(res) == "number" then _results[i] = res
+                  else _results[i] = 0 end
+              else _results[i] = 0 end
+          else _results[i] = 0 end
+      end
+    )LUA");
+  };
 
-  sol::table results = lua_["_results"];
+  lua_["_num_rules"] = uniqueRules_.size();
   auto tracker = lua_["Tracker"];
 
-  // Pass 1: Sync to Lua objects
+  // Pass 1: Discovery (Set all to 2 to trigger reveal)
+  evaluateRules();
+  sol::table results1 = lua_["_results"];
   for (auto &loc : allLocations_) {
-    int access =
-        (loc.ruleIndex != -1) ? results[loc.ruleIndex + 1].get<int>() : 2;
+    int access = 2; // Default to Full for discovery/reveal in pass 1
+    if (loc.ruleIndex != -1) {
+      sol::object res = results1[loc.ruleIndex + 1];
+      if (res.is<int>()) {
+        access = res.as<int>();
+      }
+    }
     sol::table obj = tracker["FindObjectForCode"](tracker, "@" + loc.name);
     obj["AccessibilityLevel"] = access;
   }
 
-  // Trigger areaReveal
+  // Trigger areaReveal (now that we have discovery accessibility)
   sol::protected_function areaReveal = lua_["areaReveal"];
   if (areaReveal.valid()) {
     areaReveal();
   }
 
-  // Re-run batch evaluation after areaReveal
-  lua_.safe_script(R"LUA(
-    for i = 1, #_rules do
-        local ok, res = pcall(_rules[i])
-        if ok then
-            if type(res) == "boolean" then _results[i] = res and 2 or 0
-            elseif type(res) == "number" then _results[i] = res > 0 and 2 or 0
-            else _results[i] = 2 end
-        else _results[i] = 0 end
-    end
-  )LUA");
-  results = lua_["_results"];
+  // Pass 2: Strict check (After discovery)
+  evaluateRules(); // Re-evaluate now that areas are discovered
+  sol::table results2 = lua_["_results"];
+  std::map<int64_t, int> maxAccess;
+  std::map<int64_t, std::string> bestName;
 
-  // Pass 2: Collect results
-  std::map<int, int> maxAccess;
-  std::map<int, std::string> bestName;
   for (auto &loc : allLocations_) {
-    int access =
-        (loc.ruleIndex != -1) ? results[loc.ruleIndex + 1].get<int>() : 2;
+    int access = 0;
+    if (loc.ruleIndex != -1) {
+      sol::object res = results2[loc.ruleIndex + 1];
+      if (res.is<int>()) {
+        access = res.as<int>();
+      }
+    } else {
+      access = 2;
+    }
+
+    // Sync back to Lua for final representation
+    sol::table obj = tracker["FindObjectForCode"](tracker, "@" + loc.name);
+    obj["AccessibilityLevel"] = access;
+
     if (loc.id != 0 && access > maxAccess[loc.id]) {
       maxAccess[loc.id] = access;
       bestName[loc.id] = loc.name;
@@ -295,12 +332,21 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
   }
 }
 
-int LogicManager::GetAccessibility(int locationId) const {
+int LogicManager::GetAccessibility(int64_t locationId) const {
   auto it = accessibilityCache_.find(locationId);
   return (it != accessibilityCache_.end()) ? it->second : 0;
 }
 
 void LogicManager::BindGlobals() {
+  lua_.set_function("print", [this](sol::variadic_args args) {
+    if (!debug_mode_)
+      return;
+    for (auto arg : args) {
+      std::cout << arg.as<std::string>() << "\t";
+    }
+    std::cout << std::endl;
+  });
+
   auto tracker = lua_.create_table();
   tracker["FindObjectForCode"] = [this](sol::object self, std::string code) {
     auto it = trackerObjects_.find(code);
@@ -365,7 +411,8 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
     return ruleCache_[rule];
 
   std::string res = std::regex_replace(rule, std::regex(R"([\{\}])"), "");
-  res = std::regex_replace(res, std::regex(R"([,\^]+)"), " and ");
+  res = std::regex_replace(res, std::regex(","), " and ");
+  res = std::regex_replace(res, std::regex(R"(\^)"), " or ");
 
   std::regex funcPattern(R"(\$([a-zA-Z0-9_]+)((?:\|[a-zA-Z0-9_/]+)*))");
   auto begin = std::sregex_iterator(res.begin(), res.end(), funcPattern);
@@ -438,7 +485,7 @@ void LogicManager::LoadLocationsFromPack(
                 : (r.is_array() && !r.empty() ? r[0].get<std::string>() : "");
         if (!s.empty()) {
           if (!c.empty())
-            c += " or ";
+            c += "^";
           c += "(" + s + ")";
         }
       }
@@ -469,6 +516,15 @@ void LogicManager::LoadLocationsFromPack(
       local = combine(local, parseRuleSet(node["access_rules"]));
     std::string rule = combine(parentRule, local);
     std::string transpiled = TranspileRule(rule);
+    int nodeID = 0;
+    if (node.contains("hosted_item")) {
+      std::string h = node["hosted_item"].get<std::string>();
+      if (h.find("__location_item_") == 0)
+        try {
+          nodeID = std::stoll(h.substr(16));
+        } catch (...) {
+        }
+    }
     int idx = -1;
     if (!transpiled.empty()) {
       if (ruleToIdx.count(transpiled))
@@ -479,7 +535,7 @@ void LogicManager::LoadLocationsFromPack(
         uniqueRules_.push_back(transpiled);
       }
     }
-    allLocations_.push_back({full, 0, rule, transpiled, idx, 0});
+    allLocations_.push_back({full, nodeID, rule, transpiled, idx, 0});
 
     if (node.contains("sections")) {
       for (const auto &sec : node["sections"]) {
