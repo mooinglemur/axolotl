@@ -73,7 +73,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         live_server_url_ = server_url_;
         if (live_server_url_ != old_url) {
           ap_network_.ClearAllData(true);
-          // settings_.tracker_url = ""; // Don't wipe tracker URL in settings
+          settings_.tracker_url = "";
+          ap_network_.SetTrackerUrl("");
         }
       }
     }

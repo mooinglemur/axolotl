@@ -1,11 +1,10 @@
 #include "PackStore.h"
 #include "Config.h"
-#include "Platform.h"
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
-#include <zip.h>
 #include <vector>
+#include <zip.h>
 
 fs::path PackStore::GetCacheDir() { return Config::GetCacheDir() / "packs"; }
 

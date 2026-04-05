@@ -123,19 +123,15 @@ public:
     return received_items_history_;
   }
   const std::vector<Hint> &GetHints() const { return hints_; }
-  const std::set<int64_t> &GetCheckedLocations() const {
-    return checked_locations_;
-  }
-  const std::set<int64_t> &GetMissingLocations() const {
-    return missing_locations_;
-  }
+  const std::set<int64_t> GetCheckedLocations() const;
+  const std::set<int64_t> GetMissingLocations() const;
   bool IsDataPackageReceived() const {
     return metadata_ && metadata_->data_package_received;
   }
   int GetHintPoints() const { return hint_points_; }
   int GetHintCost() const { return hint_cost_; }
 
-  const std::map<int64_t, int>& GetReceivedItemCounts() const { return received_item_counts_; }
+  const std::map<int64_t, int> GetReceivedItemCounts() const;
 
   std::shared_ptr<ServerMetadata> GetMetadata() const { return metadata_; }
 
@@ -154,7 +150,7 @@ public:
     return empty_map;
   }
 
-  const nlohmann::json &GetSlotData() const { return slot_data_; }
+  const nlohmann::json GetSlotData() const;
 
   std::map<int64_t, std::string>
   GetLocationsForGame(const std::string &game) const {

@@ -122,12 +122,15 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                   if (app_.GetLogic().GetCurrentGame() != cache.game) {
                     app_.GetLogic().LoadPack(cache.game);
                   }
-                  // Push current session data to LogicManager
-                  app_.GetLogic().UpdateLogic(session->GetReceivedItemCounts(),
-                                              session->GetSlotData(),
-                                              session->GetCheckedLocations(),
-                                              session->GetMissingLocations(),
-                                              (int)session->GetLocalSlot());
+                  // Push current session data to LogicManager atomically
+                  {
+                    std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
+                    app_.GetLogic().UpdateLogic(session->GetReceivedItemCounts(),
+                                                session->GetSlotData(),
+                                                session->GetCheckedLocations(),
+                                                session->GetMissingLocations(),
+                                                (int)session->GetLocalSlot());
+                  }
 
                   const auto &accessible = app_.GetLogic().GetLocations();
                   if (accessible.empty()) {
@@ -140,13 +143,13 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     for (const auto &loc : accessible) {
                       if (matches_filter(loc.name)) {
                         int access = loc.accessibility;
-                        if (access == 2) {
+                        if (access == 2) { // Full
                           ImGui::PushStyleColor(ImGuiCol_Text,
                                                 ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-                        } else if (access == 1) {
+                        } else if (access == 1) { // Partial
                           ImGui::PushStyleColor(ImGuiCol_Text,
                                                 ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                        } else {
+                        } else { // None / Other
                           ImGui::PushStyleColor(ImGuiCol_Text,
                                                 ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
                         }

@@ -1079,7 +1079,6 @@ std::string ArchipelagoSession::ResolvePlayerGame(int slot) const {
     return metadata_->slot_to_game.at(slot);
   return "";
 }
-
 std::string ArchipelagoSession::ResolvePlayerName(int slot) const {
   if (!metadata_)
     return "Unknown Player " + std::to_string(slot);
@@ -1089,6 +1088,26 @@ std::string ArchipelagoSession::ResolvePlayerName(int slot) const {
   if (slot != -1 && metadata_->player_names.count(slot))
     return metadata_->player_names.at(slot);
   return "Unknown Player " + std::to_string(slot);
+}
+
+const std::set<int64_t> ArchipelagoSession::GetCheckedLocations() const {
+  std::lock_guard<std::recursive_mutex> lock(manager_->GetStateMutex());
+  return checked_locations_;
+}
+
+const std::set<int64_t> ArchipelagoSession::GetMissingLocations() const {
+  std::lock_guard<std::recursive_mutex> lock(manager_->GetStateMutex());
+  return missing_locations_;
+}
+
+const std::map<int64_t, int> ArchipelagoSession::GetReceivedItemCounts() const {
+  std::lock_guard<std::recursive_mutex> lock(manager_->GetStateMutex());
+  return received_item_counts_;
+}
+
+const nlohmann::json ArchipelagoSession::GetSlotData() const {
+  std::lock_guard<std::recursive_mutex> lock(manager_->GetStateMutex());
+  return slot_data_;
 }
 
 void ArchipelagoSession::ResolvePendingItems() {
@@ -1224,7 +1243,7 @@ ArchipelagoNetwork::GetSessionByGlobalSlot(int global_slot) {
 ArchipelagoSession *ArchipelagoNetwork::GetSession(const std::string &name) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto &s : sessions_)
-    if (s->GetName() == name)
+      if (s->GetName() == name)
       return s.get();
   return nullptr;
 }
@@ -1873,14 +1892,13 @@ void ArchipelagoNetwork::SyncTotalLocations() {
 void ArchipelagoNetwork::UpdateTrackerStats() {
   if (debug_mode_) {
     // Regular debug info to see if we're even trying
-    static double last_debug_time = 0;
-    double now = GetCurrentTimestamp();
-    if (now - last_debug_time > 5.0) {
+    static TrackerSyncState last_sync_state = TrackerSyncState::Idle;
+    if (sync_state_ != last_sync_state) {
       std::cout << "[Overview] UpdateTrackerStats: url=" << live_tracker_url_
                 << " connected=" << IsAnySessionConnected()
                 << " active=" << tracker_sync_active_
                 << " state=" << (int)sync_state_ << std::endl;
-      last_debug_time = now;
+      last_sync_state = sync_state_;
     }
   }
 
