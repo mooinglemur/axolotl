@@ -72,6 +72,7 @@ void LogicManager::Reset() {
   lastMissingLocationIds_.clear();
   lastPlayerNumber_ = -1;
   firstRun_ = true;
+  nextItemHandlerIndex_ = 1;
   itemHistory_.clear();
   itemHandlers_.clear();
   locationHandlers_.clear();
@@ -322,21 +323,27 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
     }
   }
 
-  // ITEM SYNC: Detect and replay any items received since last update
+  // ITEM SYNC: Detect and replay any items received since last update.
+  // The index passed to onItem must be a monotonically-increasing global counter
+  // that persists across UpdateLogic() calls. Pack scripts (e.g. SM64) use a
+  // CUR_INDEX guard to skip already-processed items, so resetting to 1 each call
+  // would cause every incremental item to be silently dropped.
   {
-    int index = 1;
+    if (isNewSession)
+      nextItemHandlerIndex_ = 1;
+    int index = nextItemHandlerIndex_;
     for (auto const &ic : itemCounts) {
       int64_t id = ic.first;
       int count = ic.second;
       int previousCount = lastItemCounts_.count(id) ? lastItemCounts_.at(id) : 0;
-      
+
       if (count > previousCount || isNewSession) {
           int itemsToReplay = isNewSession ? count : (count - previousCount);
           std::string itemName = "unnamed_item";
           for (const auto& l : allLocations_) {
               if (l.id == id) { itemName = l.name; break; }
           }
-          
+
           for (int i = 0; i < itemsToReplay; ++i) {
              for (auto const &it : itemHandlers_) {
                executeLuaHandler("onItem", it.second, index++, id, itemName, playerNumber);
@@ -344,6 +351,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
           }
       }
     }
+    nextItemHandlerIndex_ = index;
   }
 
   if (isNewSession) {
@@ -388,6 +396,18 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
   for (int64_t id : missingLocationIds)
     missingTable[idx++] = id;
   archipelago["MissingLocations"] = missingTable;
+
+  // Always mark every server-checked location as cleared (accessibilityLevel=3).
+  // The convergence loop skips allLocations_ entries whose id is in checkedLocationIds,
+  // so it never populates currentPassMax for those logicalIds and therefore never resets
+  // their TrackerObject. Without this, a freshly-checked location retains its previous
+  // accessibilityLevel (e.g. 2) and incorrectly remains visible in the UI.
+  for (int64_t id : checkedLocationIds) {
+    std::string lid = "__id_" + std::to_string(id);
+    auto obj = GetTrackerObject(lid);
+    if (obj && obj->accessibilityLevel != 3)
+      obj->accessibilityLevel = 3;
+  }
 
   auto evaluateRules = [this]() {
     auto rulesTable = lua_.create_table();

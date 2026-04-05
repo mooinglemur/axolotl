@@ -108,6 +108,7 @@ private:
   std::set<int64_t> lastCheckedLocationIds_;
   std::set<int64_t> lastMissingLocationIds_;
   int lastPlayerNumber_ = -1;
+  int nextItemHandlerIndex_ = 1; // Global item handler index; persisted across calls to match pack CUR_INDEX
   std::map<std::string, std::map<std::string, sol::function>> watches_;
   bool firstRun_ = true;
 
