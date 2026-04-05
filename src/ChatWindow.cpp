@@ -486,15 +486,16 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         auto it_end =
             std::lower_bound(cumulative_heights_.begin() + vis_start,
                              cumulative_heights_.end(), scroll_y + window_h);
-        vis_end = std::clamp(
-            (int)std::distance(cumulative_heights_.begin(), it_end), 0,
-            history_count);
+        vis_end =
+            std::clamp((int)std::distance(cumulative_heights_.begin(), it_end),
+                       0, history_count);
 
         clipper.Begin(history_count, (float)avg_h);
 
         // 2. Apply Buffers (30 above, 50 below)
-        clipper.IncludeItemsByIndex(std::clamp(vis_start - 30, 0, history_count),
-                                    std::clamp(vis_end + 50, 0, history_count));
+        clipper.IncludeItemsByIndex(
+            std::clamp(vis_start - 30, 0, history_count),
+            std::clamp(vis_end + 50, 0, history_count));
 
         // 3. Absolute Boundary safety
         clipper.IncludeItemsByIndex(0, std::clamp(20, 0, history_count));
@@ -508,8 +509,10 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         rendered_count = 0;
 
         while (clipper.Step()) {
-          // Force alignment for this range (Overrides clipper's internal inaccurate skip)
-          ImGui::SetCursorPosY((float)cumulative_heights_[clipper.DisplayStart]);
+          // Force alignment for this range (Overrides clipper's internal
+          // inaccurate skip)
+          ImGui::SetCursorPosY(
+              (float)cumulative_heights_[clipper.DisplayStart]);
 
           for (int row_idx = clipper.DisplayStart; row_idx < clipper.DisplayEnd;
                ++row_idx) {
@@ -526,9 +529,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         if (lowest_rendered_idx >= 0) {
           double convergent_total = lowest_rendered_y;
           // The rest of the list comes from the prefix sum delta
-          convergent_total +=
-              (cumulative_heights_[history_count] -
-               cumulative_heights_[lowest_rendered_idx + 1]);
+          convergent_total += (cumulative_heights_[history_count] -
+                               cumulative_heights_[lowest_rendered_idx + 1]);
 
           if (std::abs(convergent_total - total_content_height) > 0.001) {
             total_content_height = convergent_total;
@@ -538,7 +540,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       // Part 24/27/30/31: Threshold-based Stability (Hysteresis)
       // Only apply stabilization if NOT locked to bottom.
-      // At the bottom, we want the layout to converge immediately to the true MaxY.
+      // At the bottom, we want the layout to converge immediately to the true
+      // MaxY.
       double stability_threshold = 2.0 * avg_h;
       if (!locked_to_bottom_ && history.size() == last_history_size_ &&
           current_window_width == last_window_width_ &&
@@ -1006,6 +1009,25 @@ bool ChatWindow::HandleCommand(const std::string &line) {
             rm.item_id = item.first;
             rm.location_id = loc.first;
 
+            // Randomize item flags
+            int flag_roll = dis_type(gen);
+            if (flag_roll < 20)
+              rm.item_flags = 0; // 20% Filler
+            else if (flag_roll < 60)
+              rm.item_flags = 1; // 40% Progression
+            else if (flag_roll < 85)
+              rm.item_flags = 2; // 25% Useful
+            else
+              rm.item_flags = 4; // 15% Trap
+
+            uint32_t item_color = 0xFFFFFF00; // Filler/Default (Cyan)
+            if (rm.item_flags & 0x01)
+              item_color = 0xFFFF5FAF; // Progression (Lavender)
+            else if (rm.item_flags & 0x02)
+              item_color = 0xFFED9564; // Useful (Blue)
+            else if (rm.item_flags & 0x04)
+              item_color = 0xFF0045FF; // Trap (Red-Orange)
+
             if (dis_type(gen) < 30) {
               rm.receiver_slot = p1.slot;
               rm.parts.push_back(
@@ -1019,7 +1041,7 @@ bool ChatWindow::HandleCommand(const std::string &line) {
                   MessagePart{p1.name, 0xFFFF00FF, p1.slot, "player_id"});
               rm.parts.push_back(MessagePart{" sent ", 0xFFFFFFFF, -1, "text"});
               rm.parts.push_back(
-                  MessagePart{item.second, 0xFFFFFF00, -1, "item_id"});
+                  MessagePart{item.second, item_color, -1, "item_id"});
               rm.parts.push_back(MessagePart{" to ", 0xFFFFFFFF, -1, "text"});
               rm.parts.push_back(
                   MessagePart{p2.name, 0xFFFF00FF, p2.slot, "player_id"});
@@ -1028,7 +1050,7 @@ bool ChatWindow::HandleCommand(const std::string &line) {
 
             if (rm.parts.size() <= 2) {
               rm.parts.push_back(
-                  MessagePart{item.second, 0xFFFFFF00, -1, "item_id"});
+                  MessagePart{item.second, item_color, -1, "item_id"});
               rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
             }
 
@@ -1039,12 +1061,32 @@ bool ChatWindow::HandleCommand(const std::string &line) {
           } else {
             rm.sender_slot = slot_id;
             rm.receiver_slot = slot_id;
+
+            // Randomize item flags for fallback case
+            int flag_roll = i % 100;
+            if (flag_roll < 20)
+              rm.item_flags = 0;
+            else if (flag_roll < 60)
+              rm.item_flags = 1;
+            else if (flag_roll < 85)
+              rm.item_flags = 2;
+            else
+              rm.item_flags = 4;
+
+            uint32_t item_color = 0xFFFFFF00;
+            if (rm.item_flags & 0x01)
+              item_color = 0xFFFF5FAF;
+            else if (rm.item_flags & 0x02)
+              item_color = 0xFFED9564;
+            else if (rm.item_flags & 0x04)
+              item_color = 0xFF0045FF;
+
             rm.parts.push_back(MessagePart{slot_name, 0xFFFF00FF, -1,
                                            "player_id player_self"});
             rm.parts.push_back(
                 MessagePart{" found their ", 0xFFFFFFFF, -1, "text"});
             rm.parts.push_back(MessagePart{"Item " + std::to_string(i + 1),
-                                           0xFFFFFF00, -1, "item_id"});
+                                           item_color, -1, "item_id"});
             rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
             rm.parts.push_back(MessagePart{"Location " + std::to_string(i + 1),
                                            0xFF00FF00, -1, "location_id"});

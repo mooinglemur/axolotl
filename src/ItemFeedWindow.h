@@ -18,6 +18,7 @@ private:
   const ConnectionSettings &settings_;
   bool personal_only_;
   std::string filter_text_;
+  bool exclude_filler_ = false;
   bool focus_filter_ = false;
 
   int selection_anchor_idx_ = -1;
@@ -42,4 +43,5 @@ private:
   double last_reported_window_h_ = -1.0f;
   bool last_reported_locked_ = false;
   double last_stable_height_ = 0.0f;
+  bool last_exclude_filler_ = false;
 };

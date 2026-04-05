@@ -11,6 +11,7 @@ function getTimestamp() {
 
 const urlParams = new URLSearchParams(window.location.search);
 const messageDelay = parseInt(urlParams.get('delay')) || 0;
+const excludeFiller = urlParams.get('excludefiller') === '1';
 let messageQueue = [];
 let isProcessingQueue = false;
 
@@ -30,6 +31,9 @@ function connect() {
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'feed_item') {
+                if (excludeFiller && data.flags === 0 && (data.category === 'player-self' || data.category === 'player-other')) {
+                    return;
+                }
                 if (messageDelay > 0) {
                     messageQueue.push(data);
                     if (!isProcessingQueue) {

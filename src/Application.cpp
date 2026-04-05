@@ -390,6 +390,7 @@ bool Application::InitializeUI() {
         category = "chat";
       }
       j["category"] = category;
+      j["flags"] = msg.item_flags;
 
       web_server_->BroadcastFeedEvent(j.dump(), msg.type);
     }

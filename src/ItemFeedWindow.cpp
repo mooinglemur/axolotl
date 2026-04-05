@@ -22,9 +22,14 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
   if (ImGui::Begin(name_.c_str(), &is_open_)) {
     ImGui::Text("Filter:");
     ImGui::SameLine();
-    ImGui::PushItemWidth(-1.0f);
+    float checkbox_width = ImGui::CalcTextSize("Exclude Filler").x +
+                           ImGui::GetFrameHeight() +
+                           ImGui::GetStyle().ItemInnerSpacing.x * 2.0f + 20.0f;
+    ImGui::PushItemWidth(-checkbox_width);
     RenderFilterInput("##Filter", filter_text_, focus_filter_);
     ImGui::PopItemWidth();
+    ImGui::SameLine();
+    ImGui::Checkbox("Exclude Filler", &exclude_filler_);
 
     ImGui::Separator();
 
@@ -33,7 +38,9 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
     const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
 
     bool filter_changed = (filter_text_ != last_filter_text_);
-    if (history.size() != last_history_data_size_ || filter_changed) {
+    bool exclude_filler_changed = (exclude_filler_ != last_exclude_filler_);
+    if (history.size() != last_history_data_size_ || filter_changed ||
+        exclude_filler_changed) {
       display_indices_.clear();
       std::string l_filter = filter_text_;
       std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
@@ -49,6 +56,11 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           if (!my_slots.count(rm.sender_slot) &&
               !my_slots.count(rm.receiver_slot))
             continue;
+        }
+
+        if (exclude_filler_ && rm.item_flags == 0 &&
+            (rm.type == "ItemSend" || rm.type == "ItemCheat")) {
+          continue;
         }
 
         if (!l_filter.empty()) {
@@ -70,6 +82,8 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       }
       row_height_cache_.resize(history.size(), -1.0f);
       last_history_data_size_ = history.size();
+      last_filter_text_ = filter_text_;
+      last_exclude_filler_ = exclude_filler_;
     }
 
     if (ImGui::BeginChild("FeedScrollingRegion", ImVec2(0, 0),
