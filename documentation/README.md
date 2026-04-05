@@ -124,6 +124,8 @@ You can add any of the following query parameters to filter the feed by category
 
 For instance, to only show items and hints, you would use the URL `http://127.0.0.1:3621/feed?items=1&hints=1&chat=0&misc=0`.  The current default if the category is *not* mentioned, it is enabled. The explicitly-enabled ones are shown here mainly for illustrative purposes.
 
+Additionally, you can exclude filler items from the feed using the `excludefiller` parameter.  For instance, to only show items and hints, you would use the URL `http://127.0.0.1:3621/feed?items=1&hints=1&chat=0&misc=0&excludefiller=1`.
+
 The default feed styling may not be to everyone's liking.  Fortunately, the feed is styled using CSS, so it can be customized by editing the CSS override in OBS.
 
 You can view the stock CSS in a browser at `http://127.0.0.1:3621/feed.css`
