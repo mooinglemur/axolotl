@@ -42,7 +42,8 @@ struct TrackerObject {
 };
 
 struct LocationLogic {
-  std::string name;
+  std::string name;              // full breadcrumb string (for logging/debug)
+  std::vector<std::string> path; // individual path segments, e.g. ["Tower of Wing Cap Entrance", "Rainbow Ride", "Star"]
   int64_t id;
   std::string logicalId; // Unique ID for pooling (e.g. __id_3626171 or @Name)
   std::string rule;
@@ -114,7 +115,8 @@ private:
 
   void BindGlobals();
   void LoadLocationsFromPack(const std::filesystem::path &packPath);
-  void ProcessLocationNode(const nlohmann::json &node, const std::string &parentName,
+  void ProcessLocationNode(const nlohmann::json &node,
+                           const std::vector<std::string> &parentPath,
                            const std::string &parentRule,
                            std::unordered_map<std::string, int> &ruleToIdx);
   void LoadItemsFromPack(const std::filesystem::path &dir);

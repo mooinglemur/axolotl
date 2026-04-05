@@ -433,6 +433,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
 
   std::map<std::string, int> maxAccessByLogicalId;
   std::map<std::string, std::string> maxPathByLogicalId;
+  std::map<std::string, std::vector<std::string>> maxPathSegsById;
 
   while (logicChanged && iterations < 10) {
     logicChanged = false;
@@ -443,6 +444,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
     // Reset best-access map for this pass
     std::map<std::string, int> currentPassMax;
     std::map<std::string, std::string> currentPassName;
+    std::map<std::string, std::vector<std::string>> currentPassPath;
 
     for (const auto &loc : allLocations_) {
       // SKIP CLEARED: If the location is already checked on the server,
@@ -490,6 +492,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
             currentPassMax[loc.logicalId] = access;
             if (!loc.name.empty()) {
                 currentPassName[loc.logicalId] = loc.name;
+                currentPassPath[loc.logicalId] = loc.path;
             }
         }
       }
@@ -539,6 +542,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
     if (!logicChanged || iterations == 10) {
       maxAccessByLogicalId = currentPassMax;
       maxPathByLogicalId = currentPassName;
+      maxPathSegsById = currentPassPath;
     }
   }
 
@@ -582,8 +586,13 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
         LocationLogic entry = loc;
         std::string finalPath = maxPathByLogicalId[loc.logicalId];
         if (finalPath.empty()) finalPath = loc.name; // Fallback to raw name if path tracking missed it
-        
         entry.name = finalPath;
+
+        auto pathIt = maxPathSegsById.find(loc.logicalId);
+        if (pathIt != maxPathSegsById.end() && !pathIt->second.empty())
+          entry.path = pathIt->second;
+        // else: entry.path retains loc.path set during load (already a valid fallback)
+
         entry.accessibility = access;
         locations_.push_back(entry);
         addedLids.insert(loc.logicalId);
@@ -1063,9 +1072,9 @@ void LogicManager::LoadLocationsFromPack(
           json j = json::parse(f, nullptr, true, true);
           if (j.is_array()) {
             for (const auto &node : j)
-              ProcessLocationNode(node, "", "", ruleToIdx);
+              ProcessLocationNode(node, {}, "", ruleToIdx);
           } else {
-            ProcessLocationNode(j, "", "", ruleToIdx);
+            ProcessLocationNode(j, {}, "", ruleToIdx);
           }
         } catch (const std::exception &e) {
           std::cerr << "LogicManager [ERROR]: Error parsing location file "
@@ -1082,13 +1091,23 @@ void LogicManager::LoadLocationsFromPack(
 }
 
 void LogicManager::ProcessLocationNode(
-    const json &node, const std::string &parentName, const std::string &parentRule,
+    const json &node, const std::vector<std::string> &parentPath,
+    const std::string &parentRule,
     std::unordered_map<std::string, int> &ruleToIdx) {
   if (!node.is_object())
     return;
 
   std::string nodeName = node.value("name", "");
-  std::string name = parentName.empty() ? nodeName : (parentName + " > " + nodeName);
+  std::vector<std::string> fullPath = parentPath;
+  if (!nodeName.empty())
+    fullPath.push_back(nodeName);
+
+  // Build the flat breadcrumb string from path segments (for logging/compat)
+  std::string name;
+  for (size_t i = 0; i < fullPath.size(); ++i) {
+    if (i > 0) name += " > ";
+    name += fullPath[i];
+  }
 
   // Parse Access Rules
   std::string nodeRule = "";
@@ -1156,6 +1175,7 @@ void LogicManager::ProcessLocationNode(
   if (!name.empty()) {
     LocationLogic ll;
     ll.name = name;
+    ll.path = fullPath;
     ll.id = id;
     if (id != 0) {
       ll.logicalId = "__id_" + std::to_string(id);
@@ -1200,14 +1220,14 @@ void LogicManager::ProcessLocationNode(
   // Handle children nodes
   if (node.contains("children") && node["children"].is_array()) {
     for (const auto &child : node["children"]) {
-      ProcessLocationNode(child, name, combinedRule, ruleToIdx);
+      ProcessLocationNode(child, fullPath, combinedRule, ruleToIdx);
     }
   }
 
   // Handle sections (Check nodes in PopTracker)
   if (node.contains("sections") && node["sections"].is_array()) {
     for (const auto &section : node["sections"]) {
-      ProcessLocationNode(section, name, combinedRule, ruleToIdx);
+      ProcessLocationNode(section, fullPath, combinedRule, ruleToIdx);
     }
   }
 }

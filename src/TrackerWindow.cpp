@@ -137,26 +137,110 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     ImGui::TextDisabled(
                         "No locations currently accessible in logic.");
                   } else {
-                    ImGui::Text("%zu locations accessible", accessible.size());
+                    // Build grouped structure: section -> sorted location entries.
+                    // Only actual location checks (id > 0) are grouped; region
+                    // entries (id <= 0) are excluded. Sections with no checks
+                    // are not displayed.
+                    struct LocEntry {
+                      std::string label; // path[1..] joined with " > "
+                      int accessibility;
+                    };
+                    // std::map gives free alphabetical section ordering.
+                    std::map<std::string, std::vector<LocEntry>> groups;
+
+                    for (const auto &loc : accessible) {
+                      if (loc.id <= 0)
+                        continue; // skip region-only entries
+                      if (!matches_filter(loc.name))
+                        continue;
+
+                      std::string section;
+                      std::string label;
+                      if (loc.path.size() >= 2) {
+                        section = loc.path[0];
+                        label = loc.path[1];
+                        for (size_t i = 2; i < loc.path.size(); ++i)
+                          label += " > " + loc.path[i];
+                      } else {
+                        // Fallback: no parent segment — place in "Global"
+                        section = "Global";
+                        label = loc.path.empty() ? loc.name : loc.path[0];
+                      }
+                      groups[section].push_back({std::move(label), loc.accessibility});
+                    }
+
+                    // Sort within each section: Normal (2) first, then
+                    // Sequence Break (1); alphabetically within each tier.
+                    for (auto &[sec, entries] : groups) {
+                      std::sort(entries.begin(), entries.end(),
+                                [](const LocEntry &a, const LocEntry &b) {
+                                  if (a.accessibility != b.accessibility)
+                                    return a.accessibility > b.accessibility;
+                                  return a.label < b.label;
+                                });
+                    }
+
+                    // Count visible location checks for the header line.
+                    size_t total = 0;
+                    for (const auto &[sec, entries] : groups)
+                      total += entries.size();
+                    ImGui::Text("%zu locations accessible", total);
+
                     if (custom_font)
                       ImGui::PushFont(custom_font);
-                    for (const auto &loc : accessible) {
-                      if (matches_filter(loc.name)) {
-                        int access = loc.accessibility;
-                        if (access == 2) { // Full
-                          ImGui::PushStyleColor(ImGuiCol_Text,
-                                                ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-                        } else if (access == 1) { // Partial
-                          ImGui::PushStyleColor(ImGuiCol_Text,
-                                                ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                        } else { // None / Other
-                          ImGui::PushStyleColor(ImGuiCol_Text,
-                                                ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+
+                    auto &open_states = cache.section_open_states;
+
+                    for (auto &[section, entries] : groups) {
+                      if (entries.empty())
+                        continue;
+
+                      bool has_normal = false;
+                      for (const auto &e : entries)
+                        if (e.accessibility == 2) { has_normal = true; break; }
+
+                      // Tinted header: dark green for Normal, dark yellow for
+                      // Sequence Break only.
+                      ImVec4 hdr_col  = has_normal
+                          ? ImVec4(0.0f,  0.35f, 0.0f,  1.0f)
+                          : ImVec4(0.35f, 0.35f, 0.0f,  1.0f);
+                      ImVec4 hdr_hov  = has_normal
+                          ? ImVec4(0.0f,  0.45f, 0.0f,  1.0f)
+                          : ImVec4(0.45f, 0.45f, 0.0f,  1.0f);
+                      ImVec4 hdr_act  = has_normal
+                          ? ImVec4(0.0f,  0.55f, 0.0f,  1.0f)
+                          : ImVec4(0.55f, 0.55f, 0.0f,  1.0f);
+
+                      ImGui::PushStyleColor(ImGuiCol_Header,        hdr_col);
+                      ImGui::PushStyleColor(ImGuiCol_HeaderHovered,  hdr_hov);
+                      ImGui::PushStyleColor(ImGuiCol_HeaderActive,   hdr_act);
+
+                      // Persist open state across disappear/reappear within
+                      // this app session. New (unseen) sections start collapsed.
+                      bool is_new = (open_states.find(section) == open_states.end());
+                      if (is_new)
+                        open_states[section] = false;
+                      ImGui::SetNextItemOpen(open_states[section], ImGuiCond_Always);
+
+                      bool node_open = ImGui::TreeNodeEx(
+                          section.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+                      open_states[section] = node_open;
+
+                      ImGui::PopStyleColor(3);
+
+                      if (node_open) {
+                        for (const auto &e : entries) {
+                          ImVec4 txt = (e.accessibility == 2)
+                              ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)  // green
+                              : ImVec4(1.0f, 1.0f, 0.0f, 1.0f); // yellow
+                          ImGui::PushStyleColor(ImGuiCol_Text, txt);
+                          ImGui::BulletText("%s", e.label.c_str());
+                          ImGui::PopStyleColor();
                         }
-                        ImGui::BulletText("%s", loc.name.c_str());
-                        ImGui::PopStyleColor();
+                        ImGui::TreePop();
                       }
                     }
+
                     if (custom_font)
                       ImGui::PopFont();
                   }

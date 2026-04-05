@@ -2,6 +2,7 @@
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
 #include "Window.h"
+#include <unordered_map>
 
 class Application;
 
@@ -30,6 +31,10 @@ private:
     std::vector<LocationInfo> unchecked;
     std::vector<std::string> checked_names;
     std::string game;
+    // Per-section open/closed state for the grouped Logical Progression UI.
+    // Keyed by top-level path segment (section header name). Persists for the
+    // lifetime of the app session; new (unseen) sections default to collapsed.
+    std::unordered_map<std::string, bool> section_open_states;
   };
   std::map<std::string, SessionCache> session_caches_;
 };
