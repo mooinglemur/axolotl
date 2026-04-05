@@ -223,7 +223,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                       ImGui::SetNextItemOpen(open_states[section], ImGuiCond_Always);
 
                       bool node_open = ImGui::TreeNodeEx(
-                          section.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+                          section.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Framed);
                       open_states[section] = node_open;
 
                       ImGui::PopStyleColor(3);
@@ -247,8 +247,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                 }
               }
 
-              if (ImGui::CollapsingHeader("Unchecked Locations",
-                                          ImGuiTreeNodeFlags_DefaultOpen)) {
+              if (ImGui::CollapsingHeader("Unchecked Locations")) {
                 if (custom_font)
                   ImGui::PushFont(custom_font);
                 for (const auto &loc : cache.unchecked) {

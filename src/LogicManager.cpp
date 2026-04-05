@@ -118,7 +118,7 @@ bool LogicManager::LoadPack(const std::string &game) {
     itemHandlers_.clear();
     locationHandlers_.clear();
     trackerObjects_.clear();
-    
+
     // Clear Lua-side handlers too if possible, but C++ side is enough
     // as we call them from the C++ vectors.
 
@@ -126,8 +126,8 @@ bool LogicManager::LoadPack(const std::string &game) {
 
     if (debug_mode_)
       std::cout << "LogicManager: Loaded " << allLocations_.size()
-              << " nodes and " << uniqueRules_.size() << " unique rules."
-              << std::endl;
+                << " nodes and " << uniqueRules_.size() << " unique rules."
+                << std::endl;
 
     // Marker for first logic pass
     firstRun_ = true;
@@ -230,40 +230,6 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
     return;
   }
 
-  // Monkey-patch debug hooks if debug mode is active
-  if (debug_mode_ && firstRun_) {
-    lua_.safe_script(R"LUA(
-        local old_areaReveal = _G.areaReveal
-        _G.areaReveal = function()
-            print("LogicManager [LUA DEBUG]: areaReveal() triggered")
-            if not SLOT_DATA then 
-                print("LogicManager [LUA DEBUG]: areaReveal ABORTED - SLOT_DATA is nil")
-                return 
-            end
-            
-            -- Diagnostic check for specific problematic entrances
-            local bitdw_code = "@Bowser in the Dark World Entrance"
-            local obj = Tracker:FindObjectForCode(bitdw_code)
-            if obj then
-                print(string.format("LogicManager [LUA DEBUG]: Diagnostic BitDW: Access=%d, DestStage=%d", 
-                    obj.AccessibilityLevel, Tracker:FindObjectForCode("__er_BitDW_dst").CurrentStage))
-            else
-                print("LogicManager [LUA DEBUG]: Diagnostic ERROR: Could not find BitDW Entrance object!")
-            end
-
-            if old_areaReveal then old_areaReveal() end
-        end
-
-        local old_SetStage = _G.SetStage
-        _G.SetStage = function(entrance, stage)
-            print("LogicManager [LUA DEBUG]: SetStage(" .. tostring(entrance) .. " -> " .. tostring(stage) .. ")")
-            if old_SetStage then old_SetStage(entrance, stage) end
-        end
-        
-        print("LogicManager [LUA DEBUG]: Diagnostic Hooks Applied")
-    )LUA");
-  }
-
   bool isNewSession = firstRun_ || lastSlotData_ != slotData;
   // State updates moved to end of function to support incremental sync
 
@@ -277,25 +243,26 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
   archipelago["PlayerNumber"] = playerNumber;
 
   // Define a robust Lua execution helper
-  auto executeLuaHandler = [&](const std::string& name, sol::function func, auto... args) {
-    if (!func.valid()) return;
-    
-    // Ensure all logic results are pushed to Lua objects before running handlers
-    // (This allows obj.AccessibilityLevel to be correct inside areaReveal)
-    for (auto const& [lid, obj] : trackerObjects_) {
-        // No-op to trigger property getter refresh if needed (sol2 usually handles this)
+  auto executeLuaHandler = [&](const std::string &name, sol::function func,
+                               auto... args) {
+    if (!func.valid())
+      return;
+
+    // Ensure all logic results are pushed to Lua objects before running
+    // handlers (This allows obj.AccessibilityLevel to be correct inside
+    // areaReveal)
+    for (auto const &[lid, obj] : trackerObjects_) {
+      // No-op to trigger property getter refresh if needed (sol2 usually
+      // handles this)
     }
 
     auto res = func(args...);
     if (!res.valid()) {
       sol::error err = res;
-      std::cerr << "LogicManager [LUA ERROR]: Error in " << name << ": " << err.what() << std::endl;
+      std::cerr << "LogicManager [LUA ERROR]: Error in " << name << ": "
+                << err.what() << std::endl;
     }
   };
-
-  // Silence Lua prints during sync to reduce noise
-  sol::function oldPrint = lua_["print"];
-  lua_["print"] = [](sol::variadic_args) {};
 
   if (isNewSession) {
     for (auto const &[code, def] : itemDefaults_) {
@@ -324,10 +291,10 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
   }
 
   // ITEM SYNC: Detect and replay any items received since last update.
-  // The index passed to onItem must be a monotonically-increasing global counter
-  // that persists across UpdateLogic() calls. Pack scripts (e.g. SM64) use a
-  // CUR_INDEX guard to skip already-processed items, so resetting to 1 each call
-  // would cause every incremental item to be silently dropped.
+  // The index passed to onItem must be a monotonically-increasing global
+  // counter that persists across UpdateLogic() calls. Pack scripts (e.g. SM64)
+  // use a CUR_INDEX guard to skip already-processed items, so resetting to 1
+  // each call would cause every incremental item to be silently dropped.
   {
     if (isNewSession)
       nextItemHandlerIndex_ = 1;
@@ -335,52 +302,50 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
     for (auto const &ic : itemCounts) {
       int64_t id = ic.first;
       int count = ic.second;
-      int previousCount = lastItemCounts_.count(id) ? lastItemCounts_.at(id) : 0;
+      int previousCount =
+          lastItemCounts_.count(id) ? lastItemCounts_.at(id) : 0;
 
       if (count > previousCount || isNewSession) {
-          int itemsToReplay = isNewSession ? count : (count - previousCount);
-          std::string itemName = "unnamed_item";
-          for (const auto& l : allLocations_) {
-              if (l.id == id) { itemName = l.name; break; }
+        int itemsToReplay = isNewSession ? count : (count - previousCount);
+        std::string itemName = "unnamed_item";
+        for (const auto &l : allLocations_) {
+          if (l.id == id) {
+            itemName = l.name;
+            break;
           }
+        }
 
-          for (int i = 0; i < itemsToReplay; ++i) {
-             for (auto const &it : itemHandlers_) {
-               executeLuaHandler("onItem", it.second, index++, id, itemName, playerNumber);
-             }
+        for (int i = 0; i < itemsToReplay; ++i) {
+          for (auto const &it : itemHandlers_) {
+            executeLuaHandler("onItem", it.second, index++, id, itemName,
+                              playerNumber);
           }
+        }
       }
     }
     nextItemHandlerIndex_ = index;
   }
 
-  if (isNewSession) {
-    // LOCATION REPLAY: Mark checked locations as cleared in Lua
+  // LOCATION SYNC: Detect and replay any locations checked since last update.
+  {
     int locCount = 0;
     for (int64_t id : checkedLocationIds) {
-      for (auto const &it : locationHandlers_) {
+      if (isNewSession || lastCheckedLocationIds_.count(id) == 0) {
         std::string locName = "checked_location";
-        for (const auto& l : allLocations_) {
-            if (l.id == id) { locName = l.name; break; }
-        }
-        
-        if (it.second.valid()) {
-          auto res = it.second(id, locName);
-          if (res.valid()) {
-            locCount++;
-            if (debug_mode_) {
-                if (locCount < 5) std::cout << "LogicManager [DEBUG]: Replayed location " << id << " -> Success" << std::endl;
-            }
-          } else {
-            sol::error err = res;
-            std::cerr
-                << "LogicManager [LUA ERROR]: Location handler failed for ID "
-                << id << ": " << err.what() << std::endl;
+        for (const auto &l : allLocations_) {
+          if (l.id == id) {
+            locName = l.name;
+            break;
           }
+        }
+
+        for (auto const &it : locationHandlers_) {
+          executeLuaHandler("onLocation", it.second, id, locName);
+          locCount++;
         }
       }
     }
-    if (debug_mode_)
+    if (debug_mode_ && locCount > 0)
       std::cout << "LogicManager [DEBUG]: Replayed " << locCount
                 << " location checks." << std::endl;
   }
@@ -397,11 +362,12 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
     missingTable[idx++] = id;
   archipelago["MissingLocations"] = missingTable;
 
-  // Always mark every server-checked location as cleared (accessibilityLevel=3).
-  // The convergence loop skips allLocations_ entries whose id is in checkedLocationIds,
-  // so it never populates currentPassMax for those logicalIds and therefore never resets
-  // their TrackerObject. Without this, a freshly-checked location retains its previous
-  // accessibilityLevel (e.g. 2) and incorrectly remains visible in the UI.
+  // Always mark every server-checked location as cleared
+  // (accessibilityLevel=3). The convergence loop skips allLocations_ entries
+  // whose id is in checkedLocationIds, so it never populates currentPassMax for
+  // those logicalIds and therefore never resets their TrackerObject. Without
+  // this, a freshly-checked location retains its previous accessibilityLevel
+  // (e.g. 2) and incorrectly remains visible in the UI.
   for (int64_t id : checkedLocationIds) {
     std::string lid = "__id_" + std::to_string(id);
     auto obj = GetTrackerObject(lid);
@@ -416,16 +382,14 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
     }
     sol::function eval = lua_["__AxoEvaluateRules"];
     if (eval.valid()) {
-        auto res = eval(rulesTable);
-        if (res.valid()) return res.get<sol::table>();
+      auto res = eval(rulesTable);
+      if (res.valid())
+        return res.get<sol::table>();
     }
     return lua_.create_table();
   };
 
   auto tracker = lua_["Tracker"];
-
-  // Restore Lua prints after sync
-  lua_["print"] = oldPrint;
 
   // Multi-pass Convergence Loop
   bool logicChanged = true;
@@ -473,27 +437,35 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
       if (access >= currentPassMax[loc.logicalId]) {
         // Name Prioritization & Locking:
         // 1. Prefer higher accessibility.
-        // 2. If accessibility is equal, prefer a meaningful name over boilerplate.
-        // 3. If both are equal, LOCK the first name found (use strict > for quality check).
-        
-        bool isCurrentBoilerplate = loc.name.find("Entrance Accessibility") != std::string::npos ||
-                                     loc.name.find("Unknown Stage") != std::string::npos ||
-                                     (loc.name.find(" > ") == std::string::npos && loc.id <= 0);
-        
+        // 2. If accessibility is equal, prefer a meaningful name over
+        // boilerplate.
+        // 3. If both are equal, LOCK the first name found (use strict > for
+        // quality check).
+
+        bool isCurrentBoilerplate =
+            loc.name.find("Entrance Accessibility") != std::string::npos ||
+            loc.name.find("Unknown Stage") != std::string::npos ||
+            (loc.name.find(" > ") == std::string::npos && loc.id <= 0);
+
         bool hasPriorName = currentPassName.count(loc.logicalId);
-        bool existingIsBoilerplate = hasPriorName && (currentPassName[loc.logicalId].find("Entrance Accessibility") != std::string::npos || 
-                                                     currentPassName[loc.logicalId].find("Unknown Stage") != std::string::npos ||
-                                                     (currentPassName[loc.logicalId].find(" > ") == std::string::npos && currentPassMax[loc.logicalId] <= 0));
+        bool existingIsBoilerplate =
+            hasPriorName &&
+            (currentPassName[loc.logicalId].find("Entrance Accessibility") !=
+                 std::string::npos ||
+             currentPassName[loc.logicalId].find("Unknown Stage") !=
+                 std::string::npos ||
+             (currentPassName[loc.logicalId].find(" > ") == std::string::npos &&
+              currentPassMax[loc.logicalId] <= 0));
 
         bool betterAccess = access > currentPassMax[loc.logicalId];
         bool betterQuality = !isCurrentBoilerplate && existingIsBoilerplate;
 
         if (!hasPriorName || betterAccess || betterQuality) {
-            currentPassMax[loc.logicalId] = access;
-            if (!loc.name.empty()) {
-                currentPassName[loc.logicalId] = loc.name;
-                currentPassPath[loc.logicalId] = loc.path;
-            }
+          currentPassMax[loc.logicalId] = access;
+          if (!loc.name.empty()) {
+            currentPassName[loc.logicalId] = loc.name;
+            currentPassPath[loc.logicalId] = loc.path;
+          }
         }
       }
     }
@@ -516,7 +488,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
 
     // NATURAL REVELATION: Trigger settings watches after the first logic pass
     // so that areaReveal() can see the calculated accessibility levels.
-    if (isNewSession && iterations == 1) {
+    if (iterations == 1) {
       auto spoilReqs = GetTrackerObject("__setting_spoil_reqs");
       if (spoilReqs) {
         spoilReqs->set_stage(1);
@@ -531,12 +503,15 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
 
     // Force logic change if this is the first pass and items/locations changed
     if (iterations == 1) {
-        bool itemsChanged = itemCounts != lastItemCounts_;
-        bool checksChanged = checkedLocationIds != lastCheckedLocationIds_;
-        if (itemsChanged || checksChanged || isNewSession) {
-            logicChanged = true;
-            if (debug_mode_) std::cout << "LogicManager [DEBUG]: Detected change in items/locations/session - Forcing convergence" << std::endl;
-        }
+      bool itemsChanged = itemCounts != lastItemCounts_;
+      bool checksChanged = checkedLocationIds != lastCheckedLocationIds_;
+      if (itemsChanged || checksChanged || isNewSession) {
+        logicChanged = true;
+        if (debug_mode_)
+          std::cout << "LogicManager [DEBUG]: Detected change in "
+                       "items/locations/session - Forcing convergence"
+                    << std::endl;
+      }
     }
 
     if (!logicChanged || iterations == 10) {
@@ -545,9 +520,6 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
       maxPathSegsById = currentPassPath;
     }
   }
-
-  // Restore Lua prints for UI phase
-  lua_["print"] = oldPrint;
 
   // 3. Finalize UI list after convergence
   {
@@ -564,34 +536,38 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
       // Filter out empty names or internal nodes
       if (access > 0 && access < 3 && !loc.name.empty() &&
           addedLids.find(loc.logicalId) == addedLids.end()) {
-        
+
         // FILTER: Skip internal boilerplate logic nodes to keep the UI clean.
-        // We only want to show meaningful Regions (Level Entrances) and actual Locations.
-        // Safer ID check to capture any node that isn't a server-tracked location.
+        // We only want to show meaningful Regions (Level Entrances) and actual
+        // Locations. Safer ID check to capture any node that isn't a
+        // server-tracked location.
         if (loc.id <= 0) {
-            std::string n = loc.name;
-            // Broad search for boilerplate keywords in the breadcrumb path.
-            if (n.find("Entrance Accessibility") != std::string::npos ||
-                n.find("Unknown Stage") != std::string::npos ||
-                n.find("Enter Stage") != std::string::npos ||
-                n.find("[Z]") != std::string::npos ||
-                n.find("Green:") != std::string::npos ||
-                n.find("Yellow:") != std::string::npos ||
-                n.find("Blue:") != std::string::npos ||
-                n.find("Red:") != std::string::npos) {
-                continue; 
-            }
+          std::string n = loc.name;
+          // Broad search for boilerplate keywords in the breadcrumb path.
+          if (n.find("Entrance Accessibility") != std::string::npos ||
+              n.find("Unknown Stage") != std::string::npos ||
+              n.find("Enter Stage") != std::string::npos ||
+              n.find("[Z]") != std::string::npos ||
+              n.find("Green:") != std::string::npos ||
+              n.find("Yellow:") != std::string::npos ||
+              n.find("Blue:") != std::string::npos ||
+              n.find("Red:") != std::string::npos) {
+            continue;
+          }
         }
 
         LocationLogic entry = loc;
         std::string finalPath = maxPathByLogicalId[loc.logicalId];
-        if (finalPath.empty()) finalPath = loc.name; // Fallback to raw name if path tracking missed it
+        if (finalPath.empty())
+          finalPath =
+              loc.name; // Fallback to raw name if path tracking missed it
         entry.name = finalPath;
 
         auto pathIt = maxPathSegsById.find(loc.logicalId);
         if (pathIt != maxPathSegsById.end() && !pathIt->second.empty())
           entry.path = pathIt->second;
-        // else: entry.path retains loc.path set during load (already a valid fallback)
+        // else: entry.path retains loc.path set during load (already a valid
+        // fallback)
 
         entry.accessibility = access;
         locations_.push_back(entry);
@@ -613,30 +589,38 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
 
     if (debug_mode_) {
       std::cout << "LogicManager [UI CONTENT]:" << std::endl;
-      // Filter out redundant path segments. 
-      // If we have "A > B" and "A > B > C", we only want to show "A > B > C" in the terminal report.
+      // Filter out redundant path segments.
+      // If we have "A > B" and "A > B > C", we only want to show "A > B > C" in
+      // the terminal report.
       std::vector<LocationLogic> filtered;
       for (size_t i = 0; i < locations_.size(); ++i) {
-          bool isSubpath = false;
-          for (size_t j = 0; j < locations_.size(); ++j) {
-              if (i == j) continue;
-              // If another entry starts with our name and is longer, we are a subpath.
-              if (locations_[j].name.find(locations_[i].name + " > ") == 0) {
-                  isSubpath = true;
-                  break;
-              }
+        bool isSubpath = false;
+        for (size_t j = 0; j < locations_.size(); ++j) {
+          if (i == j)
+            continue;
+          // If another entry starts with our name and is longer, we are a
+          // subpath.
+          if (locations_[j].name.find(locations_[i].name + " > ") == 0) {
+            isSubpath = true;
+            break;
           }
-          if (!isSubpath) filtered.push_back(locations_[i]);
+        }
+        if (!isSubpath)
+          filtered.push_back(locations_[i]);
       }
 
       for (const auto &loc : filtered) {
         std::string status = "Unknown";
-        if (loc.accessibility == 2) status = "Normal";
-        else if (loc.accessibility == 1) status = "Sequence Break";
-        else if (loc.accessibility == 3) status = "Cleared";
-        
+        if (loc.accessibility == 2)
+          status = "Normal";
+        else if (loc.accessibility == 1)
+          status = "Sequence Break";
+        else if (loc.accessibility == 3)
+          status = "Cleared";
+
         std::string type = (loc.id <= 0) ? "[REGION]  " : "[LOCATION]";
-        std::cout << "  - " << type << " " << loc.name << " (Level: " << status << ")" << std::endl;
+        std::cout << "  - " << type << " " << loc.name << " (Level: " << status
+                  << ")" << std::endl;
       }
     }
   }
@@ -739,12 +723,12 @@ void LogicManager::BindGlobals() {
   scriptHost["AddMemoryWatch"] = [](sol::variadic_args) {};
   scriptHost["RegisterTimer"] = [](sol::variadic_args) {};
   scriptHost["AddWatchForCode"] = [this](sol::object self, std::string name,
-                                        std::string code, sol::function func) {
+                                         std::string code, sol::function func) {
     watches_[code][name] = func;
   };
 
   scriptHost["RemoveWatchForCode"] = [this](sol::object self, std::string name,
-                                           sol::optional<std::string> code) {
+                                            sol::optional<std::string> code) {
     if (code) {
       auto it = watches_.find(*code);
       if (it != watches_.end()) {
@@ -772,15 +756,15 @@ void LogicManager::BindGlobals() {
   ap_bridge["CheckedLocations"] = lua_.create_table();
   ap_bridge["MissingLocations"] = lua_.create_table();
   ap_bridge["AddClearHandler"] = [this](sol::object self, std::string name,
-                                       sol::function cb) {
+                                        sol::function cb) {
     clearHandlers_[name] = cb;
   };
   ap_bridge["AddItemHandler"] = [this](sol::object self, std::string name,
-                                      sol::function cb) {
+                                       sol::function cb) {
     itemHandlers_[name] = cb;
   };
   ap_bridge["AddLocationHandler"] = [this](sol::object self, std::string name,
-                                          sol::function cb) {
+                                           sol::function cb) {
     locationHandlers_[name] = cb;
   };
   lua_["Archipelago"] = ap_bridge;
@@ -916,7 +900,7 @@ LogicManager::GetTrackerObject(const std::string &code) {
     obj->set_active(def.active);
     obj->set_count(def.count);
   }
-  
+
   trackerObjects_[code] = obj;
   return obj;
 }
@@ -1105,7 +1089,8 @@ void LogicManager::ProcessLocationNode(
   // Build the flat breadcrumb string from path segments (for logging/compat)
   std::string name;
   for (size_t i = 0; i < fullPath.size(); ++i) {
-    if (i > 0) name += " > ";
+    if (i > 0)
+      name += " > ";
     name += fullPath[i];
   }
 
