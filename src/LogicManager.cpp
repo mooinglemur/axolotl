@@ -60,10 +60,13 @@ LogicManager::~LogicManager() {
 }
 
 bool LogicManager::LoadPackAsync(const std::string &game) {
-  if (load_state_.load() == LoadState::Loading) return false;
+  if (load_state_.load() == LoadState::Loading)
+    return false;
   pending_game_ = game;
   load_state_ = LoadState::Loading;
-  if (load_thread_.joinable()) load_thread_.join();
+  ids_resolved_ = false;
+  if (load_thread_.joinable())
+    load_thread_.join();
   load_thread_ = std::thread([this, game]() {
     bool ok = LoadPack(game);
     load_state_ = ok ? LoadState::Ready : LoadState::Error;
@@ -87,6 +90,8 @@ void LogicManager::Reset() {
   lastMissingLocationIds_.clear();
   lastPlayerNumber_ = -1;
   firstRun_ = true;
+  ids_resolved_ = false;
+  stageCodeLinks_.clear();
   nextItemHandlerIndex_ = 1;
   itemHistory_.clear();
   itemHandlers_.clear();
@@ -153,12 +158,136 @@ bool LogicManager::LoadPack(const std::string &game) {
     lastPlayerNumber_ = -1;
 
     lua_.script_file((packPath / entry).string());
+
+    // Create lowercase aliases for any capitalized global functions so that
+    // packs with inconsistent casing (e.g. $bianco4 vs Bianco4) still work.
+    lua_.safe_script(R"LUA(
+      for k, v in pairs(_G) do
+        if type(v) == "function" then
+          local lower = string.lower(k)
+          if lower ~= k and _G[lower] == nil then
+            _G[lower] = v
+          end
+        end
+      end
+    )LUA");
+
     return true;
   } catch (const std::exception &e) {
     if (debug_mode_)
       std::cerr << "LogicManager Load Error: " << e.what() << std::endl;
     return false;
   }
+}
+
+void LogicManager::ResolveLocationIds(
+    const std::map<std::string, int64_t> &nameToId) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  if (ids_resolved_)
+    return;
+  ids_resolved_ = true;
+
+  // Build an index: leaf_name (after last " - ") → list of (id, full_name)
+  std::map<std::string, std::vector<std::pair<int64_t, std::string>>> leafIdx;
+  for (auto &[full_name, id] : nameToId) {
+    // Index by full name
+    leafIdx[full_name].push_back({id, full_name});
+    // Index by leaf (part after last " - ")
+    auto dash = full_name.rfind(" - ");
+    if (dash != std::string::npos) {
+      std::string leaf = full_name.substr(dash + 3);
+      if (leaf != full_name)
+        leafIdx[leaf].push_back({id, full_name});
+    }
+  }
+
+  int resolved = 0;
+  for (auto &loc : allLocations_) {
+    if (loc.id != 0 || loc.path.empty())
+      continue;
+
+    const std::string &leaf = loc.path.back();
+
+    // 1. Exact full name match
+    auto it = nameToId.find(leaf);
+    if (it != nameToId.end()) {
+      loc.id = it->second;
+      loc.logicalId = "__id_" + std::to_string(loc.id);
+      ++resolved;
+      continue;
+    }
+
+    // Helper: resolve from a candidate list using parent path scoring
+    auto resolveFromCandidates =
+        [&](const std::vector<std::pair<int64_t, std::string>> &candidates)
+        -> bool {
+      if (candidates.size() == 1) {
+        loc.id = candidates[0].first;
+        loc.logicalId = "__id_" + std::to_string(loc.id);
+        ++resolved;
+        return true;
+      }
+      int64_t best_id = 0;
+      int best_score = -1;
+      for (auto &[cid, cname] : candidates) {
+        int score = 0;
+        for (size_t i = 0; i + 1 < loc.path.size(); ++i) {
+          if (cname.find(loc.path[i]) != std::string::npos)
+            ++score;
+        }
+        if (score > best_score) {
+          best_score = score;
+          best_id = cid;
+        }
+      }
+      if (best_id) {
+        loc.id = best_id;
+        loc.logicalId = "__id_" + std::to_string(loc.id);
+        ++resolved;
+        return true;
+      }
+      return false;
+    };
+
+    // 2. Leaf suffix match using the display name
+    auto lit = leafIdx.find(leaf);
+    if (lit != leafIdx.end()) {
+      if (resolveFromCandidates(lit->second))
+        continue;
+    }
+
+    // 3. Try path[-2] — the parent node name. Common in packs where the leaf is
+    //    a generic name like "Blue Coin" or "Star" and the AP name matches the
+    //    parent instead (e.g. "River End > Blue Coin" → AP "... - River End").
+    if (loc.path.size() >= 2) {
+      const std::string &parent = loc.path[loc.path.size() - 2];
+      if (parent != leaf) {
+        auto plit = leafIdx.find(parent);
+        if (plit != leafIdx.end()) {
+          if (resolveFromCandidates(plit->second))
+            continue;
+        }
+      }
+    }
+
+    // 4. Fallback: try the refLeaf (second-to-last segment of a PopTracker
+    //    "ref" path), which often matches the AP data package leaf name when
+    //    the display name differs.
+    if (!loc.refLeaf.empty() && loc.refLeaf != leaf) {
+      auto rlit = leafIdx.find(loc.refLeaf);
+      if (rlit != leafIdx.end())
+        resolveFromCandidates(rlit->second);
+    }
+  }
+
+  if (debug_mode_)
+    std::cerr << "LogicManager: Resolved " << resolved
+              << " location IDs from data package.\n";
+
+  // Rebuild the id→accessibility cache with the new IDs
+  accessibilityCache_.clear();
+  // Force a fresh convergence pass next UpdateLogic call
+  firstRun_ = true;
 }
 
 void LogicManager::LoadItemsFromPack(const fs::path &dir) {
@@ -199,6 +328,49 @@ void LogicManager::ProcessItemJson(const nlohmann::json &j) {
     }
   }
 
+  if (codes.empty() && !(j.contains("stages") && j["stages"].is_array()))
+    return;
+
+  // For progressive items, build stage code links so ProviderCountForCode
+  // can check stage-specific codes against the primary object's current stage.
+  std::string type = j.value("type", "toggle");
+  if (type == "progressive" && j.contains("stages") && j["stages"].is_array()) {
+    bool defaultInherit = j.value("inherit_codes", true);
+    std::string primaryCode;
+
+    int stageIdx = 0;
+    for (const auto &stage : j["stages"]) {
+      bool inherit = stage.value("inherit_codes", defaultInherit);
+      std::vector<std::string> sc;
+      auto splitAndAppend = [&sc](const std::string &s) {
+        std::stringstream ss(s);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+          auto start = tok.find_first_not_of(" \t");
+          auto end = tok.find_last_not_of(" \t");
+          if (start != std::string::npos)
+            sc.push_back(tok.substr(start, end - start + 1));
+        }
+      };
+      if (stage.contains("codes") && stage["codes"].is_string())
+        splitAndAppend(stage["codes"].get<std::string>());
+      else if (stage.contains("code") && stage["code"].is_string())
+        sc.push_back(stage["code"].get<std::string>());
+
+      if (!sc.empty() && primaryCode.empty())
+        primaryCode = sc[0];
+
+      for (const auto &c : sc)
+        stageCodeLinks_[c].push_back({primaryCode, stageIdx, inherit});
+
+      ++stageIdx;
+    }
+
+    // Ensure primary object exists with defaults
+    if (!primaryCode.empty())
+      GetTrackerObject(primaryCode);
+  }
+
   if (codes.empty())
     return;
 
@@ -237,7 +409,8 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
                                int playerNumber) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
 
-  if (load_state_.load() != LoadState::Ready) return;
+  if (load_state_.load() != LoadState::Ready)
+    return;
 
   if (!firstRun_ && slotData == lastSlotData_ &&
       itemCounts == lastItemCounts_ &&
@@ -696,13 +869,43 @@ void LogicManager::BindGlobals() {
     std::cout << std::endl;
   });
 
+  // Coercing setters: PopTracker packs mix booleans and numbers freely for
+  // Active (bool), CurrentStage (int), and AcquiredCount (int). Sol2 with
+  // safeties on rejects type mismatches, so we coerce via sol::object lambdas.
+  auto lua_to_bool = [](sol::object v) -> bool {
+    if (v.is<bool>())
+      return v.as<bool>();
+    if (v.is<int>())
+      return v.as<int>() != 0;
+    if (v.is<double>())
+      return v.as<double>() != 0.0;
+    return false;
+  };
+  auto lua_to_int = [](sol::object v) -> int {
+    if (v.is<int>())
+      return v.as<int>();
+    if (v.is<double>())
+      return (int)v.as<double>();
+    if (v.is<bool>())
+      return v.as<bool>() ? 1 : 0;
+    return 0;
+  };
   lua_.new_usertype<TrackerObject>(
       "TrackerObject", "Active",
-      sol::property(&TrackerObject::get_active, &TrackerObject::set_active),
+      sol::property(&TrackerObject::get_active,
+                    [lua_to_bool](TrackerObject &obj, sol::object v) {
+                      obj.set_active(lua_to_bool(v));
+                    }),
       "CurrentStage",
-      sol::property(&TrackerObject::get_stage, &TrackerObject::set_stage),
+      sol::property(&TrackerObject::get_stage,
+                    [lua_to_int](TrackerObject &obj, sol::object v) {
+                      obj.set_stage(lua_to_int(v));
+                    }),
       "AcquiredCount",
-      sol::property(&TrackerObject::get_count, &TrackerObject::set_count),
+      sol::property(&TrackerObject::get_count,
+                    [lua_to_int](TrackerObject &obj, sol::object v) {
+                      obj.set_count(lua_to_int(v));
+                    }),
       "Increment", &TrackerObject::increment, "ChestCount",
       &TrackerObject::chestCount, "AvailableChestCount",
       &TrackerObject::availableChestCount, "AccessibilityLevel",
@@ -711,11 +914,39 @@ void LogicManager::BindGlobals() {
   auto tracker = lua_.create_table();
   tracker["ActiveVariantUID"] = "standard";
   tracker["FindObjectForCode"] = [this](sol::object self, std::string code) {
+    // Route stage-alias codes to their primary object so that packs that call
+    // FindObjectForCode("progression_ticket") get the right TrackerObject to
+    // read/write the stage on.
+    auto it = stageCodeLinks_.find(code);
+    if (it != stageCodeLinks_.end() && !it->second.empty())
+      return GetTrackerObject(it->second[0].primaryCode);
     return GetTrackerObject(code);
   };
-  tracker["ProviderCountForCode"] = [this](sol::object self, std::string code) {
+  tracker["ProviderCountForCode"] = [this](sol::object self,
+                                           std::string code) -> int {
+    // Check if this is a stage code for a progressive item
+    auto it = stageCodeLinks_.find(code);
+    if (it != stageCodeLinks_.end() && !it->second.empty()) {
+      int total = 0;
+      for (const auto &link : it->second) {
+        auto primary = GetTrackerObject(link.primaryCode);
+        int currentStage = primary->stage;
+        if (link.inherit) {
+          // inherit_codes: true — code is provided by all stages up to current
+          if (currentStage >= link.stageIdx)
+            ++total;
+        } else {
+          // inherit_codes: false — code is provided only at exactly this stage
+          if (currentStage == link.stageIdx)
+            ++total;
+        }
+      }
+      return total;
+    }
+    // Not a registered stage code — use the object directly.
+    // Toggle items use active; consumables use count.
     auto obj = GetTrackerObject(code);
-    return obj->count;
+    return obj->count > 0 ? obj->count : (obj->active ? 1 : 0);
   };
 
   tracker["AddMaps"] = [](sol::variadic_args) {};
@@ -784,6 +1015,11 @@ void LogicManager::BindGlobals() {
                                            sol::function cb) {
     locationHandlers_[name] = cb;
   };
+  ap_bridge["AddSetReplyHandler"] = [](sol::variadic_args) {};
+  ap_bridge["AddRetrievedHandler"] = [](sol::variadic_args) {};
+  ap_bridge["SetNotify"] = [](sol::variadic_args) {};
+  ap_bridge["Get"] = [](sol::variadic_args) {};
+  ap_bridge["Set"] = [](sol::variadic_args) {};
   lua_["Archipelago"] = ap_bridge;
 
   lua_.safe_script(R"LUA(
@@ -872,6 +1108,12 @@ void LogicManager::BindGlobals() {
                                              sol::function cb) {
     locationHandlers_[name] = cb;
   };
+  // Stubs for PopTracker data-storage API — not used for logic tracking
+  archipelago["AddSetReplyHandler"] = [](sol::variadic_args) {};
+  archipelago["AddRetrievedHandler"] = [](sol::variadic_args) {};
+  archipelago["SetNotify"] = [](sol::variadic_args) {};
+  archipelago["Get"] = [](sol::variadic_args) {};
+  archipelago["Set"] = [](sol::variadic_args) {};
   archipelago["GetSlotData"] = [this]() {
     return JsonToLua(lua_, lastSlotData_);
   };
@@ -929,6 +1171,9 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
     return ruleCache_[rule];
   std::string res = rule;
   res = std::regex_replace(res, std::regex(R"(,)"), " & ");
+  // #item_code → has("item_code") boolean check (PopTracker "count" syntax)
+  res =
+      std::regex_replace(res, std::regex(R"(#([a-zA-Z0-9_]+))"), "has(\"$1\")");
   std::regex funcPattern(R"((\^?)\$([a-zA-Z0-9_]+)((?:\|[a-zA-Z0-9_/]+)*))");
   auto begin = std::sregex_iterator(res.begin(), res.end(), funcPattern);
   auto end = std::sregex_iterator();
@@ -1023,6 +1268,16 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
     if (splitIdx != -1)
       return "__AxoAnd(" + processInfix(s.substr(0, splitIdx)) + ", " +
              processInfix(s.substr(splitIdx + 1)) + ")";
+    // Leaf: bare identifier without $ → PopTracker item code, call has("code").
+    // $-prefixed names were already converted to func() calls above.
+    // Lua keywords and numeric literals pass through as-is.
+    static const std::regex bare_ident(R"(^[a-zA-Z_][a-zA-Z0-9_]*$)");
+    static const std::unordered_set<std::string> lua_kw = {
+        "true", "false",  "nil",    "and",   "or",       "not",    "if",
+        "then", "else",   "elseif", "end",   "do",       "while",  "for",
+        "in",   "return", "break",  "local", "function", "repeat", "until"};
+    if (std::regex_match(s, bare_ident) && !lua_kw.count(s))
+      return "__AxoB(has(\"" + s + "\"))";
     return s;
   };
   finalRes = processInfix(finalRes);
@@ -1041,6 +1296,7 @@ void LogicManager::LoadLocationsFromPack(
   uniqueRules_.clear();
   compiledRules_.clear();
   ruleCache_.clear();
+  stageCodeLinks_.clear();
   std::unordered_map<std::string, int> ruleToIdx;
   fs::path locDir = packPath / "locations";
   LoadItemsFromPack(packPath / "items");
@@ -1098,6 +1354,35 @@ void LogicManager::ProcessLocationNode(
   if (!node.is_object())
     return;
 
+  // Nodes with a "ref" field are view-only aliases of canonical entries defined
+  // elsewhere in the pack (e.g. totals_screen.json references blue_coins.json
+  // and locations.json). The canonical entries already carry the correct access
+  // rules and IDs, so we skip ref nodes entirely to avoid duplicates with
+  // missing/wrong rule inheritance.
+  if (node.contains("ref"))
+    return;
+
+  // Skip subtrees that contain no direct location content — only ref aliases.
+  // This avoids phantom region entries from secondary display files (e.g.
+  // totals_screen.json container nodes whose sections are all refs).
+  // We check recursively so that container nodes with ref-only children are
+  // also pruned. This is pack-agnostic: any node whose entire subtree is
+  // ref-only carries no rules or IDs of its own.
+  std::function<bool(const json &)> hasDirectContent = [&](const json &n) -> bool {
+    if (!n.is_object()) return false;
+    if (n.contains("ref")) return false;
+    if (n.contains("item_count") || n.contains("hosted_item")) return true;
+    for (const char *key : {"sections", "children"}) {
+      if (n.contains(key) && n[key].is_array()) {
+        for (const auto &child : n[key])
+          if (hasDirectContent(child)) return true;
+      }
+    }
+    return false;
+  };
+  if (!hasDirectContent(node))
+    return;
+
   std::string nodeName = node.value("name", "");
   std::vector<std::string> fullPath = parentPath;
   if (!nodeName.empty())
@@ -1117,7 +1402,7 @@ void LogicManager::ProcessLocationNode(
       !node["access_rules"].empty()) {
     std::vector<std::string> parts;
     for (const auto &r : node["access_rules"]) {
-      if (r.is_string())
+      if (r.is_string() && !r.get<std::string>().empty())
         parts.push_back("(" + r.get<std::string>() + ")");
     }
     if (!parts.empty()) {
@@ -1142,7 +1427,7 @@ void LogicManager::ProcessLocationNode(
       if (!parts.empty()) {
         visibilityRule = parts[0];
         for (size_t i = 1; i < parts.size(); ++i)
-          visibilityRule += " & " + parts[i];
+          visibilityRule += " | " + parts[i];
       }
     }
   }
@@ -1174,11 +1459,29 @@ void LogicManager::ProcessLocationNode(
     }
   }
 
+  // Extract refLeaf: the second-to-last segment of a PopTracker "ref" path.
+  // e.g. ref="Bianco Hills Blue Coins/River End/Blue Coin" → refLeaf="River
+  // End" This provides a fallback display-name → AP-name match during ID
+  // resolution.
+  std::string refLeaf;
+  if (node.contains("ref") && node["ref"].is_string()) {
+    std::string ref = node["ref"].get<std::string>();
+    size_t lastSlash = ref.rfind('/');
+    if (lastSlash != std::string::npos && lastSlash > 0) {
+      size_t prevSlash = ref.rfind('/', lastSlash - 1);
+      if (prevSlash != std::string::npos)
+        refLeaf = ref.substr(prevSlash + 1, lastSlash - prevSlash - 1);
+      else
+        refLeaf = ref.substr(0, lastSlash);
+    }
+  }
+
   if (!name.empty()) {
     LocationLogic ll;
     ll.name = name;
     ll.path = fullPath;
     ll.id = id;
+    ll.refLeaf = refLeaf;
     if (id != 0) {
       ll.logicalId = "__id_" + std::to_string(id);
     } else {

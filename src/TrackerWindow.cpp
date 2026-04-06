@@ -132,6 +132,13 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                        "Failed to load PopTracker pack for %s",
                                        cache.game.c_str());
                   } else {
+                  // Resolve location IDs from data package (once per pack load)
+                  {
+                    std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
+                    auto meta = session->GetMetadata();
+                    if (meta && meta->location_name_to_id.count(cache.game))
+                      lm->ResolveLocationIds(meta->location_name_to_id.at(cache.game));
+                  }
                   // Push current session data to LogicManager atomically
                   {
                     std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());

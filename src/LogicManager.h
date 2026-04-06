@@ -27,19 +27,19 @@ struct TrackerObject {
     int accessibilityLevel = 0;
 
     int get_count() const { return count; }
-    void set_count(int c) { 
+    void set_count(int c) {
         if (count == c) return;
-        count = c; stage = c; if(on_change) on_change(code); 
+        count = c; stage = c; if(on_change) on_change(code);
     }
     int get_stage() const { return stage; }
-    void set_stage(int s) { 
+    void set_stage(int s) {
         if (stage == s) return;
-        stage = s; if(on_change) on_change(code); 
+        stage = s; if(on_change) on_change(code);
     }
     bool get_active() const { return active; }
-    void set_active(bool a) { 
+    void set_active(bool a) {
         if (active == a) return;
-        active = a; if(on_change) on_change(code); 
+        active = a; if(on_change) on_change(code);
     }
 };
 
@@ -50,6 +50,7 @@ struct LocationLogic {
   std::string logicalId; // Unique ID for pooling (e.g. __id_3626171 or @Name)
   std::string rule;
   std::string transpiledRule;
+  std::string refLeaf; // Second-to-last segment of a PopTracker "ref" path, used as fallback for ID resolution
   int ruleIndex = -1; // Index into uniqueRules_
   int accessibility; // 0=None, 1=Partial, 2=Full
 };
@@ -80,6 +81,9 @@ public:
   bool IsLoading() const { return load_state_.load() == LoadState::Loading; }
   bool HasError()  const { return load_state_.load() == LoadState::Error; }
   const std::string &GetPendingGame() const { return pending_game_; }
+  // Resolve location IDs from the Archipelago data package by name matching.
+  // Should be called once after the pack is ready and the data package received.
+  void ResolveLocationIds(const std::map<std::string, int64_t> &nameToId);
 
   const std::vector<LocationLogic> &GetLocations() const;
   void SetDebugMode(bool debug);
@@ -92,6 +96,7 @@ private:
   std::atomic<LoadState> load_state_{LoadState::Uninitialized};
   std::thread load_thread_;
   std::string pending_game_;
+  bool ids_resolved_ = false;
   mutable std::recursive_mutex state_mutex_;
   std::filesystem::path currentPackPath_;
   sol::state lua_;
@@ -125,6 +130,16 @@ private:
   int nextItemHandlerIndex_ = 1; // Global item handler index; persisted across calls to match pack CUR_INDEX
   std::map<std::string, std::map<std::string, sol::function>> watches_;
   bool firstRun_ = true;
+  // Progressive item stage code tracking.
+  // Maps any code → list of (primaryCode, stageIdx, inheritCodes) entries so
+  // ProviderCountForCode("progression_ticket") can consult the primary
+  // TrackerObject's current stage to decide the count.
+  struct StageCodeLink {
+    std::string primaryCode;
+    int stageIdx;
+    bool inherit;
+  };
+  std::map<std::string, std::vector<StageCodeLink>> stageCodeLinks_;
 
   void BindGlobals();
   void LoadLocationsFromPack(const std::filesystem::path &packPath);
