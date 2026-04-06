@@ -88,6 +88,11 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                         });
             }
 
+            // Per-session LogicManager (nullptr if game not yet known)
+            LogicManager *lm = cache.game.empty()
+                ? nullptr
+                : app_.GetOrCreateLogicForSession(tab_name, cache.game);
+
             ImGui::Text("Game: %s", cache.game.c_str());
             ImGui::SameLine();
             ImGui::TextColored(
@@ -111,7 +116,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                     51));
                     if (!path.empty()) {
                       if (PackStore::ImportPack(cache.game, path)) {
-                        app_.GetLogic().LoadPack(cache.game);
+                        app_.DestroyLogicForSession(tab_name);
                       }
                     }
                   }
@@ -119,20 +124,25 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                   ImGui::TextColored(ImVec4(1, 0, 0, 1),
                                      "EXPERIMENTAL FEATURE");
                 } else {
-                  if (app_.GetLogic().GetCurrentGame() != cache.game) {
-                    app_.GetLogic().LoadPack(cache.game);
-                  }
+                  if (lm == nullptr || lm->IsLoading()) {
+                    ImGui::TextColored(ImVec4(1, 1, 0, 1),
+                                       "Loading PopTracker pack...");
+                  } else if (lm->HasError()) {
+                    ImGui::TextColored(ImVec4(1, 0, 0, 1),
+                                       "Failed to load PopTracker pack for %s",
+                                       cache.game.c_str());
+                  } else {
                   // Push current session data to LogicManager atomically
                   {
                     std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
-                    app_.GetLogic().UpdateLogic(session->GetReceivedItemCounts(),
-                                                session->GetSlotData(),
-                                                session->GetCheckedLocations(),
-                                                session->GetMissingLocations(),
-                                                (int)session->GetLocalSlot());
+                    lm->UpdateLogic(session->GetReceivedItemCounts(),
+                                    session->GetSlotData(),
+                                    session->GetCheckedLocations(),
+                                    session->GetMissingLocations(),
+                                    (int)session->GetLocalSlot());
                   }
 
-                  const auto &accessible = app_.GetLogic().GetLocations();
+                  const auto &accessible = lm->GetLocations();
                   if (accessible.empty()) {
                     ImGui::TextDisabled(
                         "No locations currently accessible in logic.");
@@ -244,6 +254,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     if (custom_font)
                       ImGui::PopFont();
                   }
+                  } // lm ready
                 }
               }
 
@@ -252,7 +263,8 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                   ImGui::PushFont(custom_font);
                 for (const auto &loc : cache.unchecked) {
                   if (matches_filter(loc.name)) {
-                    int access = app_.GetLogic().GetAccessibility(loc.id);
+                    int access = (lm && lm->IsReady())
+                        ? lm->GetAccessibility(loc.id) : 0;
 
                     if (access == 2) {
                       ImGui::PushStyleColor(ImGuiCol_Text,

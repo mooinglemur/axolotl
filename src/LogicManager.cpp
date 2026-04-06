@@ -54,7 +54,22 @@ LogicManager::LogicManager() {
   BindGlobals();
 }
 
-LogicManager::~LogicManager() {}
+LogicManager::~LogicManager() {
+  if (load_thread_.joinable())
+    load_thread_.join();
+}
+
+bool LogicManager::LoadPackAsync(const std::string &game) {
+  if (load_state_.load() == LoadState::Loading) return false;
+  pending_game_ = game;
+  load_state_ = LoadState::Loading;
+  if (load_thread_.joinable()) load_thread_.join();
+  load_thread_ = std::thread([this, game]() {
+    bool ok = LoadPack(game);
+    load_state_ = ok ? LoadState::Ready : LoadState::Error;
+  });
+  return true;
+}
 
 void LogicManager::Reset() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
@@ -221,6 +236,8 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
                                const std::set<int64_t> &missingLocationIds,
                                int playerNumber) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+
+  if (load_state_.load() != LoadState::Ready) return;
 
   if (!firstRun_ && slotData == lastSlotData_ &&
       itemCounts == lastItemCounts_ &&

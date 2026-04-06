@@ -307,6 +307,7 @@ public:
 
   // Callbacks
   std::function<void()> on_history_updated;
+  std::function<void(const std::string&)> on_session_removed;
   std::function<void(const RichMessage&)> on_message_received;
   std::function<void(const MultiworldStats&)> on_stats_updated;
   void SetWakeUpCallback(std::function<void()> cb) { wake_up_callback_ = cb; }

@@ -45,7 +45,9 @@ public:
 
   void AddWindow(std::unique_ptr<Window> window);
   ArchipelagoNetwork &GetNetwork() { return ap_network_; }
-  LogicManager &GetLogic() { return logic_manager_; }
+  LogicManager *GetOrCreateLogicForSession(const std::string &name,
+                                           const std::string &game);
+  void DestroyLogicForSession(const std::string &name);
 
 private:
   void RenderUI(std::tm *current_tm);
@@ -93,7 +95,7 @@ private:
   std::string glsl_version_;
   std::string imgui_ini_path_;
   ArchipelagoNetwork ap_network_;
-  LogicManager logic_manager_;
+  std::map<std::string, std::unique_ptr<LogicManager>> logic_managers_;
   std::unique_ptr<EmbeddedWebServer> web_server_;
   std::vector<std::unique_ptr<Window>> windows_;
   bool show_about_ = false;

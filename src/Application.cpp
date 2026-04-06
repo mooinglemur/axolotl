@@ -3,8 +3,8 @@
 #include "FontScanner.h"
 #include "HintWindow.h"
 #include "ItemFeedWindow.h"
-#include "PackStore.h"
 #include "OverviewWindow.h"
+#include "PackStore.h"
 #include "Platform.h"
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
@@ -59,9 +59,11 @@ bool Application::InitializeNetwork() {
   ix::initNetSystem();
 #endif
   ap_network_.SetDebugMode(debug_mode_);
-  logic_manager_.SetDebugMode(debug_mode_);
   ap_network_.SetSettings(&current_config_);
   ap_network_.on_history_updated = [this]() {};
+  ap_network_.on_session_removed = [this](const std::string &name) {
+    DestroyLogicForSession(name);
+  };
   for (const auto &slot : live_slots_) {
     ap_network_.AddSession(slot.name);
   }
@@ -118,17 +120,21 @@ void Application::CleanupUI() {
 }
 
 Application::~Application() {
+  // Clear all callbacks before stopping threads to prevent races
+  ap_network_.on_history_updated = nullptr;
+  ap_network_.on_session_removed = nullptr;
+  ap_network_.SetWakeUpCallback(nullptr);
+
   ap_network_.StopNetworkThread();
+
+  // Join all logic load threads before UI teardown
+  logic_managers_.clear();
+
   CleanupUI();
 
 #ifdef _WIN32
   ix::uninitNetSystem();
 #endif
-  // Clear all callbacks BEFORE disconnecting to avoid background thread
-  // wake-ups
-  ap_network_.on_history_updated = nullptr;
-  ap_network_.SetWakeUpCallback(nullptr);
-
   // Explicitly disconnect all sessions
   ap_network_.DisconnectAll();
 
@@ -326,7 +332,8 @@ bool Application::InitializeUI() {
   AddWindow(std::make_unique<HintWindow>(ap_network_, current_config_));
   AddWindow(std::make_unique<SpoilerSphereTrackerWindow>(ap_network_,
                                                          current_config_));
-  AddWindow(std::make_unique<TrackerWindow>(ap_network_, current_config_, *this));
+  AddWindow(
+      std::make_unique<TrackerWindow>(ap_network_, current_config_, *this));
   AddWindow(std::make_unique<OverviewWindow>(ap_network_, current_config_));
 
   if (is_first_launch_) {
@@ -559,10 +566,34 @@ void Application::SetPreviewFallbackFont(const std::string &path) {
 
 void Application::RemovePopTrackerPack(const std::string &game) {
   if (PackStore::RemovePack(game)) {
-    if (logic_manager_.GetCurrentGame() == game) {
-      logic_manager_.Reset();
+    for (auto it = logic_managers_.begin(); it != logic_managers_.end(); ) {
+      if (it->second->GetPendingGame() == game)
+        it = logic_managers_.erase(it);
+      else
+        ++it;
     }
   }
+}
+
+LogicManager *Application::GetOrCreateLogicForSession(const std::string &name,
+                                                       const std::string &game) {
+  if (game.empty()) return nullptr;
+  auto it = logic_managers_.find(name);
+  if (it != logic_managers_.end()) {
+    if (it->second->GetPendingGame() == game)
+      return it->second.get();
+    logic_managers_.erase(it); // game changed, recreate
+  }
+  auto lm = std::make_unique<LogicManager>();
+  lm->SetDebugMode(debug_mode_);
+  lm->LoadPackAsync(game);
+  LogicManager *ptr = lm.get();
+  logic_managers_[name] = std::move(lm);
+  return ptr;
+}
+
+void Application::DestroyLogicForSession(const std::string &name) {
+  logic_managers_.erase(name);
 }
 
 void Application::Run() {
@@ -726,6 +757,9 @@ void Application::Run() {
       ImGui::BulletText("ImGui by ocornut");
       ImGui::BulletText("IXWebSocket by machinezone");
       ImGui::BulletText("Archipelago by the AP Team");
+      ImGui::BulletText("sol2 by ThePhD");
+      ImGui::BulletText("Lua by the Lua Team");
+      ImGui::BulletText("libzip by Dieter Baron and Thomas Klausner");
 
       ImGui::Separator();
       ImGui::Text("Licenses:");
@@ -781,6 +815,31 @@ void Application::Run() {
       ImGui::Text("GLFW (");
       ImGui::SameLine(0, 0);
       RenderLink("Zlib", "https://github.com/glfw/glfw/blob/master/LICENSE.md");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("sol2 (");
+      ImGui::SameLine(0, 0);
+      RenderLink("MIT",
+                 "https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("Lua (");
+      ImGui::SameLine(0, 0);
+      RenderLink("MIT", "https://www.lua.org/license.html");
+      ImGui::SameLine(0, 0);
+      ImGui::Text(")");
+
+      ImGui::Bullet();
+      ImGui::SameLine();
+      ImGui::Text("libzip (");
+      ImGui::SameLine(0, 0);
+      RenderLink("BSD 3-Clause", "https://libzip.org/license/");
       ImGui::SameLine(0, 0);
       ImGui::Text(")");
 

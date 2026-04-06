@@ -1205,6 +1205,8 @@ void ArchipelagoNetwork::RemoveSession(const std::string &name) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
     if ((*it)->GetName() == name) {
+      if (on_session_removed)
+        on_session_removed(name);
       sessions_.erase(it);
       slots_dirty_ = true;
       SetItemsDirty();

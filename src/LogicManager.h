@@ -1,11 +1,13 @@
 #pragma once
 #include <filesystem>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <set>
 #include <nlohmann/json.hpp>
 #include <sol/sol.hpp>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
@@ -60,16 +62,24 @@ struct ItemDefault {
 
 class LogicManager {
 public:
+  enum class LoadState { Uninitialized, Loading, Ready, Error };
+
   LogicManager();
   ~LogicManager();
 
   bool LoadPack(const std::string &game);
+  bool LoadPackAsync(const std::string &game);
   void UpdateLogic(const std::map<int64_t, int> &itemCounts,
                    const nlohmann::json &slotData,
                    const std::set<int64_t> &checkedLocationIds,
                    const std::set<int64_t> &missingLocationIds,
                    int playerNumber);
   void Reset();
+
+  bool IsReady()   const { return load_state_.load() == LoadState::Ready; }
+  bool IsLoading() const { return load_state_.load() == LoadState::Loading; }
+  bool HasError()  const { return load_state_.load() == LoadState::Error; }
+  const std::string &GetPendingGame() const { return pending_game_; }
 
   const std::vector<LocationLogic> &GetLocations() const;
   void SetDebugMode(bool debug);
@@ -79,6 +89,9 @@ public:
 
 private:
   bool debug_mode_ = false;
+  std::atomic<LoadState> load_state_{LoadState::Uninitialized};
+  std::thread load_thread_;
+  std::string pending_game_;
   mutable std::recursive_mutex state_mutex_;
   std::filesystem::path currentPackPath_;
   sol::state lua_;
