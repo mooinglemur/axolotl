@@ -272,12 +272,28 @@ public:
     return item_history_;
   }
 
+  enum class TrackerPollStatus { Idle, InFlight, Processing, Succeeded, Error };
+
   std::shared_ptr<const MultiworldStats> GetGlobalStats() const;
   void UpdateTrackerStats();
   void ForceTrackerSync();
   double GetLastTrackerSyncTime() const { return last_tracker_sync_time_; }
   bool IsSyncCompleted() const {
     return sync_state_ == TrackerSyncState::Completed;
+  }
+  TrackerPollStatus GetTotalsPollStatus() const {
+    return tracker_totals_status_.load();
+  }
+  std::string GetTotalsPollError() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return tracker_totals_error_;
+  }
+  TrackerPollStatus GetCheckedPollStatus() const {
+    return tracker_checked_status_.load();
+  }
+  std::string GetCheckedPollError() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return tracker_checked_error_;
   }
 
   void UpdateSlotActivity(int packed_slot, double timestamp = -1.0);
@@ -393,8 +409,22 @@ private:
     SecondPollInProgress,
     Completed
   };
-  TrackerSyncState sync_state_ = TrackerSyncState::Idle;
+  std::atomic<TrackerSyncState> sync_state_{TrackerSyncState::Idle};
   double initial_tracker_sync_time_ = 0.0;
+
+  std::atomic<TrackerPollStatus> tracker_totals_status_{TrackerPollStatus::Idle};
+  std::string tracker_totals_error_;
+  std::atomic<TrackerPollStatus> tracker_checked_status_{TrackerPollStatus::Idle};
+  std::string tracker_checked_error_;
+
+  // HTTP threads are stored (not detached) so the destructor can join them,
+  // guaranteeing they finish before any member variables are destroyed.
+  // The _done flags let us distinguish "thread object exists but finished"
+  // from "thread is still running", without blocking to find out.
+  std::thread http_totals_thread_;
+  std::atomic<bool> http_totals_done_{true};
+  std::thread http_poll_thread_;
+  std::atomic<bool> http_poll_done_{true};
 
   std::thread network_thread_;
   std::atomic<bool> network_thread_running_{false};

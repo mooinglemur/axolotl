@@ -324,35 +324,21 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
     if (ImGui::CollapsingHeader("Tracker Settings")) {
 
       ImGui::Text("Tracker URL:");
+      ImGui::SetNextItemWidth(-FLT_MIN);
       if (ImGui::InputText("##TrackerURL", tracker_url_buf_,
                            sizeof(tracker_url_buf_))) {
         sync_triggered_ = false;
       }
-      ImGui::SameLine();
-      if (ImGui::Button("Save & Sync")) {
+
+      float btn_width =
+          (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) /
+          2.0f;
+      if (ImGui::Button("Save & Sync", ImVec2(btn_width, 0))) {
         ap_network_.SetTrackerUrl(tracker_url_buf_);
         sync_triggered_ = true;
       }
-
-      if (sync_triggered_ && !ap_network_.GetTrackerUrl().empty()) {
-        if (ap_network_.IsAnySessionConnected()) {
-          ImGui::SameLine();
-          ImGui::TextColored(ImVec4(0, 1, 0, 1), "Syncing...");
-        } else {
-          ImGui::TextColored(ImVec4(1, 1, 0, 1),
-                             "Awaiting connection to AP server...");
-        }
-      }
-
-      if (ap_network_.GetTrackerUrl().empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
-        ImGui::TextWrapped(
-            "Enter an Archipelago tracker URL to see detailed global stats.");
-        ImGui::PopStyleColor();
-      }
-
-      ImGui::Spacing();
-      if (ImGui::Button("Reset Stats", ImVec2(-1, 0))) {
+      ImGui::SameLine();
+      if (ImGui::Button("Reset Stats", ImVec2(btn_width, 0))) {
         ap_network_.ClearGlobalStats();
       }
       if (ImGui::IsItemHovered()) {
@@ -362,6 +348,52 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
             "stats from the tracker URL.  This should not be needed\n"
             "during normal use, but is provided to solve unforeseen\n"
             "desynchronization issues.");
+      }
+
+      if (ap_network_.GetTrackerUrl().empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
+        ImGui::TextWrapped(
+            "Enter an Archipelago tracker URL to see detailed global stats.");
+        ImGui::PopStyleColor();
+      }
+
+      if (!ap_network_.GetTrackerUrl().empty()) {
+        if (!ap_network_.IsAnySessionConnected()) {
+          ImGui::TextColored(ImVec4(1, 1, 0, 1),
+                             "Awaiting connection to AP server...");
+        } else {
+          using S = ArchipelagoNetwork::TrackerPollStatus;
+
+          auto showStatus = [&](const char *label, S status,
+                                const std::string &err) {
+            ImGui::Text("%s", label);
+            ImGui::SameLine();
+            switch (status) {
+            case S::InFlight:
+              ImGui::TextColored(ImVec4(1, 1, 0, 1), "Requesting...");
+              break;
+            case S::Processing:
+              ImGui::TextColored(ImVec4(1, 1, 0, 1), "Processing...");
+              break;
+            case S::Succeeded:
+              ImGui::TextColored(ImVec4(0, 1, 0, 1), "OK");
+              break;
+            case S::Error:
+              ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Failed");
+              if (!err.empty() && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", err.c_str());
+              break;
+            default:
+              ImGui::TextDisabled("Idle");
+              break;
+            }
+          };
+
+          showStatus("Static tracker poll:", ap_network_.GetTotalsPollStatus(),
+                     ap_network_.GetTotalsPollError());
+          showStatus("Live tracker poll:", ap_network_.GetCheckedPollStatus(),
+                     ap_network_.GetCheckedPollError());
+        }
       }
     }
   }

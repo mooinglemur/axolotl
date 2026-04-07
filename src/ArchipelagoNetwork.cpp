@@ -1184,6 +1184,9 @@ std::string ArchipelagoNetwork::MaskURL(const std::string &url) {
 ArchipelagoNetwork::~ArchipelagoNetwork() {
   StopNetworkThread();
   sessions_.clear(); // This will destroy sessions and stop their websockets
+  // Join HTTP threads last — they may still hold state_mutex_ briefly.
+  if (http_totals_thread_.joinable()) http_totals_thread_.join();
+  if (http_poll_thread_.joinable())   http_poll_thread_.join();
 }
 
 ArchipelagoSession *ArchipelagoNetwork::AddSession(const std::string &name) {
@@ -1848,36 +1851,43 @@ void ArchipelagoNetwork::SyncTotalLocations() {
   args->extraHeaders["User-Agent"] =
       "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
 
-  // Use a temporary thread to avoid blocking the network thread or UI
-  std::thread([this, api_url, args]() {
+  if (!http_totals_done_.load()) return; // previous request still in flight
+  if (http_totals_thread_.joinable()) http_totals_thread_.join(); // reap handle
+  http_totals_done_ = false;
+  tracker_totals_status_ = TrackerPollStatus::InFlight;
+  http_totals_thread_ = std::thread([this, api_url, args]() {
     ix::HttpClient httpClient;
     auto response = httpClient.get(api_url, args);
 
     if (response && response->statusCode == 200) {
+      tracker_totals_status_ = TrackerPollStatus::Processing;
       try {
         auto j = nlohmann::json::parse(response->body);
         int total_l = 0;
         if (j.contains("player_locations_total") &&
             j["player_locations_total"].is_array()) {
 
-          std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-          for (const auto &p : j["player_locations_total"]) {
-            if (p.contains("total_locations") && p.contains("player")) {
-              int slot = p["player"].get<int>();
-              int team = p.contains("team") ? p["team"].get<int>() : 0;
-              int packed_slot = (team << 16) | slot;
+          std::shared_ptr<MultiworldStats> snap;
+          {
+            std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+            for (const auto &p : j["player_locations_total"]) {
+              if (p.contains("total_locations") && p.contains("player")) {
+                int slot = p["player"].get<int>();
+                int team = p.contains("team") ? p["team"].get<int>() : 0;
+                int packed_slot = (team << 16) | slot;
 
-              int player_total = p["total_locations"].get<int>();
-              total_l += player_total;
-              global_stats_->slot_info[packed_slot].total_locations =
-                  player_total;
+                int player_total = p["total_locations"].get<int>();
+                total_l += player_total;
+                global_stats_->slot_info[packed_slot].total_locations =
+                    player_total;
+              }
             }
+            global_stats_->total_locations = total_l;
+            snap = global_stats_;
           }
 
-          global_stats_->total_locations = total_l;
-
           if (on_stats_updated) {
-            on_stats_updated(*global_stats_);
+            on_stats_updated(*snap);
           }
 
           if (debug_mode_) {
@@ -1885,10 +1895,24 @@ void ArchipelagoNetwork::SyncTotalLocations() {
                       << total_l << std::endl;
           }
         }
+        tracker_totals_status_ = TrackerPollStatus::Succeeded;
       } catch (...) {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+        tracker_totals_error_ = "Failed to parse response";
+        tracker_totals_status_ = TrackerPollStatus::Error;
       }
+    } else {
+      std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+      tracker_totals_error_ = response
+          ? "HTTP " + std::to_string(response->statusCode) + ": " +
+              (!response->body.empty()
+                  ? response->body.substr(0, 200)
+                  : response->description)
+          : "No response from server";
+      tracker_totals_status_ = TrackerPollStatus::Error;
     }
-  }).detach();
+    http_totals_done_ = true;
+  });
 }
 
 void ArchipelagoNetwork::UpdateTrackerStats() {
@@ -1899,7 +1923,7 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
       std::cout << "[Overview] UpdateTrackerStats: url=" << live_tracker_url_
                 << " connected=" << IsAnySessionConnected()
                 << " active=" << tracker_sync_active_
-                << " state=" << (int)sync_state_ << std::endl;
+                << " state=" << (int)sync_state_.load() << std::endl;
       last_sync_state = sync_state_;
     }
   }
@@ -1973,7 +1997,11 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
   args->extraHeaders["User-Agent"] =
       "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
 
-  std::thread([this, api_url, args, now]() {
+  if (!http_poll_done_.load()) return; // previous request still in flight
+  if (http_poll_thread_.joinable()) http_poll_thread_.join(); // reap handle
+  http_poll_done_ = false;
+  tracker_checked_status_ = TrackerPollStatus::InFlight;
+  http_poll_thread_ = std::thread([this, api_url, args, now]() {
     ix::HttpClient httpClient;
     auto response = httpClient.get(api_url, args);
     if (response) {
@@ -1982,14 +2010,27 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
                   << response->description << ")" << std::endl;
       }
       if (response->statusCode == 200) {
+        tracker_checked_status_ = TrackerPollStatus::Processing;
         try {
           auto j = nlohmann::json::parse(response->body);
+
+          // Parse all three arrays into local structures outside the lock.
+          // A 496-slot world with 261999 locations can take hundreds of ms;
+          // holding state_mutex_ that whole time would stall the render and
+          // network threads. We merge into live global_stats_ at the end so
+          // that any location checks or items that arrived via the live feed
+          // during parsing are not overwritten.
+
           int total_g = 0;
           int completed_g = 0;
-          int checked_l = 0;
 
-          std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-          auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
+          struct SlotSnapshot {
+            std::set<int64_t> checked_location_ids;
+            double last_activity_time = 0.0;
+            bool has_activity_time = false;
+          };
+          std::map<int, SlotSnapshot> slot_snapshots; // packed_slot → data
+          std::set<int> completed_slots;
 
           if (j.contains("player_status") && j["player_status"].is_array()) {
             total_g = (int)j["player_status"].size();
@@ -1999,11 +2040,10 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
                 int team =
                     stats.contains("team") ? stats["team"].get<int>() : 0;
                 int packed_slot = (team << 16) | slot;
-
                 if (stats.contains("status") && stats["status"].is_number() &&
                     stats["status"].get<int>() == 30) {
                   completed_g++;
-                  new_stats->completed_slots.insert(packed_slot);
+                  completed_slots.insert(packed_slot);
                 }
               }
             }
@@ -2018,12 +2058,9 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
                 int team =
                     checks.contains("team") ? checks["team"].get<int>() : 0;
                 int packed_slot = (team << 16) | slot;
-                auto &slot_stats = new_stats->slot_info[packed_slot];
-                for (const auto &loc : checks["locations"]) {
-                  slot_stats.checked_location_ids.insert(get_as_id(loc));
-                }
-                slot_stats.checked_locations =
-                    (int)slot_stats.checked_location_ids.size();
+                auto &snap = slot_snapshots[packed_slot];
+                for (const auto &loc : checks["locations"])
+                  snap.checked_location_ids.insert(get_as_id(loc));
               }
             }
           }
@@ -2032,89 +2069,134 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
               j["activity_timers"].is_array()) {
             for (const auto &timer_entry : j["activity_timers"]) {
               if (timer_entry.contains("player") &&
-                  timer_entry.contains("time")) {
+                  timer_entry.contains("time") &&
+                  timer_entry["time"].is_string()) {
                 int slot = timer_entry["player"].get<int>();
                 int team = timer_entry.contains("team")
                                ? timer_entry["team"].get<int>()
                                : 0;
                 int packed_slot = (team << 16) | slot;
-
                 std::string time_str = timer_entry["time"].get<std::string>();
                 std::tm tm = {};
                 std::stringstream ss(time_str);
                 ss >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT");
                 if (!ss.fail()) {
+                  auto &snap = slot_snapshots[packed_slot];
+                  snap.has_activity_time = true;
 #ifdef _WIN32
-                  new_stats->slot_info[packed_slot].last_activity_time =
-                      (double)_mkgmtime(&tm);
+                  snap.last_activity_time = (double)_mkgmtime(&tm);
 #else
-                  new_stats->slot_info[packed_slot].last_activity_time =
-                      (double)timegm(&tm);
+                  snap.last_activity_time = (double)timegm(&tm);
 #endif
                 }
               }
             }
           }
 
-          if (j.contains("total_checks_done") &&
-              j["total_checks_done"].is_array()) {
-            for (const auto &team_stats : j["total_checks_done"]) {
-              if (team_stats.contains("checks_done")) {
-                checked_l += (int)team_stats["checks_done"].get<int>();
-              }
+          // Brief lock: merge parsed data into live global_stats_ without
+          // replacing fields that may have been updated by the live feed.
+          std::shared_ptr<MultiworldStats> new_stats;
+          {
+            std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+            new_stats = std::make_shared<MultiworldStats>(*global_stats_);
+
+            new_stats->completed_slots.insert(completed_slots.begin(),
+                                              completed_slots.end());
+            if (total_g > 0)
+              new_stats->total_games = total_g;
+
+            for (auto &[packed_slot, snap] : slot_snapshots) {
+              auto &slot_stats = new_stats->slot_info[packed_slot];
+              // Merge checked locations: union with any live-feed additions
+              slot_stats.checked_location_ids.insert(
+                  snap.checked_location_ids.begin(),
+                  snap.checked_location_ids.end());
+              slot_stats.checked_locations =
+                  (int)slot_stats.checked_location_ids.size();
+              if (snap.has_activity_time)
+                slot_stats.last_activity_time = snap.last_activity_time;
             }
-          }
 
-          if (total_g > 0)
-            new_stats->total_games = total_g;
+            int total_checked = 0;
+            for (auto const &[id, stats] : new_stats->slot_info)
+              total_checked += (int)stats.checked_location_ids.size();
+            new_stats->checked_locations = total_checked;
+            last_tracker_checked_count_ = total_checked;
 
-          // Re-calculate global count
-          int total_checked = 0;
-          for (auto const &[id, stats] : new_stats->slot_info) {
-            total_checked += (int)stats.checked_location_ids.size();
-          }
-          new_stats->checked_locations = total_checked;
-          last_tracker_checked_count_ = total_checked;
-
-          // Handle two-poll strategy state
-          if (sync_state_ == TrackerSyncState::FirstPollInProgress) {
-            initial_tracker_sync_time_ = now;
-            sync_state_ = TrackerSyncState::WaitingForSecondPoll;
-            if (debug_mode_) {
-              std::cout
-                  << "[Overview] First tracker sync complete. Second poll "
-                     "scheduled for 2 minutes from now."
-                  << std::endl;
+            if (sync_state_ == TrackerSyncState::FirstPollInProgress) {
+              initial_tracker_sync_time_ = now;
+              sync_state_ = TrackerSyncState::WaitingForSecondPoll;
+              if (debug_mode_)
+                std::cout << "[Overview] First tracker sync complete. Second "
+                             "poll scheduled for 2 minutes from now."
+                          << std::endl;
+            } else if (sync_state_ == TrackerSyncState::SecondPollInProgress) {
+              sync_state_ = TrackerSyncState::Completed;
+              if (debug_mode_)
+                std::cout << "[Overview] Second tracker sync complete. Sync "
+                             "finished."
+                          << std::endl;
             }
-          } else if (sync_state_ == TrackerSyncState::SecondPollInProgress) {
-            sync_state_ = TrackerSyncState::Completed;
-            if (debug_mode_) {
-              std::cout
-                  << "[Overview] Second tracker sync complete. Sync finished."
-                  << std::endl;
-            }
+
+            global_stats_ = new_stats;
+            last_successful_sync_activity_time_ = last_item_activity_time_;
           }
 
-          global_stats_ = new_stats;
+          if (on_stats_updated)
+            on_stats_updated(*new_stats);
 
-          if (on_stats_updated) {
-            on_stats_updated(*global_stats_);
-          }
-          last_successful_sync_activity_time_ = last_item_activity_time_;
-
+          tracker_checked_status_ = TrackerPollStatus::Succeeded;
           if (debug_mode_) {
             std::cout << "[Overview] Tracker Stats Parsed: Games "
                       << completed_g << "/" << total_g << ", Checked Locations "
-                      << total_checked << std::endl;
+                      << new_stats->checked_locations << std::endl;
           }
+        } catch (const std::exception &ex) {
+          if (debug_mode_) {
+            std::cerr << "[Overview] Live tracker parse error: " << ex.what()
+                      << std::endl;
+            std::cerr << "[Overview] URL: " << api_url << std::endl;
+            std::cerr << "[Overview] Body (first 500 chars): "
+                      << response->body.substr(0, 500) << std::endl;
+          }
+          std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+          tracker_checked_error_ =
+              std::string("Failed to parse response: ") + ex.what();
+          tracker_checked_status_ = TrackerPollStatus::Error;
         } catch (...) {
+          if (debug_mode_) {
+            std::cerr << "[Overview] Live tracker parse error: unknown exception"
+                      << std::endl;
+            std::cerr << "[Overview] URL: " << api_url << std::endl;
+            std::cerr << "[Overview] Body (first 500 chars): "
+                      << response->body.substr(0, 500) << std::endl;
+          }
+          std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+          tracker_checked_error_ = "Failed to parse response: unknown exception";
+          tracker_checked_status_ = TrackerPollStatus::Error;
         }
+      } else {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+        tracker_checked_error_ = response
+            ? "HTTP " + std::to_string(response->statusCode) + ": " +
+              (!response->body.empty()
+                  ? response->body.substr(0, 200)
+                  : response->description)
+            : "No response from server";
+        tracker_checked_status_ = TrackerPollStatus::Error;
       }
+    } else {
+      std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+      tracker_checked_error_ = "No response from server";
+      tracker_checked_status_ = TrackerPollStatus::Error;
     }
-  }).detach();
+    http_poll_done_ = true;
+  });
 }
 
 void ArchipelagoNetwork::ForceTrackerSync() {
+  tracker_totals_status_ = TrackerPollStatus::Idle;
+  tracker_checked_status_ = TrackerPollStatus::Idle;
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   last_tracker_sync_time_ = -1.0;
   last_successful_sync_activity_time_ = -1.0;
