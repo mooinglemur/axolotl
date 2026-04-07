@@ -72,7 +72,9 @@ function processQueue() {
 
 function addFeedItem(data) {
     const el = document.createElement('div');
-    el.className = 'feed-item ' + (data.category || 'system');
+    // category comes from our own server code — restrict to safe identifier chars
+    const safeCategory = (data.category || 'system').replace(/[^a-zA-Z0-9_-]/g, '');
+    el.className = 'feed-item ' + safeCategory;
 
     const timestampEl = document.createElement('span');
     timestampEl.className = 'timestamp';
@@ -80,8 +82,19 @@ function addFeedItem(data) {
 
     const textEl = document.createElement('div');
     textEl.className = 'feed-text';
-    textEl.innerHTML = data.html || data.text || '';
-    textEl.prepend(timestampEl);
+    textEl.appendChild(timestampEl);
+
+    for (const part of (data.parts || [])) {
+        if (part.class || part.style) {
+            const span = document.createElement('span');
+            if (part.class) span.className = part.class;
+            if (part.style) span.setAttribute('style', part.style);
+            span.textContent = part.text || '';
+            textEl.appendChild(span);
+        } else {
+            textEl.appendChild(document.createTextNode(part.text || ''));
+        }
+    }
 
     el.appendChild(textEl);
     feedContainer.appendChild(el);

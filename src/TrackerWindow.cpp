@@ -159,11 +159,30 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     // entries (id <= 0) are excluded. Sections with no checks
                     // are not displayed.
                     struct LocEntry {
-                      std::string label; // path[1..] joined with " > "
+                      std::string label; // path[skip+1..] joined with " > "
                       int accessibility;
                     };
                     // std::map gives free alphabetical section ordering.
                     std::map<std::string, std::vector<LocEntry>> groups;
+
+                    // Strip a shared root prefix (e.g. a single top-level
+                    // container node like "Magical Map") so the next level
+                    // becomes the visible section header.
+                    size_t strip_prefix = 0;
+                    {
+                      std::string common_root;
+                      bool all_same = true;
+                      for (const auto &loc : accessible) {
+                        if (loc.id <= 0) continue;
+                        if (loc.path.empty()) { all_same = false; break; }
+                        if (common_root.empty())
+                          common_root = loc.path[0];
+                        else if (loc.path[0] != common_root)
+                          { all_same = false; break; }
+                      }
+                      if (all_same && !common_root.empty())
+                        strip_prefix = 1;
+                    }
 
                     for (const auto &loc : accessible) {
                       if (loc.id <= 0)
@@ -173,11 +192,14 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
                       std::string section;
                       std::string label;
-                      if (loc.path.size() >= 2) {
-                        section = loc.path[0];
-                        label = loc.path[1];
-                        for (size_t i = 2; i < loc.path.size(); ++i)
+                      if (loc.path.size() > strip_prefix + 1) {
+                        section = loc.path[strip_prefix];
+                        label = loc.path[strip_prefix + 1];
+                        for (size_t i = strip_prefix + 2; i < loc.path.size(); ++i)
                           label += " > " + loc.path[i];
+                      } else if (loc.path.size() == strip_prefix + 1) {
+                        section = strip_prefix > 0 ? loc.path[strip_prefix - 1] : "Global";
+                        label = loc.name;
                       } else {
                         // Fallback: no parent segment — place in "Global"
                         section = "Global";

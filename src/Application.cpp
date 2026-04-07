@@ -362,23 +362,22 @@ bool Application::InitializeUI() {
     if (web_server_) {
       nlohmann::json j;
       j["type"] = "feed_item";
-      std::string html_text;
+      nlohmann::json parts = nlohmann::json::array();
       for (const auto &p : msg.parts) {
+        nlohmann::json part;
+        part["text"] = p.text;
         if (!p.css_class.empty()) {
-          html_text +=
-              "<span class=\"" + p.css_class + "\">" + p.text + "</span>";
+          part["class"] = p.css_class;
         } else if (p.color != 0 && p.color != 0xFFFFFFFF) {
           int r = (p.color) & 0xFF;
           int g = (p.color >> 8) & 0xFF;
           int b = (p.color >> 16) & 0xFF;
-          html_text += "<span style=\"color: rgb(" + std::to_string(r) + "," +
-                       std::to_string(g) + "," + std::to_string(b) + ")\">" +
-                       p.text + "</span>";
-        } else {
-          html_text += p.text;
+          part["style"] = "color: rgb(" + std::to_string(r) + "," +
+                          std::to_string(g) + "," + std::to_string(b) + ")";
         }
+        parts.push_back(part);
       }
-      j["html"] = html_text;
+      j["parts"] = parts;
       std::string category = "system";
       if (msg.type == "ItemSend" || msg.type == "ItemCheat" ||
           msg.type == "Hint") {

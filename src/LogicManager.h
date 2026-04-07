@@ -93,6 +93,7 @@ public:
 
 private:
   bool debug_mode_ = false;
+  int instance_id_ = 0;
   std::atomic<LoadState> load_state_{LoadState::Uninitialized};
   std::thread load_thread_;
   std::string pending_game_;
@@ -103,6 +104,7 @@ private:
   std::string currentGame_;
   std::vector<LocationLogic> locations_;
   std::vector<LocationLogic> allLocations_;
+  std::map<int64_t, int64_t> idAliases_; // secondary AP ID → primary AP ID (for multi-item sections)
   std::map<int64_t, int> accessibilityCache_;
   std::unordered_set<std::string> reportedFailedRules_;
   std::map<std::string, int> lastItemNameCounts_;
@@ -130,6 +132,8 @@ private:
   int nextItemHandlerIndex_ = 1; // Global item handler index; persisted across calls to match pack CUR_INDEX
   std::map<std::string, std::map<std::string, sol::function>> watches_;
   bool firstRun_ = true;
+  bool accessibility_stale_ = false;   // set when any TrackerObject state changes
+  std::set<int64_t> current_checked_ids_; // current checkedLocationIds for lazy convergence
   // Progressive item stage code tracking.
   // Maps any code → list of (primaryCode, stageIdx, inheritCodes) entries so
   // ProviderCountForCode("progression_ticket") can consult the primary
@@ -140,8 +144,13 @@ private:
     bool inherit;
   };
   std::map<std::string, std::vector<StageCodeLink>> stageCodeLinks_;
+  // LuaItems created via ScriptHost:CreateLuaItem(). Each is a Lua table with
+  // optional ProvidesCodeFunc callback. ProviderCountForCode consults these
+  // after built-in item lookup.
+  std::vector<sol::table> luaItems_;
 
   void BindGlobals();
+  void RunConvergenceOnce();  // lazy single-pass accessibility update
   void LoadLocationsFromPack(const std::filesystem::path &packPath);
   void ProcessLocationNode(const nlohmann::json &node,
                            const std::vector<std::string> &parentPath,
