@@ -45,8 +45,9 @@ public:
 
   void AddWindow(std::unique_ptr<Window> window);
   ArchipelagoNetwork &GetNetwork() { return ap_network_; }
-  LogicManager *GetOrCreateLogicForSession(const std::string &name,
-                                           const std::string &game);
+  LogicManager *GetOrCreateLogicForSession(
+      const std::string &name, const std::string &game,
+      const nlohmann::json &slotData = nlohmann::json{});
   void DestroyLogicForSession(const std::string &name);
 
 private:

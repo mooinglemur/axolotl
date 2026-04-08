@@ -53,7 +53,14 @@ static std::atomic<int> s_lm_id_counter{0};
 LogicManager::LogicManager() {
   instance_id_ = ++s_lm_id_counter;
   lua_.open_libraries(sol::lib::base, sol::lib::package, sol::lib::table,
-                      sol::lib::string, sol::lib::math, sol::lib::bit32);
+                      sol::lib::string, sol::lib::math, sol::lib::bit32,
+                      sol::lib::os);
+  // Sandbox: remove dangerous os functions — packs only need time/date/clock
+  lua_["os"]["execute"] = sol::nil;
+  lua_["os"]["exit"] = sol::nil;
+  lua_["os"]["remove"] = sol::nil;
+  lua_["os"]["rename"] = sol::nil;
+  lua_["os"]["tmpname"] = sol::nil;
   BindGlobals();
 }
 
@@ -62,7 +69,8 @@ LogicManager::~LogicManager() {
     load_thread_.join();
 }
 
-bool LogicManager::LoadPackAsync(const std::string &game) {
+bool LogicManager::LoadPackAsync(const std::string &game,
+                                 const nlohmann::json &slotData) {
   if (load_state_.load() == LoadState::Loading)
     return false;
   pending_game_ = game;
@@ -70,8 +78,8 @@ bool LogicManager::LoadPackAsync(const std::string &game) {
   ids_resolved_ = false;
   if (load_thread_.joinable())
     load_thread_.join();
-  load_thread_ = std::thread([this, game]() {
-    bool ok = LoadPack(game);
+  load_thread_ = std::thread([this, game, slotData]() {
+    bool ok = LoadPack(game, slotData);
     load_state_ = ok ? LoadState::Ready : LoadState::Error;
   });
   return true;
@@ -106,7 +114,14 @@ void LogicManager::Reset() {
   // Reset Lua state
   lua_ = sol::state();
   lua_.open_libraries(sol::lib::base, sol::lib::package, sol::lib::table,
-                      sol::lib::string, sol::lib::math, sol::lib::bit32);
+                      sol::lib::string, sol::lib::math, sol::lib::bit32,
+                      sol::lib::os);
+  // Sandbox: remove dangerous os functions — packs only need time/date/clock
+  lua_["os"]["execute"] = sol::nil;
+  lua_["os"]["exit"] = sol::nil;
+  lua_["os"]["remove"] = sol::nil;
+  lua_["os"]["rename"] = sol::nil;
+  lua_["os"]["tmpname"] = sol::nil;
   BindGlobals();
 }
 
@@ -115,7 +130,8 @@ void LogicManager::SetDebugMode(bool debug) {
   lua_["AUTOTRACKER_ENABLE_DEBUG_LOGGING_AP"] = debug;
 }
 
-bool LogicManager::LoadPack(const std::string &game) {
+bool LogicManager::LoadPack(const std::string &game,
+                            const nlohmann::json &slotData) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   if (debug_mode_)
     std::cerr << "LogicManager: Starting load for game: " << game << std::endl;
@@ -131,24 +147,32 @@ bool LogicManager::LoadPack(const std::string &game) {
     std::string entry = manifest.value("entry", "scripts/init.lua");
 
     // Select the best variant UID for logic tracking.
-    // Priority: (1) ap-flagged variant whose name contains "map" (case-insensitive)
+    // Priority: (1) ap-flagged variant whose name contains "map"
+    // (case-insensitive)
     //           — these typically load the most complete logic (region access,
-    //             location data); (2) any other ap-flagged variant; (3) "standard".
+    //             location data); (2) any other ap-flagged variant; (3)
+    //             "standard".
     std::string variantUID = "standard";
     std::string fallbackApVariant;
     if (manifest.contains("variants") && manifest["variants"].is_object()) {
       for (auto it = manifest["variants"].begin();
            it != manifest["variants"].end(); ++it) {
         const auto &v = it.value();
-        if (!v.contains("flags") || !v["flags"].is_array()) continue;
+        if (!v.contains("flags") || !v["flags"].is_array())
+          continue;
         bool isAp = false;
         for (const auto &flag : v["flags"])
-          if (flag.is_string() && flag.get<std::string>() == "ap") { isAp = true; break; }
-        if (!isAp) continue;
+          if (flag.is_string() && flag.get<std::string>() == "ap") {
+            isAp = true;
+            break;
+          }
+        if (!isAp)
+          continue;
 
         std::string key = it.key();
         std::string keyLower = key;
-        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(), ::tolower);
+        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
+                       ::tolower);
         if (keyLower.find("map") != std::string::npos) {
           variantUID = key;
           break; // map variant found — stop immediately
@@ -158,7 +182,52 @@ bool LogicManager::LoadPack(const std::string &game) {
       }
       if (variantUID == "standard" && !fallbackApVariant.empty())
         variantUID = fallbackApVariant;
+
+      // If slot data indicates entrance randomization, prefer a variant whose
+      // key contains "entrance_rando" or "er_" over the base ap variant.
+      if (!slotData.is_null() && slotData.is_object()) {
+        bool hasEr = false;
+        for (auto it2 = slotData.begin(); it2 != slotData.end(); ++it2) {
+          const std::string &k = it2.key();
+          if (k.rfind("randomize_", 0) == 0 && k.find("entrance") != std::string::npos) {
+            auto &v = it2.value();
+            if ((v.is_number() && v.get<int>() != 0) ||
+                (v.is_boolean() && v.get<bool>())) {
+              hasEr = true;
+              break;
+            }
+          }
+        }
+        if (hasEr && manifest.contains("variants") &&
+            manifest["variants"].is_object()) {
+          for (auto it2 = manifest["variants"].begin();
+               it2 != manifest["variants"].end(); ++it2) {
+            const auto &vv = it2.value();
+            if (!vv.contains("flags") || !vv["flags"].is_array())
+              continue;
+            bool isAp2 = false;
+            for (const auto &f : vv["flags"])
+              if (f.is_string() && f.get<std::string>() == "ap") {
+                isAp2 = true;
+                break;
+              }
+            if (!isAp2)
+              continue;
+            std::string k2 = it2.key();
+            std::string k2l = k2;
+            std::transform(k2l.begin(), k2l.end(), k2l.begin(), ::tolower);
+            if (k2l.find("entrance_rando") != std::string::npos ||
+                k2l.find("entrance-rando") != std::string::npos ||
+                k2l.rfind("er_", 0) == 0 || k2l.rfind("_er", k2l.size()-3) != std::string::npos) {
+              variantUID = k2;
+              break;
+            }
+          }
+        }
+      }
     }
+    pending_variant_ = variantUID;
+    loaded_with_slot_data_ = slotData.is_object() && !slotData.empty();
 
     std::string path = lua_["package"]["path"];
     path += ";" + (packPath / "scripts" / "?.lua").string();
@@ -170,13 +239,25 @@ bool LogicManager::LoadPack(const std::string &game) {
     // Update Tracker.ActiveVariantUID now that we know which variant to use.
     lua_["Tracker"]["ActiveVariantUID"] = variantUID;
     if (debug_mode_)
-      std::cerr << "LogicManager [DEBUG]: Using variant UID: " << variantUID << std::endl;
+      std::cerr << "LogicManager [DEBUG]: Using variant UID: " << variantUID
+                << std::endl;
 
     itemDefaults_.clear();
     clearHandlers_.clear();
     itemHandlers_.clear();
     locationHandlers_.clear();
     trackerObjects_.clear();
+
+    // Clear location state before the script runs so that packs which call
+    // Tracker:AddLocations() from their init script populate a clean slate.
+    // LoadLocationsFromPack() will later add any locations/ directory entries
+    // without clearing again.
+    allLocations_.clear();
+    uniqueRules_.clear();
+    compiledRules_.clear();
+    ruleCache_.clear();
+    stageCodeLinks_.clear();
+    luaItems_.clear();
 
     // Marker for first logic pass
     firstRun_ = true;
@@ -185,6 +266,11 @@ bool LogicManager::LoadPack(const std::string &game) {
     lastCheckedLocationIds_.clear();
     lastMissingLocationIds_.clear();
     lastPlayerNumber_ = -1;
+
+    // Load items BEFORE the script so that any logic evaluation that happens
+    // during script init (e.g. SoH's _compute_child_adult_only_regions) sees
+    // correct item types and defaults rather than blank TrackerObjects.
+    LoadItemsFromPack(packPath / "items");
 
     // Load the pack's entry script FIRST so all Lua functions are defined
     // before location JSON files are processed and rules are compiled.
@@ -227,9 +313,9 @@ void LogicManager::ResolveLocationIds(
 
   int resolved = 0;
 
-  // --- Strategy A: LOCATION_MAPPING from Lua (standard PopTracker AP packs) ---
-  // Many packs define a global LOCATION_MAPPING table: [ap_id] = {"@Area/Sec", ...}
-  // We can use this directly instead of name-guessing.
+  // --- Strategy A: LOCATION_MAPPING from Lua (standard PopTracker AP packs)
+  // --- Many packs define a global LOCATION_MAPPING table: [ap_id] =
+  // {"@Area/Sec", ...} We can use this directly instead of name-guessing.
   {
     sol::object locMapObj = lua_["LOCATION_MAPPING"];
     if (locMapObj.is<sol::table>()) {
@@ -251,8 +337,12 @@ void LogicManager::ResolveLocationIds(
       sol::table locMap = locMapObj.as<sol::table>();
       if (debug_mode_) {
         int tableSize = 0;
-        for (auto &kv : locMap) (void)kv, ++tableSize;
-        std::cerr << "LogicManager [DEBUG] #" << instance_id_ << ": LOCATION_MAPPING has " << tableSize << " entries, pathToLoc has " << pathToLoc.size() << " entries\n";
+        for (auto &kv : locMap)
+          (void)kv, ++tableSize;
+        std::cerr << "LogicManager [DEBUG] #" << instance_id_
+                  << ": LOCATION_MAPPING has " << tableSize
+                  << " entries, pathToLoc has " << pathToLoc.size()
+                  << " entries\n";
       }
       for (auto &kv : locMap) {
         // Lua table keys for AP IDs are numbers (doubles in Lua 5.1/5.2,
@@ -268,6 +358,9 @@ void LogicManager::ResolveLocationIds(
           continue;
         sol::table entry = kv.second.as<sol::table>();
         sol::object pathObj = entry[1];
+        // Some packs double-nest: {{"@Area/Section"}} — unwrap one level.
+        if (pathObj.is<sol::table>())
+          pathObj = pathObj.as<sol::table>()[1];
         if (!pathObj.is<std::string>())
           continue;
 
@@ -293,8 +386,9 @@ void LogicManager::ResolveLocationIds(
     }
   }
 
-  // --- Strategy B: name-based matching (fallback for packs without LOCATION_MAPPING) ---
-  // Build an index: leaf_name (after last " - ") → list of (id, full_name)
+  // --- Strategy B: name-based matching (fallback for packs without
+  // LOCATION_MAPPING) --- Build an index: leaf_name (after last " - ") → list
+  // of (id, full_name)
   std::map<std::string, std::vector<std::pair<int64_t, std::string>>> leafIdx;
   for (auto &[full_name, id] : nameToId) {
     // Index by full name
@@ -430,7 +524,15 @@ void LogicManager::ProcessItemJson(const nlohmann::json &j) {
       for (const auto &c : j["codes"])
         codes.push_back(c.get<std::string>());
     } else if (j["codes"].is_string()) {
-      codes.push_back(j["codes"].get<std::string>());
+      // Codes may be comma-separated (e.g. "gifts,gifts_on") — split them.
+      std::stringstream css(j["codes"].get<std::string>());
+      std::string ctok;
+      while (std::getline(css, ctok, ',')) {
+        auto cs = ctok.find_first_not_of(" \t");
+        auto ce = ctok.find_last_not_of(" \t");
+        if (cs != std::string::npos)
+          codes.push_back(ctok.substr(cs, ce - cs + 1));
+      }
     }
   }
 
@@ -472,9 +574,12 @@ void LogicManager::ProcessItemJson(const nlohmann::json &j) {
       ++stageIdx;
     }
 
-    // Ensure primary object exists with defaults
-    if (!primaryCode.empty())
-      GetTrackerObject(primaryCode);
+    // Ensure primary object exists with defaults, and tag its type.
+    if (!primaryCode.empty()) {
+      auto pobj = GetTrackerObject(primaryCode);
+      if (pobj && pobj->type.empty())
+        pobj->type = "progressive";
+    }
   }
 
   if (codes.empty())
@@ -482,9 +587,17 @@ void LogicManager::ProcessItemJson(const nlohmann::json &j) {
 
   ItemDefault def;
   if (j.contains("initial_active_state")) {
-    def.active = j["initial_active_state"].get<bool>();
+    auto &v = j["initial_active_state"];
+    if (v.is_boolean())
+      def.active = v.get<bool>();
+    else if (v.is_string())
+      def.active = (v.get<std::string>() == "true");
   } else if (j.contains("active")) {
-    def.active = j["active"].get<bool>();
+    auto &v = j["active"];
+    if (v.is_boolean())
+      def.active = v.get<bool>();
+    else if (v.is_string())
+      def.active = (v.get<std::string>() == "true");
   }
 
   if (j.contains("initial_stage_idx")) {
@@ -501,6 +614,8 @@ void LogicManager::ProcessItemJson(const nlohmann::json &j) {
     itemDefaults_[code] = def;
     auto obj = GetTrackerObject(code);
     if (obj) {
+      if (obj->type.empty())
+        obj->type = type;
       obj->active = def.active;
       obj->stage = def.stage;
       obj->count = def.count;
@@ -513,25 +628,31 @@ void LogicManager::RunConvergenceOnce() {
   // (rule evaluation is read-only and won't re-trigger on_change).
   accessibility_stale_ = false;
 
-  if (compiledRules_.empty()) return;
+  if (compiledRules_.empty())
+    return;
 
   auto rulesTable = lua_.create_table();
   for (size_t i = 0; i < compiledRules_.size(); ++i)
     rulesTable[i + 1] = compiledRules_[i];
   sol::function eval = lua_["__AxoEvaluateRules"];
-  if (!eval.valid()) return;
+  if (!eval.valid())
+    return;
   auto res = eval(rulesTable);
-  if (!res.valid()) return;
+  if (!res.valid())
+    return;
   sol::table results = res.get<sol::table>();
 
   for (const auto &loc : allLocations_) {
-    if (current_checked_ids_.count(loc.id)) continue;
+    if (current_checked_ids_.count(loc.id))
+      continue;
 
     int v = 0;
     if (loc.ruleIndex != -1) {
       sol::object r = results[static_cast<size_t>(loc.ruleIndex + 1)];
-      if (r.is<int>())  v = r.as<int>();
-      else if (r.is<bool>()) v = r.as<bool>() ? 6 : 0;
+      if (r.is<int>())
+        v = r.as<int>();
+      else if (r.is<bool>())
+        v = r.as<bool>() ? 6 : 0;
     } else {
       v = 6;
     }
@@ -572,6 +693,7 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
   sol::table archipelago = lua_["Archipelago"];
   archipelago["SlotData"] = luaSlotData;
   archipelago["PlayerNumber"] = playerNumber;
+  archipelago["TeamNumber"] = 0;
 
   // Define a robust Lua execution helper
   auto executeLuaHandler = [&](const std::string &name, sol::function func,
@@ -773,14 +895,6 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
         v = 6; // PopTracker standard: No rules means Full Access
       }
 
-      if (debug_mode_ && loc.id == 78780060) {
-        std::string ruleStr = (loc.ruleIndex >= 0 && loc.ruleIndex < (int)uniqueRules_.size())
-            ? uniqueRules_[loc.ruleIndex] : "(none)";
-        std::cerr << "[DIAG2] id=78780060 logicalId=" << loc.logicalId
-                  << " ruleIndex=" << loc.ruleIndex << " v=" << v
-                  << " rule=" << ruleStr
-                  << " skipped_checked=" << (int)checkedLocationIds.count(loc.id) << "\n";
-      }
 
       // Coerce 0-6 range to Tracker accessibility levels
       int access = 0;
@@ -887,11 +1001,6 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
       auto obj = GetTrackerObject(loc.logicalId);
       int access = (obj ? obj->accessibilityLevel : 0);
 
-      // Temporary diagnostic for Eastside
-      if (debug_mode_ && loc.name.find("Eastside") != std::string::npos && loc.id > 0) {
-        std::cerr << "[DIAG] Eastside id=" << loc.id << " logicalId=" << loc.logicalId
-                  << " access=" << access << " already=" << (addedLids.count(loc.logicalId) ? "yes" : "no") << "\n";
-      }
 
       // Only add items/regions that are accessible and NOT checked.
       // Filter out empty names or internal nodes
@@ -1086,16 +1195,57 @@ void LogicManager::BindGlobals() {
       "Increment", &TrackerObject::increment, "ChestCount",
       &TrackerObject::chestCount, "AvailableChestCount",
       &TrackerObject::availableChestCount, "AccessibilityLevel",
-      sol::property([this](TrackerObject &obj) -> int {
-        // Lazy evaluation: if any item state changed since last convergence,
-        // run one pass now so pack scripts (e.g. areaReveal) see current values.
-        if (accessibility_stale_)
-          RunConvergenceOnce();
-        return obj.accessibilityLevel;
-      }, [](TrackerObject &obj, int v) { obj.accessibilityLevel = v; }),
+      sol::property(
+          [this](TrackerObject &obj) -> int {
+            // Lazy evaluation: if any item state changed since last
+            // convergence, run one pass now so pack scripts (e.g. areaReveal)
+            // see current values.
+            if (accessibility_stale_)
+              RunConvergenceOnce();
+            return obj.accessibilityLevel;
+          },
+          [](TrackerObject &obj, int v) { obj.accessibilityLevel = v; }),
       "Highlight",
       sol::property([](TrackerObject &) { return 0; },
-                    [](TrackerObject &, sol::object) {}));
+                    [](TrackerObject &, sol::object) {}),
+      "SetOverlay",           [](TrackerObject &, sol::variadic_args) {},
+      "SetOverlayBackground", [](TrackerObject &, sol::variadic_args) {},
+      "SetOverlayColor",      [](TrackerObject &, sol::variadic_args) {},
+      "SetOverlayFontSize",   [](TrackerObject &, sol::variadic_args) {},
+      "SetOverlayAlign",      [](TrackerObject &, sol::variadic_args) {},
+      "BadgeText",
+      sol::property([](TrackerObject &) -> std::string { return ""; },
+                    [](TrackerObject &, sol::object) {}),
+      "Type", sol::property([](TrackerObject &obj) -> std::string {
+        return obj.type.empty() ? "toggle" : obj.type;
+      }),
+      sol::meta_function::new_index,
+      [](TrackerObject &obj, sol::this_state L, std::string key,
+         sol::object val) {
+        sol::state_view sv(L);
+        if (!obj.extra_props_.valid())
+          obj.extra_props_ = sv.create_table();
+        obj.extra_props_[key] = val;
+      },
+      sol::meta_function::index,
+      [](TrackerObject &obj, sol::this_state L, std::string key) -> sol::object {
+        sol::state_view sv(L);
+        if (!obj.extra_props_.valid())
+          obj.extra_props_ = sv.create_table();
+        sol::object val = obj.extra_props_[key];
+        if (val.valid() && val.get_type() != sol::type::lua_nil)
+          return val;
+        // Auto-create a proxy table for sub-field access (e.g. item.ItemState.x=1).
+        // __AxoProxy() returns a table whose unknown reads return further proxies
+        // and whose # operator returns 0, preventing "attempt to get length of nil"
+        // when packs check #obj.SomeField on a field that was never explicitly set.
+        sol::function proxy_fn = sv["__AxoProxy"];
+        if (!proxy_fn.valid())
+          return sol::make_object(L, sol::lua_nil);
+        sol::table t = proxy_fn();
+        obj.extra_props_[key] = t;
+        return t;
+      });
 
   auto tracker = lua_.create_table();
   tracker["ActiveVariantUID"] = "standard";
@@ -1137,8 +1287,10 @@ void LogicManager::BindGlobals() {
         auto res = pcf.as<sol::function>()(item, code);
         if (res.valid()) {
           sol::object val = res;
-          if (val.is<int>()) luaTotal += val.as<int>();
-          else if (val.is<bool>() && val.as<bool>()) ++luaTotal;
+          if (val.is<int>())
+            luaTotal += val.as<int>();
+          else if (val.is<bool>() && val.as<bool>())
+            ++luaTotal;
         }
       }
     }
@@ -1152,8 +1304,53 @@ void LogicManager::BindGlobals() {
   };
 
   tracker["AddMaps"] = [](sol::variadic_args) {};
-  tracker["AddItems"] = [](sol::variadic_args) {};
-  tracker["AddLocations"] = [](sol::variadic_args) {};
+  tracker["AddItems"] = [this](sol::object /*self*/, std::string relPath) {
+    fs::path fullPath = currentPackPath_ / relPath;
+    if (!fs::exists(fullPath)) return;
+    try {
+      std::ifstream f(fullPath);
+      json j = json::parse(f, nullptr, true, true);
+      auto processArray = [&](const json &arr) {
+        for (const auto &item : arr) {
+          if (item.is_object())
+            ProcessItemJson(item);
+          else if (item.is_array())
+            for (const auto &sub : item)
+              if (sub.is_object()) ProcessItemJson(sub);
+        }
+      };
+      if (j.is_array()) processArray(j);
+      else if (j.is_object()) ProcessItemJson(j);
+    } catch (const std::exception &e) {
+      std::cerr << "LogicManager [ERROR]: AddItems " << relPath << ": "
+                << e.what() << std::endl;
+    }
+  };
+  tracker["AddLocations"] = [this](sol::object /*self*/, std::string relPath) {
+    // Some packs call Tracker:AddLocations("path/to/file.json") at init time
+    // instead of (or in addition to) having a locations/ directory.
+    std::unordered_map<std::string, int> ruleToIdx;
+    // Re-use the existing rule index if locations were already loaded.
+    for (size_t i = 0; i < uniqueRules_.size(); ++i)
+      ruleToIdx[uniqueRules_[i]] = (int)i;
+
+    fs::path fullPath = currentPackPath_ / relPath;
+    if (!fs::exists(fullPath))
+      return;
+    try {
+      std::ifstream f(fullPath);
+      json j = json::parse(f, nullptr, true, true);
+      if (j.is_array()) {
+        for (const auto &node : j)
+          ProcessLocationNode(node, {}, "", ruleToIdx);
+      } else {
+        ProcessLocationNode(j, {}, "", ruleToIdx);
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "LogicManager [ERROR]: AddLocations " << relPath << ": "
+                << e.what() << std::endl;
+    }
+  };
   tracker["AddLayouts"] = [](sol::variadic_args) {};
   tracker["AddVariantHint"] = [](sol::variadic_args) {};
   lua_["Tracker"] = tracker;
@@ -1192,12 +1389,16 @@ void LogicManager::BindGlobals() {
     }
   };
   scriptHost["IsVisible"] = [](sol::variadic_args) { return false; };
+  scriptHost["AddOnFrameHandler"] = [](sol::variadic_args) {};
+  scriptHost["RemoveOnFrameHandler"] = [](sol::variadic_args) {};
+  scriptHost["AddOnLocationSectionChangedHandler"] = [](sol::variadic_args) {};
   scriptHost["CreateLuaItem"] = [this](sol::object self) {
     sol::table item = lua_.create_table();
     // Property bag backed by a plain Lua table (no undo support needed)
     sol::table props = lua_.create_table();
     item["_props"] = props;
-    item["Set"] = [](sol::object tbl_self, std::string key, sol::object val) -> bool {
+    item["Set"] = [](sol::object tbl_self, std::string key,
+                     sol::object val) -> bool {
       sol::table t = tbl_self.as<sol::table>();
       sol::table p = t["_props"];
       p[key] = val;
@@ -1212,15 +1413,32 @@ void LogicManager::BindGlobals() {
       sol::table p = t["_props"];
       return p[key];
     };
+    item["SetOverlay"] = [](sol::variadic_args) {};
+    item["SetOverlayFontSize"] = [](sol::variadic_args) {};
+    item["SetOverlayAlign"] = [](sol::variadic_args) {};
+    item["SetOverlayBackground"] = [](sol::variadic_args) {};
+    item["SetOverlayColor"] = [](sol::variadic_args) {};
     luaItems_.push_back(item);
     return item;
   };
   lua_["ScriptHost"] = scriptHost;
 
+  // Stub for hardware/SNES autotracking — we never connect to an emulator.
+  // GetConnectionState returning 0 (disconnected) causes packs to skip
+  // hardware-dependent code paths gracefully.
+  auto autoTracker = lua_.create_table();
+  autoTracker["GetConnectionState"] = [](sol::variadic_args) { return 0; };
+  autoTracker["ReadU8"] = [](sol::variadic_args) { return 0; };
+  lua_["AutoTracker"] = autoTracker;
+
   // Stub for ImageReference used by packs that create custom item icons
   sol::table imageRef = lua_.create_table();
-  imageRef["FromPackRelativePath"] = [](sol::variadic_args) { return sol::lua_nil; };
-  imageRef["FromImageReference"] = [](sol::variadic_args) { return sol::lua_nil; };
+  imageRef["FromPackRelativePath"] = [](sol::variadic_args) {
+    return sol::lua_nil;
+  };
+  imageRef["FromImageReference"] = [](sol::variadic_args) {
+    return sol::lua_nil;
+  };
   lua_["ImageReference"] = imageRef;
 
   auto accessibility =
@@ -1236,28 +1454,6 @@ void LogicManager::BindGlobals() {
 
   lua_["PopVersion"] = "0.18.0";
 
-  auto ap_bridge = lua_.create_table();
-  ap_bridge["PlayerNumber"] = -1;
-  ap_bridge["CheckedLocations"] = lua_.create_table();
-  ap_bridge["MissingLocations"] = lua_.create_table();
-  ap_bridge["AddClearHandler"] = [this](sol::object self, std::string name,
-                                        sol::function cb) {
-    clearHandlers_[name] = cb;
-  };
-  ap_bridge["AddItemHandler"] = [this](sol::object self, std::string name,
-                                       sol::function cb) {
-    itemHandlers_[name] = cb;
-  };
-  ap_bridge["AddLocationHandler"] = [this](sol::object self, std::string name,
-                                           sol::function cb) {
-    locationHandlers_[name] = cb;
-  };
-  ap_bridge["AddSetReplyHandler"] = [](sol::variadic_args) {};
-  ap_bridge["AddRetrievedHandler"] = [](sol::variadic_args) {};
-  ap_bridge["SetNotify"] = [](sol::variadic_args) {};
-  ap_bridge["Get"] = [](sol::variadic_args) {};
-  ap_bridge["Set"] = [](sol::variadic_args) {};
-  lua_["Archipelago"] = ap_bridge;
 
   lua_.safe_script(R"LUA(
       -- PopTracker built-in: has(code [, amount]) checks ProviderCountForCode.
@@ -1317,6 +1513,36 @@ void LogicManager::BindGlobals() {
           return n >= 6 and 6 or 0
       end
 
+      -- Returns a recursive proxy table: unknown reads return another proxy,
+      -- #proxy returns 0, writes store into the table normally.
+      -- Used so pack scripts that check `if #obj.SomeField > N` don't error
+      -- when the field was never explicitly set.
+      local __AxoProxyMeta
+      __AxoProxyMeta = {
+          __index = function(t, k)
+              local v = rawget(t, k)
+              if v ~= nil then return v end
+              local p = setmetatable({}, __AxoProxyMeta)
+              rawset(t, k, p)
+              return p
+          end,
+          __len = function() return 0 end,
+          __newindex = function(t, k, v) rawset(t, k, v) end,
+      }
+      function __AxoProxy()
+          return setmetatable({}, __AxoProxyMeta)
+      end
+
+      -- @Path/To/Section rule reference: map internal 0/1/2 → PopTracker 0/5/6.
+      function __AxoPath(path)
+          local obj = Tracker:FindObjectForCode(path)
+          if obj == nil then return 0 end
+          local lvl = obj.AccessibilityLevel
+          if lvl >= 2 then return 6
+          elseif lvl >= 1 then return 5
+          else return 0 end
+      end
+
       __AxoSeenErrors = {}
       function __AxoEvaluateRules(rules)
           local results = {}
@@ -1363,15 +1589,20 @@ void LogicManager::BindGlobals() {
   // Stubs for PopTracker data-storage API — not used for logic tracking
   archipelago["AddSetReplyHandler"] = [](sol::variadic_args) {};
   archipelago["AddRetrievedHandler"] = [](sol::variadic_args) {};
+  archipelago["AddBouncedHandler"] = [](sol::variadic_args) {};
   archipelago["SetNotify"] = [](sol::variadic_args) {};
   archipelago["Get"] = [](sol::variadic_args) {};
   archipelago["Set"] = [](sol::variadic_args) {};
   archipelago["GetSlotData"] = [this]() {
     return JsonToLua(lua_, lastSlotData_);
   };
+  archipelago["GetPlayerAlias"] = [](sol::variadic_args) -> std::string {
+    return "";
+  };
   archipelago["CheckedLocations"] = lua_.create_table();
   archipelago["MissingLocations"] = lua_.create_table();
   archipelago["PlayerNumber"] = -1;
+  archipelago["TeamNumber"] = 0;
   lua_["Archipelago"] = archipelago;
 }
 
@@ -1380,6 +1611,24 @@ LogicManager::GetTrackerObject(const std::string &code) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   if (trackerObjects_.count(code)) {
     return trackerObjects_[code];
+  }
+
+  // PopTracker uses "@Area/Section" (slash) for path lookups; we store
+  // TrackerObjects keyed by breadcrumb "@Area > Section" (space-gt-space).
+  // Normalize so Lua pack scripts can find our entries by either format.
+  if (code.size() > 1 && code[0] == '@' && code.find('/') != std::string::npos) {
+    std::string normalized = "@";
+    for (size_t i = 1; i < code.size(); ++i) {
+      if (code[i] == '/')
+        normalized += " > ";
+      else
+        normalized += code[i];
+    }
+    auto it2 = trackerObjects_.find(normalized);
+    if (it2 != trackerObjects_.end()) {
+      trackerObjects_[code] = it2->second; // cache alias
+      return it2->second;
+    }
   }
 
   auto obj = std::make_shared<TrackerObject>();
@@ -1449,11 +1698,13 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
   // After $func expansion the brackets would produce invalid Lua like
   // [__AxoB(stars("1"))], so remove them first.
   res = std::regex_replace(
-      res,
-      std::regex(R"(\[(\^?\$[a-zA-Z0-9_]+(?:\|[a-zA-Z0-9_/]+)*)\])"),
+      res, std::regex(R"(\[(\^?\$[a-zA-Z0-9_]+(?:\|[a-zA-Z0-9_/]+)*)\])"),
       "$1");
 
-  std::regex funcPattern(R"((\^?)\$([a-zA-Z0-9_]+)((?:\|[a-zA-Z0-9_/]+)*))");
+  // Args may contain spaces, @, hyphens, apostrophes (e.g. "AT - Aga1",
+  // "@Palace of Darkness/Boss/Boss Item"). Stop at | (arg separator) or & (AND
+  // operator). Each arg is trimmed of whitespace after splitting.
+  std::regex funcPattern(R"((\^?)\$([a-zA-Z0-9_]+)((?:\|[^|&]+)*))");
   auto begin = std::sregex_iterator(res.begin(), res.end(), funcPattern);
   auto end = std::sregex_iterator();
   std::string finalRes = "";
@@ -1468,14 +1719,23 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
     if (!argsStr.empty()) {
       std::stringstream ss(argsStr.substr(1));
       std::string s;
-      while (std::getline(ss, s, '|'))
-        args.push_back(s);
+      while (std::getline(ss, s, '|')) {
+        // Trim whitespace from each arg
+        auto a = s.find_first_not_of(" \t");
+        auto b = s.find_last_not_of(" \t");
+        if (a != std::string::npos)
+          args.push_back(s.substr(a, b - a + 1));
+      }
     }
     if (args.empty()) {
       finalRes += isNumerical ? func + "()" : "__AxoB(" + func + "())";
     } else {
-      bool hasSlash = args[0].find('/') != std::string::npos;
+      // If any arg starts with '@', it's a full location path — pass all args
+      // as quoted strings without splitting on '/'.
+      bool hasAtPath = !args.empty() && !args[0].empty() && args[0][0] == '@';
+      bool hasSlash = !hasAtPath && args[0].find('/') != std::string::npos;
       if (hasSlash && args.size() == 1) {
+        // $func|a/b/c — treat slash-separated parts as OR alternatives
         std::string exp = "(";
         std::stringstream ss(args[0]);
         std::string sub;
@@ -1506,9 +1766,9 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
   // and [item] presence syntax → has("item")
   // Must happen before processInfix so the resulting has() calls are
   // treated as normal leaf expressions rather than raw identifiers.
-  finalRes = std::regex_replace(
-      finalRes, std::regex(R"(\[([a-zA-Z0-9_]+):([0-9]+)\])"),
-      R"(has("$1", $2))");
+  finalRes = std::regex_replace(finalRes,
+                                std::regex(R"(\[([a-zA-Z0-9_]+):([0-9]+)\])"),
+                                R"(has("$1", $2))");
   finalRes = std::regex_replace(finalRes, std::regex(R"(\[([a-zA-Z0-9_]+)\])"),
                                 R"(has("$1"))");
 
@@ -1564,6 +1824,9 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
         "in",   "return", "break",  "local", "function", "repeat", "until"};
     if (std::regex_match(s, bare_ident) && !lua_kw.count(s))
       return "__AxoB(has(\"" + s + "\"))";
+    // @Path/To/Section → section accessibility lookup
+    if (!s.empty() && s[0] == '@')
+      return "__AxoPath(\"" + s + "\")";
     return s;
   };
   finalRes = processInfix(finalRes);
@@ -1573,16 +1836,15 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
 
 void LogicManager::LoadLocationsFromPack(
     const std::filesystem::path &packPath) {
-  currentPackPath_ = packPath;
-  allLocations_.clear();
-  uniqueRules_.clear();
-  compiledRules_.clear();
-  ruleCache_.clear();
-  stageCodeLinks_.clear();
-  luaItems_.clear();
+  // State was already cleared in LoadPack() before the entry script ran.
+  // This function only adds locations from the pack's locations/ directory
+  // (if present); packs that use Tracker:AddLocations() from their script
+  // will have already populated allLocations_ before we get here.
   std::unordered_map<std::string, int> ruleToIdx;
+  for (size_t i = 0; i < uniqueRules_.size(); ++i)
+    ruleToIdx[uniqueRules_[i]] = (int)i;
   fs::path locDir = packPath / "locations";
-  LoadItemsFromPack(packPath / "items");
+  // Items already loaded before script ran in LoadPack().
   // Scripts are loaded by LoadPack() before this function is called.
   if (fs::exists(locDir)) {
     int fileCount = 0;
@@ -1633,21 +1895,29 @@ void LogicManager::ProcessLocationNode(
   // We check recursively so that container nodes with ref-only children are
   // also pruned. This is pack-agnostic: any node whose entire subtree is
   // ref-only carries no rules or IDs of its own.
-  std::function<bool(const json &)> hasDirectContent = [&](const json &n) -> bool {
-    if (!n.is_object()) return false;
-    if (n.contains("ref")) return false;
-    if (n.contains("item_count") || n.contains("hosted_item")) return true;
+  std::function<bool(const json &)> hasDirectContent =
+      [&](const json &n) -> bool {
+    if (!n.is_object())
+      return false;
+    if (n.contains("ref"))
+      return false;
+    if (n.contains("item_count") || n.contains("hosted_item"))
+      return true;
     // Leaf section node: has a name but no sub-sections or children.
     // This is the common DK64/standard PopTracker format where sections are
     // just {"name": "Location Name"} entries with no further nesting.
-    bool hasSub = (n.contains("sections") && n["sections"].is_array() && !n["sections"].empty()) ||
-                  (n.contains("children") && n["children"].is_array() && !n["children"].empty());
-    if (!hasSub && n.contains("name") && n["name"].is_string() && !n["name"].get<std::string>().empty())
+    bool hasSub = (n.contains("sections") && n["sections"].is_array() &&
+                   !n["sections"].empty()) ||
+                  (n.contains("children") && n["children"].is_array() &&
+                   !n["children"].empty());
+    if (!hasSub && n.contains("name") && n["name"].is_string() &&
+        !n["name"].get<std::string>().empty())
       return true;
     for (const char *key : {"sections", "children"}) {
       if (n.contains(key) && n[key].is_array()) {
         for (const auto &child : n[key])
-          if (hasDirectContent(child)) return true;
+          if (hasDirectContent(child))
+            return true;
       }
     }
     return false;
@@ -1672,16 +1942,32 @@ void LogicManager::ProcessLocationNode(
   std::string nodeRule = "";
   if (node.contains("access_rules") && node["access_rules"].is_array() &&
       !node["access_rules"].empty()) {
+    auto trimStr = [](const std::string &in) -> std::string {
+      auto s = in.find_first_not_of(" \t\r\n");
+      if (s == std::string::npos) return "";
+      auto e = in.find_last_not_of(" \t\r\n");
+      return in.substr(s, e - s + 1);
+    };
     std::vector<std::string> parts;
     for (const auto &r : node["access_rules"]) {
-      if (!r.is_string()) continue;
-      std::string rStr = r.get<std::string>();
-      // Trim whitespace — a blank rule element means "no requirement"
-      auto s = rStr.find_first_not_of(" \t\r\n");
-      if (s == std::string::npos) continue; // blank, skip
-      auto e = rStr.find_last_not_of(" \t\r\n");
-      rStr = rStr.substr(s, e - s + 1);
-      parts.push_back("(" + rStr + ")");
+      if (r.is_string()) {
+        // Flat string element — one OR alternative
+        std::string rStr = trimStr(r.get<std::string>());
+        if (!rStr.empty())
+          parts.push_back("(" + rStr + ")");
+      } else if (r.is_array()) {
+        // Inner array — elements are AND'd together (comma-joined)
+        std::string andExpr;
+        for (const auto &inner : r) {
+          if (!inner.is_string()) continue;
+          std::string rStr = trimStr(inner.get<std::string>());
+          if (rStr.empty()) continue;
+          if (!andExpr.empty()) andExpr += ", ";
+          andExpr += rStr;
+        }
+        if (!andExpr.empty())
+          parts.push_back("(" + andExpr + ")");
+      }
     }
     if (!parts.empty()) {
       nodeRule = parts[0];
@@ -1701,10 +1987,12 @@ void LogicManager::ProcessLocationNode(
                !node["visibility_rules"].empty()) {
       std::vector<std::string> parts;
       for (const auto &r : node["visibility_rules"]) {
-        if (!r.is_string()) continue;
+        if (!r.is_string())
+          continue;
         std::string rStr = r.get<std::string>();
         auto s = rStr.find_first_not_of(" \t\r\n");
-        if (s == std::string::npos) continue; // blank, skip
+        if (s == std::string::npos)
+          continue; // blank, skip
         parts.push_back("(" + rStr + ")");
       }
       if (!parts.empty()) {
@@ -1801,12 +2089,6 @@ void LogicManager::ProcessLocationNode(
           compiledRules_.push_back(sol::make_object(lua_, 0));
         }
       }
-    }
-    if (debug_mode_ && name.find("Power Smash") != std::string::npos) {
-      std::cerr << "[DIAG3] ProcessLocationNode name=" << name
-                << " combinedRule=" << combinedRule
-                << " ruleIndex=" << ll.ruleIndex
-                << " parentRule=" << parentRule << "\n";
     }
     allLocations_.push_back(ll);
   }

@@ -574,18 +574,33 @@ void Application::RemovePopTrackerPack(const std::string &game) {
   }
 }
 
-LogicManager *Application::GetOrCreateLogicForSession(const std::string &name,
-                                                       const std::string &game) {
+LogicManager *Application::GetOrCreateLogicForSession(
+    const std::string &name, const std::string &game,
+    const nlohmann::json &slotData) {
   if (game.empty()) return nullptr;
   auto it = logic_managers_.find(name);
   if (it != logic_managers_.end()) {
-    if (it->second->GetPendingGame() == game)
-      return it->second.get();
-    logic_managers_.erase(it); // game changed, recreate
+    LogicManager *lm = it->second.get();
+    if (lm->GetPendingGame() == game) {
+      // If this manager was loaded without slot data (variant not yet finalized
+      // from slot data) and we now have real slot data, reload so the correct
+      // variant is selected (e.g., entrance-rando variant for ER games).
+      bool hasSlotData = slotData.is_object() && !slotData.empty();
+      bool variantNeedsSlotData = lm->IsReady() &&
+                                  !lm->GetPendingVariant().empty() &&
+                                  !lm->WasLoadedWithSlotData();
+      if (hasSlotData && variantNeedsSlotData) {
+        logic_managers_.erase(it); // reload with slot data
+      } else {
+        return lm;
+      }
+    } else {
+      logic_managers_.erase(it); // game changed, recreate
+    }
   }
   auto lm = std::make_unique<LogicManager>();
   lm->SetDebugMode(debug_mode_);
-  lm->LoadPackAsync(game);
+  lm->LoadPackAsync(game, slotData);
   LogicManager *ptr = lm.get();
   logic_managers_[name] = std::move(lm);
   return ptr;

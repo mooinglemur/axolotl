@@ -376,7 +376,7 @@ void OverviewWindow::Render(std::tm *current_tm, ImFont *custom_font,
               ImGui::TextColored(ImVec4(1, 1, 0, 1), "Processing...");
               break;
             case S::Succeeded:
-              ImGui::TextColored(ImVec4(0, 1, 0, 1), "OK");
+              ImGui::TextColored(ImVec4(0, 1, 0, 1), "OK (done)");
               break;
             case S::Error:
               ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Failed");

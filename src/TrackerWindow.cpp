@@ -91,7 +91,8 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
             // Per-session LogicManager (nullptr if game not yet known)
             LogicManager *lm = cache.game.empty()
                 ? nullptr
-                : app_.GetOrCreateLogicForSession(tab_name, cache.game);
+                : app_.GetOrCreateLogicForSession(tab_name, cache.game,
+                                                  session->GetSlotData());
 
             ImGui::Text("Game: %s", cache.game.c_str());
             ImGui::SameLine();

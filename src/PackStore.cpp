@@ -83,10 +83,43 @@ bool PackStore::ImportPack(const std::string &game,
         }
       }
       zip_close(z);
+
+      // If the zip had a single root directory wrapping everything (a common
+      // packaging convention), hoist its contents up to the target dir.
+      if (!fs::exists(target / "manifest.json")) {
+        fs::path singleRoot;
+        int rootCount = 0;
+        for (const auto &e : fs::directory_iterator(target)) {
+          if (e.is_directory()) {
+            ++rootCount;
+            singleRoot = e.path();
+          } else {
+            rootCount = 2; // any file at root → not a single-root zip
+            break;
+          }
+        }
+        if (rootCount == 1 && fs::exists(singleRoot / "manifest.json")) {
+          // Move contents of singleRoot into target, then remove singleRoot.
+          for (const auto &e : fs::directory_iterator(singleRoot))
+            fs::rename(e.path(), target / e.path().filename());
+          fs::remove(singleRoot);
+        }
+      }
+
+      // Validate — if still no manifest, the archive was not a valid pack.
+      if (!fs::exists(target / "manifest.json")) {
+        std::cerr << "PackStore: No manifest.json found after extraction of "
+                  << sourcePath << " — removing." << std::endl;
+        fs::remove_all(target);
+        return false;
+      }
+
       return true;
     }
   } catch (const fs::filesystem_error &e) {
     std::cerr << "PackStore Error: " << e.what() << std::endl;
+    // Clean up any partial extraction.
+    try { fs::remove_all(target); } catch (...) {}
   }
   return false;
 }
