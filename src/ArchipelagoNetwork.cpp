@@ -820,9 +820,6 @@ bool ArchipelagoSession::Update() {
           if (!cause.empty()) {
             rm.parts.push_back(
                 MessagePart{cause, 0xFFAAAAAA, -1, "deathlink-cause"});
-          } else {
-            rm.parts.push_back(MessagePart{source + " died", 0xFFAAAAAA, -1,
-                                           "deathlink-cause"});
           }
 
           // Use a hash of the data to prevent duplicates if multiple sessions
