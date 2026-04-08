@@ -63,6 +63,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
               cache.game = session->ResolvePlayerGame(global_slot_id);
               cache.unchecked.clear();
               cache.checked_names.clear();
+              cache.min_strip_prefix = -1;
 
               for (int64_t id : missing_ids) {
                 std::string name =
@@ -102,6 +103,16 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
             ImGui::Separator();
 
             if (ImGui::BeginChild("LocationsChild")) {
+              if (lm && lm->IsReady()) {
+                if (cache.resync_skip_frames > 0) {
+                  ImGui::BeginDisabled();
+                  ImGui::Button("Resync Logic");
+                  ImGui::EndDisabled();
+                } else if (ImGui::Button("Resync Logic")) {
+                  lm->ForceResync();
+                  cache.resync_skip_frames = 2;
+                }
+              }
               if (ImGui::CollapsingHeader("Logical Progression",
                                           ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (cache.game.empty()) {
@@ -132,6 +143,10 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     ImGui::TextColored(ImVec4(1, 0, 0, 1),
                                        "Failed to load PopTracker pack for %s",
                                        cache.game.c_str());
+                  } else {
+                  if (cache.resync_skip_frames > 0) {
+                    --cache.resync_skip_frames;
+                    ImGui::TextColored(ImVec4(1, 1, 0, 1), "Resyncing...");
                   } else {
                   // Resolve location IDs from data package (once per pack load)
                   {
@@ -169,6 +184,10 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     // Strip a shared root prefix (e.g. a single top-level
                     // container node like "Magical Map") so the next level
                     // becomes the visible section header.
+                    // Track the minimum strip_prefix ever seen so that sections
+                    // don't silently collapse as locations are checked off —
+                    // we cap at the minimum observed value (can decrease when
+                    // more areas open, but never grows beyond that minimum).
                     size_t strip_prefix = 0;
                     {
                       std::string common_root;
@@ -183,6 +202,11 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                       }
                       if (all_same && !common_root.empty())
                         strip_prefix = 1;
+                      // Update the per-session minimum.
+                      if (cache.min_strip_prefix < 0 ||
+                          (int)strip_prefix < cache.min_strip_prefix)
+                        cache.min_strip_prefix = (int)strip_prefix;
+                      strip_prefix = (size_t)cache.min_strip_prefix;
                     }
 
                     for (const auto &loc : accessible) {
@@ -284,6 +308,7 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     if (custom_font)
                       ImGui::PopFont();
                   }
+                  } // else (not resyncing)
                   } // lm ready
                 }
               }

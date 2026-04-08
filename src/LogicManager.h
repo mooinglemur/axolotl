@@ -92,6 +92,7 @@ public:
                    const std::set<int64_t> &missingLocationIds,
                    int playerNumber);
   void Reset();
+  void ForceResync();
 
   bool IsReady() const { return load_state_.load() == LoadState::Ready; }
   bool IsLoading() const { return load_state_.load() == LoadState::Loading; }

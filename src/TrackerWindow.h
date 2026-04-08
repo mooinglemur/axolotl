@@ -35,6 +35,13 @@ private:
     // Keyed by top-level path segment (section header name). Persists for the
     // lifetime of the app session; new (unseen) sections default to collapsed.
     std::unordered_map<std::string, bool> section_open_states;
+    // Minimum strip_prefix ever computed for this session. Caps future values
+    // so sections don't collapse when some locations are checked off.
+    int min_strip_prefix = -1; // -1 = uninitialized
+    // Frames remaining before UpdateLogic is called after a resync request.
+    // While > 0 the UI shows "Resyncing..." and skips UpdateLogic so the
+    // indicator has a chance to appear before the (potentially slow) sync.
+    int resync_skip_frames = 0;
   };
   std::map<std::string, SessionCache> session_caches_;
 };

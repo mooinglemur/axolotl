@@ -85,6 +85,16 @@ bool LogicManager::LoadPackAsync(const std::string &game,
   return true;
 }
 
+void LogicManager::ForceResync() {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  firstRun_ = true;
+  lastItemCounts_.clear();
+  lastCheckedLocationIds_.clear();
+  lastMissingLocationIds_.clear();
+  lastPlayerNumber_ = -1;
+  nextItemHandlerIndex_ = 1;
+}
+
 void LogicManager::Reset() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   currentGame_ = "";
@@ -1174,6 +1184,9 @@ void LogicManager::BindGlobals() {
       return (int)v.as<double>();
     if (v.is<bool>())
       return v.as<bool>() ? 1 : 0;
+    if (v.is<std::string>()) {
+      try { return std::stoi(v.as<std::string>()); } catch (...) {}
+    }
     return 0;
   };
   lua_.new_usertype<TrackerObject>(
@@ -1613,6 +1626,23 @@ LogicManager::GetTrackerObject(const std::string &code) {
     return trackerObjects_[code];
   }
 
+  // PopTracker uses case-insensitive item code matching. Fall back to a
+  // case-insensitive search through registered objects (excluding internal
+  // __id_* keys) before creating a new entry.
+  if (!code.empty() && code[0] != '@' && code.rfind("__", 0) != 0) {
+    std::string codeLower = code;
+    std::transform(codeLower.begin(), codeLower.end(), codeLower.begin(), ::tolower);
+    for (auto &kv : trackerObjects_) {
+      if (kv.first.rfind("__", 0) == 0) continue;
+      std::string kLower = kv.first;
+      std::transform(kLower.begin(), kLower.end(), kLower.begin(), ::tolower);
+      if (kLower == codeLower) {
+        trackerObjects_[code] = kv.second; // cache alias
+        return kv.second;
+      }
+    }
+  }
+
   // PopTracker uses "@Area/Section" (slash) for path lookups; we store
   // TrackerObjects keyed by breadcrumb "@Area > Section" (space-gt-space).
   // Normalize so Lua pack scripts can find our entries by either format.
@@ -1772,6 +1802,10 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
                                 R"(has("$1", $2))");
   finalRes = std::regex_replace(finalRes, std::regex(R"(\[([a-zA-Z0-9_]+)\])"),
                                 R"(has("$1"))");
+  // Unbracketed item:N (e.g. "StarPiece:1") not inside has() already.
+  finalRes = std::regex_replace(
+      finalRes, std::regex(R"(\b([a-zA-Z_][a-zA-Z0-9_]*):([0-9]+)\b)"),
+      R"(has("$1", $2))");
 
   std::function<std::string(std::string)> processInfix;
   processInfix = [&](std::string s) -> std::string {
