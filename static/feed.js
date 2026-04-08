@@ -19,12 +19,34 @@ const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${protocol}//${window.location.host}/feed${window.location.search}`;
 
 let socket = null;
+let hasConnectedBefore = false;
+let isConnected = false;
+
+function addStatusMessage(text) {
+    const el = document.createElement('div');
+    el.className = 'feed-item system';
+    const textEl = document.createElement('div');
+    textEl.className = 'feed-text';
+    const timestampEl = document.createElement('span');
+    timestampEl.className = 'timestamp';
+    timestampEl.innerText = getTimestamp() + ' ';
+    textEl.appendChild(timestampEl);
+    textEl.appendChild(document.createTextNode(text));
+    el.appendChild(textEl);
+    feedContainer.appendChild(el);
+    while (feedContainer.children.length > maxItems) {
+        feedContainer.removeChild(feedContainer.firstChild);
+    }
+}
 
 function connect() {
     socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
         console.log('Connected to Axolotl feed.');
+        isConnected = true;
+        addStatusMessage(hasConnectedBefore ? 'Reconnected to Axolotl.' : 'Connected to Axolotl.');
+        hasConnectedBefore = true;
     };
 
     socket.onmessage = (event) => {
@@ -50,6 +72,10 @@ function connect() {
 
     socket.onclose = () => {
         console.log('Disconnected. Reconnecting in 5s...');
+        if (isConnected) {
+            isConnected = false;
+            addStatusMessage('Disconnected from Axolotl. Will attempt to reconnect.');
+        }
         setTimeout(connect, 5000);
     };
 

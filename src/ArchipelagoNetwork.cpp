@@ -556,6 +556,8 @@ bool ArchipelagoSession::Update() {
                     ? packet["item"]["player"]
                     : json(-1));
             rm.sender_slot = (s_slot != -1) ? ((team_ << 16) | s_slot) : -1;
+            if (packet.contains("item") && packet["item"].contains("flags"))
+              rm.item_flags = packet["item"]["flags"].get<int>();
 
             // Live Activity Update (Location-based only: ItemSend)
             if (rm.sender_slot != -1) {
