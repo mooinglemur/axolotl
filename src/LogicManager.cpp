@@ -1702,9 +1702,10 @@ std::string LogicManager::TranspileRule(const std::string &rule) {
       "$1");
 
   // Args may contain spaces, @, hyphens, apostrophes (e.g. "AT - Aga1",
-  // "@Palace of Darkness/Boss/Boss Item"). Stop at | (arg separator) or & (AND
-  // operator). Each arg is trimmed of whitespace after splitting.
-  std::regex funcPattern(R"((\^?)\$([a-zA-Z0-9_]+)((?:\|[^|&]+)*))");
+  // "@Palace of Darkness/Boss/Boss Item"). Stop at |, &, or ( ) so that
+  // rule-grouping parentheses are never consumed into an argument.
+  // Each arg is trimmed of whitespace after splitting.
+  std::regex funcPattern(R"((\^?)\$([a-zA-Z0-9_]+)((?:\|[^|&()]+)*))");
   auto begin = std::sregex_iterator(res.begin(), res.end(), funcPattern);
   auto end = std::sregex_iterator();
   std::string finalRes = "";
