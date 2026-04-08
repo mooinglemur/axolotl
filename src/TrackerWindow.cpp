@@ -80,7 +80,6 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
               cache.game = session->ResolvePlayerGame(global_slot_id);
               cache.unchecked.clear();
               cache.checked_names.clear();
-              cache.min_strip_prefix = -1;
 
               for (int64_t id : missing_ids) {
                 std::string name =
@@ -128,6 +127,10 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                 } else if (ImGui::Button("Resync Logic")) {
                   lm->ForceResync();
                   cache.resync_skip_frames = 2;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove Pack")) {
+                  app_.RemovePopTrackerPack(cache.game);
                 }
               }
               if (ImGui::CollapsingHeader("Logical Progression",
@@ -192,7 +195,8 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                     // entries (id <= 0) are excluded. Sections with no checks
                     // are not displayed.
                     struct LocEntry {
-                      std::string label; // path[skip+1..] joined with " > "
+                      std::string label;   // path[skip+1..] joined with " > "
+                      std::string ap_name; // Archipelago data package name
                       int accessibility;
                     };
                     // std::map gives free alphabetical section ordering.
@@ -247,7 +251,8 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                         section = "Global";
                         label = loc.path.empty() ? loc.name : loc.path[0];
                       }
-                      groups[section].push_back({std::move(label), loc.accessibility});
+                      std::string ap_name = session->ResolveLocationName(loc.id, global_slot_id);
+                      groups[section].push_back({std::move(label), std::move(ap_name), loc.accessibility});
                     }
 
                     // Sort within each section: Normal (2) first, then
@@ -317,6 +322,8 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
                           ImGui::PushStyleColor(ImGuiCol_Text, txt);
                           ImGui::BulletText("%s", e.label.c_str());
                           ImGui::PopStyleColor();
+                          if (!e.ap_name.empty() && ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s", e.ap_name.c_str());
                         }
                         ImGui::TreePop();
                       }

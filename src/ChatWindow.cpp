@@ -1021,36 +1021,46 @@ bool ChatWindow::HandleCommand(const std::string &line) {
               rm.item_flags = 4; // 15% Trap
 
             uint32_t item_color = 0xFFFFFF00; // Filler/Default (Cyan)
-            if (rm.item_flags & 0x01)
+            std::string item_class = "item_id item_filler";
+            if (rm.item_flags & 0x01) {
               item_color = 0xFFFF5FAF; // Progression (Lavender)
-            else if (rm.item_flags & 0x02)
+              item_class = "item_id item_progression";
+            } else if (rm.item_flags & 0x02) {
               item_color = 0xFFED9564; // Useful (Blue)
-            else if (rm.item_flags & 0x04)
+              item_class = "item_id item_useful";
+            } else if (rm.item_flags & 0x04) {
               item_color = 0xFF0045FF; // Trap (Red-Orange)
+              item_class = "item_id item_trap";
+            }
+
+            const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
+            auto player_class = [&](int slot) -> std::string {
+              return my_slots.count(slot) ? "player_id player_self" : "player_id";
+            };
 
             if (dis_type(gen) < 30) {
               rm.receiver_slot = p1.slot;
               rm.parts.push_back(
-                  MessagePart{p1.name, 0xFFFF00FF, p1.slot, "player_id"});
+                  MessagePart{p1.name, 0xFFFF00FF, p1.slot, player_class(p1.slot)});
               rm.parts.push_back(
                   MessagePart{" found their ", 0xFFFFFFFF, -1, "text"});
             } else {
               auto &p2 = players[dis_p(gen)];
               rm.receiver_slot = p2.slot;
               rm.parts.push_back(
-                  MessagePart{p1.name, 0xFFFF00FF, p1.slot, "player_id"});
+                  MessagePart{p1.name, 0xFFFF00FF, p1.slot, player_class(p1.slot)});
               rm.parts.push_back(MessagePart{" sent ", 0xFFFFFFFF, -1, "text"});
               rm.parts.push_back(
-                  MessagePart{item.second, item_color, -1, "item_id"});
+                  MessagePart{item.second, item_color, -1, item_class});
               rm.parts.push_back(MessagePart{" to ", 0xFFFFFFFF, -1, "text"});
               rm.parts.push_back(
-                  MessagePart{p2.name, 0xFFFF00FF, p2.slot, "player_id"});
+                  MessagePart{p2.name, 0xFFFF00FF, p2.slot, player_class(p2.slot)});
               rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
             }
 
             if (rm.parts.size() <= 2) {
               rm.parts.push_back(
-                  MessagePart{item.second, item_color, -1, "item_id"});
+                  MessagePart{item.second, item_color, -1, item_class});
               rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
             }
 
@@ -1074,19 +1084,24 @@ bool ChatWindow::HandleCommand(const std::string &line) {
               rm.item_flags = 4;
 
             uint32_t item_color = 0xFFFFFF00;
-            if (rm.item_flags & 0x01)
+            std::string item_class2 = "item_id item_filler";
+            if (rm.item_flags & 0x01) {
               item_color = 0xFFFF5FAF;
-            else if (rm.item_flags & 0x02)
+              item_class2 = "item_id item_progression";
+            } else if (rm.item_flags & 0x02) {
               item_color = 0xFFED9564;
-            else if (rm.item_flags & 0x04)
+              item_class2 = "item_id item_useful";
+            } else if (rm.item_flags & 0x04) {
               item_color = 0xFF0045FF;
+              item_class2 = "item_id item_trap";
+            }
 
             rm.parts.push_back(MessagePart{slot_name, 0xFFFF00FF, -1,
                                            "player_id player_self"});
             rm.parts.push_back(
                 MessagePart{" found their ", 0xFFFFFFFF, -1, "text"});
             rm.parts.push_back(MessagePart{"Item " + std::to_string(i + 1),
-                                           item_color, -1, "item_id"});
+                                           item_color, -1, item_class2});
             rm.parts.push_back(MessagePart{" (", 0xFFFFFFFF, -1, "text"});
             rm.parts.push_back(MessagePart{"Location " + std::to_string(i + 1),
                                            0xFF00FF00, -1, "location_id"});

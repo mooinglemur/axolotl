@@ -485,8 +485,12 @@ bool ArchipelagoSession::Update() {
                 content = metadata_->player_names[global_id];
               }
             }
-            color = (pid == local_slot_) ? 0xFFFF00FF : 0xFFCCCCCC;
-            if (pid == local_slot_)
+            bool is_self =
+                (global_id != -1)
+                    ? manager_->GetConnectedSlots().count(global_id) > 0
+                    : (pid == local_slot_);
+            color = is_self ? 0xFFFF00FF : 0xFFCCCCCC;
+            if (is_self)
               class_name += " player_self";
             rm.parts.push_back(
                 MessagePart{content, color, global_id, class_name});
@@ -817,8 +821,8 @@ bool ArchipelagoSession::Update() {
             rm.parts.push_back(
                 MessagePart{cause, 0xFFAAAAAA, -1, "deathlink-cause"});
           } else {
-            rm.parts.push_back(
-                MessagePart{" died", 0xFFAAAAAA, -1, "deathlink-cause"});
+            rm.parts.push_back(MessagePart{source + " died", 0xFFAAAAAA, -1,
+                                           "deathlink-cause"});
           }
 
           // Use a hash of the data to prevent duplicates if multiple sessions
@@ -1187,8 +1191,10 @@ ArchipelagoNetwork::~ArchipelagoNetwork() {
   StopNetworkThread();
   sessions_.clear(); // This will destroy sessions and stop their websockets
   // Join HTTP threads last — they may still hold state_mutex_ briefly.
-  if (http_totals_thread_.joinable()) http_totals_thread_.join();
-  if (http_poll_thread_.joinable())   http_poll_thread_.join();
+  if (http_totals_thread_.joinable())
+    http_totals_thread_.join();
+  if (http_poll_thread_.joinable())
+    http_poll_thread_.join();
 }
 
 ArchipelagoSession *ArchipelagoNetwork::AddSession(const std::string &name) {
@@ -1250,7 +1256,7 @@ ArchipelagoNetwork::GetSessionByGlobalSlot(int global_slot) {
 ArchipelagoSession *ArchipelagoNetwork::GetSession(const std::string &name) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   for (auto &s : sessions_)
-      if (s->GetName() == name)
+    if (s->GetName() == name)
       return s.get();
   return nullptr;
 }
@@ -1853,8 +1859,10 @@ void ArchipelagoNetwork::SyncTotalLocations() {
   args->extraHeaders["User-Agent"] =
       "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
 
-  if (!http_totals_done_.load()) return; // previous request still in flight
-  if (http_totals_thread_.joinable()) http_totals_thread_.join(); // reap handle
+  if (!http_totals_done_.load())
+    return; // previous request still in flight
+  if (http_totals_thread_.joinable())
+    http_totals_thread_.join(); // reap handle
   http_totals_done_ = false;
   tracker_totals_status_ = TrackerPollStatus::InFlight;
   http_totals_thread_ = std::thread([this, api_url, args]() {
@@ -1905,12 +1913,12 @@ void ArchipelagoNetwork::SyncTotalLocations() {
       }
     } else {
       std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-      tracker_totals_error_ = response
-          ? "HTTP " + std::to_string(response->statusCode) + ": " +
-              (!response->body.empty()
-                  ? response->body.substr(0, 200)
-                  : response->description)
-          : "No response from server";
+      tracker_totals_error_ =
+          response
+              ? "HTTP " + std::to_string(response->statusCode) + ": " +
+                    (!response->body.empty() ? response->body.substr(0, 200)
+                                             : response->description)
+              : "No response from server";
       tracker_totals_status_ = TrackerPollStatus::Error;
     }
     http_totals_done_ = true;
@@ -1999,8 +2007,10 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
   args->extraHeaders["User-Agent"] =
       "Axolotl/" AXOLOTL_VERSION_STRING " (" GIT_HASH ")";
 
-  if (!http_poll_done_.load()) return; // previous request still in flight
-  if (http_poll_thread_.joinable()) http_poll_thread_.join(); // reap handle
+  if (!http_poll_done_.load())
+    return; // previous request still in flight
+  if (http_poll_thread_.joinable())
+    http_poll_thread_.join(); // reap handle
   http_poll_done_ = false;
   tracker_checked_status_ = TrackerPollStatus::InFlight;
   http_poll_thread_ = std::thread([this, api_url, args, now]() {
@@ -2167,24 +2177,26 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
           tracker_checked_status_ = TrackerPollStatus::Error;
         } catch (...) {
           if (debug_mode_) {
-            std::cerr << "[Overview] Live tracker parse error: unknown exception"
-                      << std::endl;
+            std::cerr
+                << "[Overview] Live tracker parse error: unknown exception"
+                << std::endl;
             std::cerr << "[Overview] URL: " << api_url << std::endl;
             std::cerr << "[Overview] Body (first 500 chars): "
                       << response->body.substr(0, 500) << std::endl;
           }
           std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-          tracker_checked_error_ = "Failed to parse response: unknown exception";
+          tracker_checked_error_ =
+              "Failed to parse response: unknown exception";
           tracker_checked_status_ = TrackerPollStatus::Error;
         }
       } else {
         std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-        tracker_checked_error_ = response
-            ? "HTTP " + std::to_string(response->statusCode) + ": " +
-              (!response->body.empty()
-                  ? response->body.substr(0, 200)
-                  : response->description)
-            : "No response from server";
+        tracker_checked_error_ =
+            response
+                ? "HTTP " + std::to_string(response->statusCode) + ": " +
+                      (!response->body.empty() ? response->body.substr(0, 200)
+                                               : response->description)
+                : "No response from server";
         tracker_checked_status_ = TrackerPollStatus::Error;
       }
     } else {
