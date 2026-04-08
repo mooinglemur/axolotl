@@ -56,11 +56,11 @@ LogicManager::LogicManager() {
                       sol::lib::string, sol::lib::math, sol::lib::bit32,
                       sol::lib::os);
   // Sandbox: remove dangerous os functions — packs only need time/date/clock
-  lua_["os"]["execute"] = sol::nil;
-  lua_["os"]["exit"] = sol::nil;
-  lua_["os"]["remove"] = sol::nil;
-  lua_["os"]["rename"] = sol::nil;
-  lua_["os"]["tmpname"] = sol::nil;
+  lua_["os"]["execute"] = sol::lua_nil;
+  lua_["os"]["exit"] = sol::lua_nil;
+  lua_["os"]["remove"] = sol::lua_nil;
+  lua_["os"]["rename"] = sol::lua_nil;
+  lua_["os"]["tmpname"] = sol::lua_nil;
   BindGlobals();
 }
 
@@ -117,11 +117,11 @@ void LogicManager::Reset() {
                       sol::lib::string, sol::lib::math, sol::lib::bit32,
                       sol::lib::os);
   // Sandbox: remove dangerous os functions — packs only need time/date/clock
-  lua_["os"]["execute"] = sol::nil;
-  lua_["os"]["exit"] = sol::nil;
-  lua_["os"]["remove"] = sol::nil;
-  lua_["os"]["rename"] = sol::nil;
-  lua_["os"]["tmpname"] = sol::nil;
+  lua_["os"]["execute"] = sol::lua_nil;
+  lua_["os"]["exit"] = sol::lua_nil;
+  lua_["os"]["remove"] = sol::lua_nil;
+  lua_["os"]["rename"] = sol::lua_nil;
+  lua_["os"]["tmpname"] = sol::lua_nil;
   BindGlobals();
 }
 
