@@ -578,25 +578,15 @@ LogicManager *Application::GetOrCreateLogicForSession(
     const std::string &name, const std::string &game,
     const nlohmann::json &slotData) {
   if (game.empty()) return nullptr;
+  // Slot data must be available (Connected packet received) before creating a
+  // LogicManager. An empty slot_data means the session has not yet connected
+  // (or has disconnected), so there is nothing useful to load.
+  if (!slotData.is_object() || slotData.empty()) return nullptr;
   auto it = logic_managers_.find(name);
   if (it != logic_managers_.end()) {
-    LogicManager *lm = it->second.get();
-    if (lm->GetPendingGame() == game) {
-      // If this manager was loaded without slot data (variant not yet finalized
-      // from slot data) and we now have real slot data, reload so the correct
-      // variant is selected (e.g., entrance-rando variant for ER games).
-      bool hasSlotData = slotData.is_object() && !slotData.empty();
-      bool variantNeedsSlotData = lm->IsReady() &&
-                                  !lm->GetPendingVariant().empty() &&
-                                  !lm->WasLoadedWithSlotData();
-      if (hasSlotData && variantNeedsSlotData) {
-        logic_managers_.erase(it); // reload with slot data
-      } else {
-        return lm;
-      }
-    } else {
-      logic_managers_.erase(it); // game changed, recreate
-    }
+    if (it->second->GetPendingGame() == game)
+      return it->second.get();
+    logic_managers_.erase(it); // game changed, recreate
   }
   auto lm = std::make_unique<LogicManager>();
   lm->SetDebugMode(debug_mode_);

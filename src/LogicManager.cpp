@@ -263,6 +263,7 @@ bool LogicManager::LoadPack(const std::string &game,
     // LoadLocationsFromPack() will later add any locations/ directory entries
     // without clearing again.
     allLocations_.clear();
+    loaded_location_files_.clear();
     uniqueRules_.clear();
     compiledRules_.clear();
     ruleCache_.clear();
@@ -393,6 +394,39 @@ void LogicManager::ResolveLocationIds(
           }
         }
       }
+    }
+  }
+
+  // --- Propagation pass: before Strategy B, propagate a resolved child ID up
+  // to its parent container node (id=0) when that container has exactly one
+  // direct child with a resolved id.  This prevents Strategy B from
+  // mistakenly assigning a same-named but different-area ID to the container
+  // (e.g. "Sign" in Sirena Beach getting the Pianta Village "Sign" id).
+  for (auto &loc : allLocations_) {
+    if (loc.id != 0 || loc.path.empty())
+      continue;
+    int64_t childId = 0;
+    int childCount = 0;
+    for (const auto &child : allLocations_) {
+      if (child.id == 0)
+        continue;
+      if (child.path.size() != loc.path.size() + 1)
+        continue;
+      bool isChild = true;
+      for (size_t i = 0; i < loc.path.size(); ++i) {
+        if (child.path[i] != loc.path[i]) {
+          isChild = false;
+          break;
+        }
+      }
+      if (isChild) {
+        childId = child.id;
+        ++childCount;
+      }
+    }
+    if (childCount == 1) {
+      loc.id = childId;
+      loc.logicalId = "__id_" + std::to_string(childId);
     }
   }
 
@@ -1011,7 +1045,6 @@ void LogicManager::UpdateLogic(const std::map<int64_t, int> &itemCounts,
       auto obj = GetTrackerObject(loc.logicalId);
       int access = (obj ? obj->accessibilityLevel : 0);
 
-
       // Only add items/regions that are accessible and NOT checked.
       // Filter out empty names or internal nodes
       if (access > 0 && access < 3 && !loc.name.empty() &&
@@ -1215,7 +1248,16 @@ void LogicManager::BindGlobals() {
             // see current values.
             if (accessibility_stale_)
               RunConvergenceOnce();
-            return obj.accessibilityLevel;
+            // Return PopTracker-scale accessibility (0/5/6) so that Lua pack
+            // scripts comparing against AccessibilityLevel.Partial (1) or
+            // AccessibilityLevel.Normal (6) work correctly. Our internal scale
+            // is 0=None, 1=Partial, 2=Full, 3=Cleared.
+            switch (obj.accessibilityLevel) {
+              case 1:  return 5; // Partial / SequenceBreak
+              case 2:  return 6; // Full / Normal
+              case 3:  return 7; // Cleared
+              default: return 0; // None
+            }
           },
           [](TrackerObject &obj, int v) { obj.accessibilityLevel = v; }),
       "Highlight",
@@ -1351,6 +1393,8 @@ void LogicManager::BindGlobals() {
     if (!fs::exists(fullPath))
       return;
     try {
+      std::string canonical = fs::canonical(fullPath).string();
+      loaded_location_files_.insert(canonical);
       std::ifstream f(fullPath);
       json j = json::parse(f, nullptr, true, true);
       if (j.is_array()) {
@@ -1546,14 +1590,12 @@ void LogicManager::BindGlobals() {
           return setmetatable({}, __AxoProxyMeta)
       end
 
-      -- @Path/To/Section rule reference: map internal 0/1/2 → PopTracker 0/5/6.
+      -- @Path/To/Section rule reference: AccessibilityLevel now returns
+      -- PopTracker-scale (0/5/6), so pass it through directly.
       function __AxoPath(path)
           local obj = Tracker:FindObjectForCode(path)
           if obj == nil then return 0 end
-          local lvl = obj.AccessibilityLevel
-          if lvl >= 2 then return 6
-          elseif lvl >= 1 then return 5
-          else return 0 end
+          return obj.AccessibilityLevel
       end
 
       __AxoSeenErrors = {}
@@ -1887,6 +1929,11 @@ void LogicManager::LoadLocationsFromPack(
       if (entry.is_regular_file() && entry.path().extension() == ".json") {
         fileCount++;
         try {
+          // Skip files already loaded via Tracker:AddLocations() to avoid
+          // duplicating location nodes (which breaks ID propagation).
+          std::string canonical = fs::canonical(entry.path()).string();
+          if (loaded_location_files_.count(canonical))
+            continue;
           std::ifstream f(entry.path());
           json j = json::parse(f, nullptr, true, true);
           if (j.is_array()) {
@@ -1975,39 +2022,46 @@ void LogicManager::ProcessLocationNode(
 
   // Parse Access Rules
   std::string nodeRule = "";
-  if (node.contains("access_rules") && node["access_rules"].is_array() &&
-      !node["access_rules"].empty()) {
-    auto trimStr = [](const std::string &in) -> std::string {
-      auto s = in.find_first_not_of(" \t\r\n");
-      if (s == std::string::npos) return "";
-      auto e = in.find_last_not_of(" \t\r\n");
-      return in.substr(s, e - s + 1);
-    };
-    std::vector<std::string> parts;
-    for (const auto &r : node["access_rules"]) {
-      if (r.is_string()) {
-        // Flat string element — one OR alternative
-        std::string rStr = trimStr(r.get<std::string>());
-        if (!rStr.empty())
-          parts.push_back("(" + rStr + ")");
-      } else if (r.is_array()) {
-        // Inner array — elements are AND'd together (comma-joined)
-        std::string andExpr;
-        for (const auto &inner : r) {
-          if (!inner.is_string()) continue;
-          std::string rStr = trimStr(inner.get<std::string>());
-          if (rStr.empty()) continue;
-          if (!andExpr.empty()) andExpr += ", ";
-          andExpr += rStr;
+  auto trimStr = [](const std::string &in) -> std::string {
+    auto s = in.find_first_not_of(" \t\r\n");
+    if (s == std::string::npos) return "";
+    auto e = in.find_last_not_of(" \t\r\n");
+    return in.substr(s, e - s + 1);
+  };
+  if (node.contains("access_rules")) {
+    const auto &ar = node["access_rules"];
+    if (ar.is_string()) {
+      // Plain string — single rule (no OR alternatives)
+      std::string rStr = trimStr(ar.get<std::string>());
+      if (!rStr.empty())
+        nodeRule = "(" + rStr + ")";
+    } else if (ar.is_array() && !ar.empty()) {
+      std::vector<std::string> parts;
+      for (const auto &r : ar) {
+        if (r.is_string()) {
+          // Flat string element — one OR alternative
+          std::string rStr = trimStr(r.get<std::string>());
+          if (!rStr.empty())
+            parts.push_back("(" + rStr + ")");
+        } else if (r.is_array()) {
+          // Inner array — elements are AND'd together (comma-joined)
+          std::string andExpr;
+          for (const auto &inner : r) {
+            if (!inner.is_string()) continue;
+            std::string rStr = trimStr(inner.get<std::string>());
+            if (rStr.empty()) continue;
+            if (!andExpr.empty()) andExpr += ", ";
+            andExpr += rStr;
+          }
+          if (!andExpr.empty())
+            parts.push_back("(" + andExpr + ")");
         }
-        if (!andExpr.empty())
-          parts.push_back("(" + andExpr + ")");
       }
-    }
-    if (!parts.empty()) {
-      nodeRule = parts[0];
-      for (size_t i = 1; i < parts.size(); ++i)
-        nodeRule += " | " + parts[i];
+      if (!parts.empty()) {
+        nodeRule = parts[0];
+        for (size_t i = 1; i < parts.size(); ++i)
+          nodeRule += " | " + parts[i];
+      }
     }
   }
 

@@ -130,6 +130,7 @@ private:
       idAliases_; // secondary AP ID → primary AP ID (for multi-item sections)
   std::map<int64_t, int> accessibilityCache_;
   std::unordered_set<std::string> reportedFailedRules_;
+  std::unordered_set<std::string> loaded_location_files_; // canonical paths loaded via Tracker:AddLocations
   std::map<std::string, int> lastItemNameCounts_;
   std::map<std::string, std::string> nameToCode_;
   std::unordered_map<std::string, std::string> ruleCache_;

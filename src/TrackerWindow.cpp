@@ -5,6 +5,7 @@
 #include "PackStore.h"
 #include "Platform.h"
 #include <algorithm>
+#include <set>
 #include <imgui.h>
 
 TrackerWindow::TrackerWindow(ArchipelagoNetwork &ap_network,
@@ -46,6 +47,22 @@ void TrackerWindow::Render(std::tm *current_tm, ImFont *custom_font,
       };
 
       if (ImGui::BeginTabBar("TrackerTabs")) {
+        // Destroy LogicManagers for sessions that are no longer connected.
+        {
+          std::set<std::string> connected_names;
+          for (const auto &session : ap_network_.GetSessions())
+            if (session->IsConnected())
+              connected_names.insert(session->GetName());
+          for (auto it = session_caches_.begin(); it != session_caches_.end(); ) {
+            if (connected_names.find(it->first) == connected_names.end()) {
+              app_.DestroyLogicForSession(it->first);
+              it = session_caches_.erase(it);
+            } else {
+              ++it;
+            }
+          }
+        }
+
         for (const auto &session : ap_network_.GetSessions()) {
           if (!session->IsConnected())
             continue;
