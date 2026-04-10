@@ -206,16 +206,8 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
     ImGui::Separator();
 
-    // History
-    std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
-    const auto &history = ap_network_.GetChatHistory();
     const float footer_height_to_reserve =
         ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-
-    if (selection_anchor_idx_ >= (int)history.size())
-      selection_anchor_idx_ = history.empty() ? -1 : (int)history.size() - 1;
-    if (selection_active_idx_ >= (int)history.size())
-      selection_active_idx_ = history.empty() ? -1 : (int)history.size() - 1;
 
     // Day-change detection (simplified for multi-slot - just use system time)
     int current_yday = current_tm->tm_yday;
@@ -248,8 +240,6 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       if (interacting && ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 5.0f) {
         locked_to_bottom_ = false;
       }
-      bool history_grew = (history.size() > last_history_size_);
-
       if (custom_font)
         ImGui::PushFont(custom_font);
 
@@ -259,9 +249,15 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
 
       const auto &history = ap_network_.GetChatHistory();
+      bool history_grew = (history.size() > last_history_size_);
       if (history.size() != last_history_size_) {
         row_height_cache_.resize(history.size(), -1.0);
       }
+
+      if (selection_anchor_idx_ >= (int)history.size())
+        selection_anchor_idx_ = history.empty() ? -1 : (int)history.size() - 1;
+      if (selection_active_idx_ >= (int)history.size())
+        selection_active_idx_ = history.empty() ? -1 : (int)history.size() - 1;
 
       bool in_bottom_zone =
           (ImGui::GetScrollY() > ImGui::GetScrollMaxY() - 128.0f);

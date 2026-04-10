@@ -1259,7 +1259,14 @@ void LogicManager::BindGlobals() {
               default: return 0; // None
             }
           },
-          [](TrackerObject &obj, int v) { obj.accessibilityLevel = v; }),
+          [](TrackerObject &obj, int v) {
+            switch (v) {
+              case 5: obj.accessibilityLevel = 1; break; // SequenceBreak
+              case 6: obj.accessibilityLevel = 2; break; // Normal/Full
+              case 7: obj.accessibilityLevel = 3; break; // Cleared
+              default: obj.accessibilityLevel = 0; break; // None
+            }
+          }),
       "Highlight",
       sol::property([](TrackerObject &) { return 0; },
                     [](TrackerObject &, sol::object) {}),

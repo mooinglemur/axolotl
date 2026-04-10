@@ -533,6 +533,9 @@ bool ArchipelagoSession::Update() {
             color = 0xFF00FF00;
           } catch (...) {
           }
+        } else if (type == "entrance_id") {
+          color = 0xFF6699FF;
+          class_name = "entrance_name";
         }
         rm.parts.push_back(MessagePart{content, color, -1, class_name});
       }

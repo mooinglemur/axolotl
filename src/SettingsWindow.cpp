@@ -60,7 +60,7 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       ImGui::Text("Client UUID");
       char uuid_buf[64];
-      strncpy(uuid_buf, settings_.uuid.c_str(), sizeof(uuid_buf));
+      strncpy(uuid_buf, settings_.uuid.c_str(), sizeof(uuid_buf) - 1);
       if (ImGui::InputText("##UUID", uuid_buf, sizeof(uuid_buf))) {
         settings_.uuid = uuid_buf;
       }
@@ -171,7 +171,7 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
                                         const char *default_val) {
         ImGui::Text("%s", label);
         char buf[128];
-        strncpy(buf, format.c_str(), sizeof(buf));
+        strncpy(buf, format.c_str(), sizeof(buf) - 1);
         if (ImGui::InputText((std::string("##") + label).c_str(), buf,
                              sizeof(buf))) {
           format = buf;
@@ -358,7 +358,7 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
       char bind_buf[128];
       strncpy(bind_buf, settings_.http_server_bind_address.c_str(),
-              sizeof(bind_buf));
+              sizeof(bind_buf) - 1);
       if (ImGui::InputText("Bind Address", bind_buf, sizeof(bind_buf))) {
         settings_.http_server_bind_address = bind_buf;
       }

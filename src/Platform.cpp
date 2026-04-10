@@ -2,16 +2,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
-#ifdef __APPLE__
+#ifndef __linux__
 #include <vector>
 #endif
 
 #ifdef _WIN32
-#include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <windows.h>
 #else
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace Platform {
@@ -20,27 +21,46 @@ void OpenURL(const std::string &url) {
 #ifdef _WIN32
   ShellExecuteA(NULL, "open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
 #elif __APPLE__
-  std::string command = "open " + url;
-  std::system(command.c_str());
+  pid_t pid = fork();
+  if (pid == 0) {
+    execl("/usr/bin/open", "open", url.c_str(), (char *)nullptr);
+    _exit(1);
+  }
 #else
-  std::string command = "xdg-open " + url;
-  std::system(command.c_str());
+  pid_t pid = fork();
+  if (pid == 0) {
+    execl("/usr/bin/xdg-open", "xdg-open", url.c_str(), (char *)nullptr);
+    _exit(1);
+  }
 #endif
 }
 
 std::string PickOpenFileName(const std::string &filter) {
 #ifdef _WIN32
-  OPENFILENAMEA ofn;
-  char szFile[MAX_PATH] = {0};
+  // Convert filter (which contains embedded NUL separators) to wide chars
+  std::vector<wchar_t> wfilter(filter.size() + 2, L'\0');
+  for (size_t i = 0; i < filter.size(); ++i)
+    wfilter[i] = (wchar_t)(unsigned char)filter[i];
+
+  OPENFILENAMEW ofn;
+  wchar_t szFile[MAX_PATH] = {0};
   ZeroMemory(&ofn, sizeof(ofn));
   ofn.lStructSize = sizeof(ofn);
   ofn.lpstrFile = szFile;
-  ofn.nMaxFile = sizeof(szFile);
-  ofn.lpstrFilter = filter.c_str();
+  ofn.nMaxFile = MAX_PATH;
+  ofn.lpstrFilter = wfilter.data();
   ofn.nFilterIndex = 1;
   ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-  if (GetOpenFileNameA(&ofn))
-    return szFile;
+  if (GetOpenFileNameW(&ofn)) {
+    int len = WideCharToMultiByte(CP_UTF8, 0, szFile, -1, nullptr, 0, nullptr,
+                                  nullptr);
+    if (len > 1) {
+      std::string result(len - 1, '\0');
+      WideCharToMultiByte(CP_UTF8, 0, szFile, -1, result.data(), len, nullptr,
+                          nullptr);
+      return result;
+    }
+  }
 #elif __APPLE__
   // Extract extensions for Apple Script
   // filter format: Description\0*.ext\0Description\0*.ext\0\0

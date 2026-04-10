@@ -240,9 +240,6 @@ public:
   bool Update();
   void SetMaxHistory(int max_history) { max_history_size_ = max_history; }
 
-  void LockHistory() const { state_mutex_.lock(); }
-  void UnlockHistory() const { state_mutex_.unlock(); }
-
   // Session management
   ArchipelagoSession *AddSession(const std::string &name);
   void RemoveSession(const std::string &name);
