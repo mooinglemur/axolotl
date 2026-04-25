@@ -1360,19 +1360,15 @@ void ArchipelagoNetwork::ClearGlobalStats() {
 
 void ArchipelagoNetwork::ClearSessionStats(int global_slot) {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-  if (global_stats_->slot_info.count(global_slot)) {
-    // Create new stats for thread safety (Copy-on-Write)
+  auto it = global_stats_->slot_info.find(global_slot);
+  if (it != global_stats_->slot_info.end()) {
+    int removed_count = it->second.checked_locations;
     auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
     new_stats->slot_info.erase(global_slot);
     new_stats->completed_slots.erase(global_slot);
-
-    // Re-calculate global totals
-    int total_checked = 0;
-    for (auto const &[id, stats] : new_stats->slot_info) {
-      total_checked += (int)stats.checked_location_ids.size();
-    }
-    new_stats->checked_locations = total_checked;
-    last_tracker_checked_count_ = total_checked;
+    new_stats->checked_locations =
+        global_stats_->checked_locations - removed_count;
+    last_tracker_checked_count_ = new_stats->checked_locations;
     global_stats_ = new_stats;
 
     if (on_stats_updated)
@@ -1470,19 +1466,23 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
     if (msg.type == "ItemSend") {
       int sender = msg.sender_slot;
       if (sender != -1) {
-        // Create new stats for thread safety (Copy-on-Write)
+        // Create new stats for thread safety (Copy-on-Write). Per-slot sets
+        // are now held via shared_ptr, so this only refcounts each slot's set
+        // instead of deep-copying. We then clone just the sender's set before
+        // mutating it.
         auto new_stats = std::make_shared<MultiworldStats>(*global_stats_);
         auto &slot_stats = new_stats->slot_info[sender];
-        slot_stats.checked_location_ids.insert(msg.location_id);
-        slot_stats.checked_locations =
-            (int)slot_stats.checked_location_ids.size();
-
-        // Re-calculate global count
-        int total_checked = 0;
-        for (auto const &[id, stats] : new_stats->slot_info) {
-          total_checked += (int)stats.checked_location_ids.size();
+        auto new_set = slot_stats.checked_location_ids
+            ? std::make_shared<std::set<int64_t>>(
+                  *slot_stats.checked_location_ids)
+            : std::make_shared<std::set<int64_t>>();
+        bool was_new = new_set->insert(msg.location_id).second;
+        slot_stats.checked_location_ids = new_set;
+        if (was_new) {
+          slot_stats.checked_locations++;
+          new_stats->checked_locations =
+              global_stats_->checked_locations + 1;
         }
-        new_stats->checked_locations = total_checked;
         global_stats_ = new_stats;
 
         if (on_stats_updated)
@@ -1536,14 +1536,21 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
   }
 
   if (max_history_size_ > 0) {
-    if ((int)chat_history_.size() > max_history_size_)
+    bool trimmed = false;
+    if ((int)chat_history_.size() > max_history_size_) {
       chat_history_.erase(chat_history_.begin(),
                           chat_history_.begin() +
                               (chat_history_.size() - max_history_size_));
-    if ((int)item_history_.size() > max_history_size_)
+      trimmed = true;
+    }
+    if ((int)item_history_.size() > max_history_size_) {
       item_history_.erase(item_history_.begin(),
                           item_history_.begin() +
                               (item_history_.size() - max_history_size_));
+      trimmed = true;
+    }
+    if (trimmed)
+      history_generation_++;
   }
 
   if (on_history_updated)
@@ -1651,6 +1658,7 @@ void ArchipelagoNetwork::OnStatusMessage(ArchipelagoSession *session,
     chat_history_.erase(chat_history_.begin(),
                         chat_history_.begin() +
                             (chat_history_.size() - max_history_size_));
+    history_generation_++;
   }
 
   if (on_history_updated)
@@ -1808,16 +1816,47 @@ void ArchipelagoNetwork::SetHintsDirty() {
 
 void ArchipelagoNetwork::ClearChatHistory() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  if (chat_history_.empty())
+    return;
   chat_history_.clear();
   last_chat_day_ = -1;
+  history_generation_++;
   if (on_history_updated)
     on_history_updated();
 }
 
+void ArchipelagoNetwork::SetMaxHistory(int max_history) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  max_history_size_ = max_history;
+  if (max_history_size_ <= 0)
+    return;
+  bool trimmed = false;
+  if ((int)chat_history_.size() > max_history_size_) {
+    chat_history_.erase(chat_history_.begin(),
+                        chat_history_.begin() +
+                            (chat_history_.size() - max_history_size_));
+    trimmed = true;
+  }
+  if ((int)item_history_.size() > max_history_size_) {
+    item_history_.erase(item_history_.begin(),
+                        item_history_.begin() +
+                            (item_history_.size() - max_history_size_));
+    trimmed = true;
+  }
+  if (trimmed) {
+    history_generation_++;
+    if (on_history_updated)
+      on_history_updated();
+  }
+}
+
 void ArchipelagoNetwork::ClearItemHistory() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  if (item_history_.empty())
+    return;
   item_history_.clear();
   last_item_day_ = -1;
+  history_generation_++;
   if (on_history_updated)
     on_history_updated();
 }
@@ -2117,23 +2156,28 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
             if (total_g > 0)
               new_stats->total_games = total_g;
 
+            int delta_total = 0;
             for (auto &[packed_slot, snap] : slot_snapshots) {
               auto &slot_stats = new_stats->slot_info[packed_slot];
-              // Merge checked locations: union with any live-feed additions
-              slot_stats.checked_location_ids.insert(
-                  snap.checked_location_ids.begin(),
-                  snap.checked_location_ids.end());
-              slot_stats.checked_locations =
-                  (int)slot_stats.checked_location_ids.size();
+              int old_count = slot_stats.checked_locations;
+              // Clone-on-write: detach this slot's set from any sharing with
+              // the previous global_stats_ before mutating it.
+              auto new_set = slot_stats.checked_location_ids
+                  ? std::make_shared<std::set<int64_t>>(
+                        *slot_stats.checked_location_ids)
+                  : std::make_shared<std::set<int64_t>>();
+              new_set->insert(snap.checked_location_ids.begin(),
+                              snap.checked_location_ids.end());
+              slot_stats.checked_location_ids = new_set;
+              slot_stats.checked_locations = (int)new_set->size();
+              delta_total += slot_stats.checked_locations - old_count;
               if (snap.has_activity_time)
                 slot_stats.last_activity_time = snap.last_activity_time;
             }
 
-            int total_checked = 0;
-            for (auto const &[id, stats] : new_stats->slot_info)
-              total_checked += (int)stats.checked_location_ids.size();
-            new_stats->checked_locations = total_checked;
-            last_tracker_checked_count_ = total_checked;
+            new_stats->checked_locations =
+                global_stats_->checked_locations + delta_total;
+            last_tracker_checked_count_ = new_stats->checked_locations;
 
             if (sync_state_ == TrackerSyncState::FirstPollInProgress) {
               initial_tracker_sync_time_ = now;

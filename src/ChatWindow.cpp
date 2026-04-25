@@ -249,6 +249,17 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
 
       const auto &history = ap_network_.GetChatHistory();
+      uint64_t current_generation = ap_network_.GetHistoryGeneration();
+      if (current_generation != last_history_generation_) {
+        // Items shifted: cached row heights and selection indices point at
+        // wrong items now. Drop them.
+        std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0);
+        measured_height_sum_ = 0;
+        measured_rows_count_ = 0;
+        selection_anchor_idx_ = -1;
+        selection_active_idx_ = -1;
+        last_history_generation_ = current_generation;
+      }
       bool history_grew = (history.size() > last_history_size_);
       if (history.size() != last_history_size_) {
         row_height_cache_.resize(history.size(), -1.0);

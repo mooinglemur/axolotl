@@ -39,8 +39,19 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
     bool filter_changed = (filter_text_ != last_filter_text_);
     bool exclude_filler_changed = (exclude_filler_ != last_exclude_filler_);
+    uint64_t current_generation = ap_network_.GetHistoryGeneration();
+    bool generation_changed = (current_generation != last_history_generation_);
+    if (generation_changed) {
+      // Items shifted: cached row heights and selection point at wrong items.
+      std::fill(row_height_cache_.begin(), row_height_cache_.end(), -1.0);
+      measured_height_sum_ = 0;
+      measured_rows_count_ = 0;
+      last_avg_height_ = -1.0;
+      selection_anchor_idx_ = -1;
+      selection_active_idx_ = -1;
+    }
     if (history.size() != last_history_data_size_ || filter_changed ||
-        exclude_filler_changed) {
+        exclude_filler_changed || generation_changed) {
       display_indices_.clear();
       std::string l_filter = filter_text_;
       std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
@@ -81,7 +92,10 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         display_indices_.push_back(i);
       }
       row_height_cache_.resize(history.size(), -1.0f);
+      if (filter_changed || exclude_filler_changed || generation_changed)
+        last_stable_height_ = 0.0;
       last_history_data_size_ = history.size();
+      last_history_generation_ = current_generation;
       last_filter_text_ = filter_text_;
       last_exclude_filler_ = exclude_filler_;
     }

@@ -28,6 +28,7 @@ private:
   std::vector<double> cumulative_heights_;
   std::vector<int> display_indices_;
   size_t last_history_data_size_ = 0;
+  uint64_t last_history_generation_ = 0;
   int last_display_indices_size_ = 0;
   double last_scroll_max_y_ = 0;
   double last_window_width_ = 0;

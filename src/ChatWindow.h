@@ -48,6 +48,7 @@ private:
   std::vector<double> row_height_cache_;
   std::vector<double> cumulative_heights_;
   size_t last_history_size_ = 0;
+  uint64_t last_history_generation_ = 0;
   double last_scroll_max_y_ = 0;
   double last_window_width_ = 0;
   int last_display_end_ = 0;

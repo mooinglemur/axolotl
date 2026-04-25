@@ -65,7 +65,10 @@ struct Hint {
 
 struct SlotStats {
   int total_locations = 0;
-  std::set<int64_t> checked_location_ids; // Set-based tracking
+  // Held behind shared_ptr so MultiworldStats copies (used for COW publishing
+  // to render thread) only refcount each slot's set instead of deep-copying.
+  // Mutators must clone the set before modifying (see ItemSend handler).
+  std::shared_ptr<std::set<int64_t>> checked_location_ids;
   int checked_locations = 0;
   double last_activity_time = 0.0;
 };
@@ -238,7 +241,13 @@ public:
   void StartNetworkThread();
   void StopNetworkThread();
   bool Update();
-  void SetMaxHistory(int max_history) { max_history_size_ = max_history; }
+  void SetMaxHistory(int max_history);
+
+  // Bumped whenever items are removed from the front of (or whole sections
+  // cleared from) chat_history_/item_history_. Window caches keyed by history
+  // index must rebuild when this changes — indices to old positions point at
+  // different items now.
+  uint64_t GetHistoryGeneration() const { return history_generation_; }
 
   // Session management
   ArchipelagoSession *AddSession(const std::string &name);
@@ -367,6 +376,7 @@ private:
   std::vector<RichMessage> chat_history_;
   std::vector<RichMessage> item_history_;
   int max_history_size_ = 0;
+  uint64_t history_generation_ = 0;
   const ConnectionSettings *settings_ = nullptr;
   std::map<std::string, std::shared_ptr<ServerMetadata>> url_to_metadata_;
 
