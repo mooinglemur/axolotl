@@ -64,7 +64,12 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       for (int i = 0; i < (int)history.size(); ++i) {
         const auto &rm = history[i];
         if (personal_only_) {
-          if (!my_slots.count(rm.sender_slot) &&
+          bool is_personal_deathlink =
+              settings_.show_deathlink_messages &&
+              settings_.show_deathlinks_in_personal_feed &&
+              rm.type == "DeathLink";
+          if (!is_personal_deathlink &&
+              !my_slots.count(rm.sender_slot) &&
               !my_slots.count(rm.receiver_slot))
             continue;
         }

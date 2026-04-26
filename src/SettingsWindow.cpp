@@ -142,6 +142,15 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
                       &settings_.show_deathlink_messages);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Display DeathLink events in the item feed.");
+      ImGui::SameLine();
+      ImGui::BeginDisabled(!settings_.show_deathlink_messages);
+      ImGui::Checkbox("Show in Personal Feed",
+                      &settings_.show_deathlinks_in_personal_feed);
+      ImGui::EndDisabled();
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "Also include DeathLink events in the Personal Feed (which "
+            "otherwise only shows items to/from your own slots).");
 
       ImGui::Dummy(ImVec2(0.0f, 10.0f));
     }

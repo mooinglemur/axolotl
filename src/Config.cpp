@@ -197,6 +197,9 @@ ConnectionSettings Config::Load() {
     if (config["show_deathlink_messages"])
       settings.show_deathlink_messages =
           config["show_deathlink_messages"].as<bool>(true);
+    if (config["show_deathlinks_in_personal_feed"])
+      settings.show_deathlinks_in_personal_feed =
+          config["show_deathlinks_in_personal_feed"].as<bool>(false);
     if (config["timestamp_format_long"])
       settings.timestamp_format_long =
           config["timestamp_format_long"].as<std::string>();
@@ -262,6 +265,8 @@ void Config::Save(const ConnectionSettings &settings) {
       << settings.show_feed_timestamps;
   out << YAML::Key << "show_deathlink_messages" << YAML::Value
       << settings.show_deathlink_messages;
+  out << YAML::Key << "show_deathlinks_in_personal_feed" << YAML::Value
+      << settings.show_deathlinks_in_personal_feed;
   out << YAML::Key << "timestamp_format_long" << YAML::Value
       << settings.timestamp_format_long;
   out << YAML::Key << "timestamp_format_short" << YAML::Value

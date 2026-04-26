@@ -41,6 +41,7 @@ struct ConnectionSettings {
   bool show_chat_timestamps = true;
   bool show_feed_timestamps = true;
   bool show_deathlink_messages = true;
+  bool show_deathlinks_in_personal_feed = false;
   std::string uuid = "";
   std::map<std::string, bool> show_windows;
 
