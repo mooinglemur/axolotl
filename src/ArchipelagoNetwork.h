@@ -38,6 +38,14 @@ struct RichMessage {
   int64_t location_id = -1; // Added for set-based tracking
   int item_flags = 0;
   bool is_reconciled = false;
+  // True for messages that should appear in the in-app chat history but
+  // never be broadcast to the embedded web feed (e.g. local web-server
+  // bind status). Feed broadcast paths must check this flag.
+  bool local_only = false;
+  // True for Hint messages whose target location was already checked at
+  // the time the hint was created. The "Hide found hints" setting filters
+  // these from the item feed and the web /feed endpoint.
+  bool already_found = false;
   std::string type;     // Message type (e.g., "Goal", "Hint", "Chat")
   struct tm local_time; // Cached local time to avoid redundant syscalls
 
@@ -258,6 +266,10 @@ public:
 
   void SetTrackerUrl(const std::string &url);
   const std::string &GetTrackerUrl() const { return live_tracker_url_; }
+  // Set by ChatWindow when the user edits the server URL field. Used as
+  // the URL passed to the on_stats_updated callback so the receiver
+  // doesn't need to read a string concurrently mutated by the UI thread.
+  void SetServerUrl(const std::string &url);
   ArchipelagoSession *GetSessionBySlot(int slot);
   const std::vector<std::unique_ptr<ArchipelagoSession>> &GetSessions() const {
     return sessions_;
@@ -331,7 +343,11 @@ public:
   std::function<void()> on_history_updated;
   std::function<void(const std::string&)> on_session_removed;
   std::function<void(const RichMessage&)> on_message_received;
-  std::function<void(const MultiworldStats&)> on_stats_updated;
+  // Second arg is the server URL associated with the stats — captured
+  // under state_mutex_ at emit time, so callers can compare it to a
+  // saved URL without racing on the UI's mutable copy.
+  std::function<void(const MultiworldStats&, const std::string&)>
+      on_stats_updated;
   void SetWakeUpCallback(std::function<void()> cb) { wake_up_callback_ = cb; }
   void SetTrackerSyncActive(bool active);
   void WakeUp() {
@@ -402,6 +418,7 @@ private:
   std::map<std::string, ArchipelagoSession::State> last_session_states_;
   bool last_any_session_connected_ = false;
   std::string live_tracker_url_;
+  std::string live_server_url_;
   double last_item_activity_time_ = -1.0;
   double last_successful_sync_activity_time_ = -1.0;
   std::string last_synced_static_url_;

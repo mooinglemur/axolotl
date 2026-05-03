@@ -103,6 +103,43 @@ By default, if windows inside Axolotl have not ever been opened before, they spa
 
 That covers the basics.  There's still a lot of functionality to explore, but this should be enough to get you started.
 
+## Profiles
+
+Axolotl supports multiple independent **profiles**, useful when you're playing in more than one Archipelago event at the same time (multiple asyncs, a sync, etc.). Each profile has its own settings, window layout, tracker URL, and graph history; only caches (data packages and PopTracker packs) are shared.
+
+### Selecting a profile at startup
+
+Pass `--profile=NAME` on the command line to launch into a specific profile. If the profile doesn't exist yet, it's created on first launch. A typical workflow is to make a desktop shortcut per event:
+
+```
+axolotl-apclient --profile=summer-async
+axolotl-apclient --profile=main-sync
+```
+
+Without any flag, Axolotl resumes the **most recently used** profile. On a brand-new install — or right after upgrading from a pre-profile version — that's `default`, since the existing single-profile state is migrated into `profiles/default/` on first launch.
+
+### Two instances at once
+
+Each profile can only be open by one instance at a time. If you launch a second instance pointed at a profile that's already in use, Axolotl shows a profile picker right at startup. From there you can:
+
+- **Open another existing profile** — pick a row and click "Open selected" to switch this instance to that profile.
+- **Create a new profile** (forked from the in-use one) and open it directly.
+- **Take over** the locked profile — useful if a previous instance crashed without releasing the lock.
+- **Quit**.
+
+If a previous instance crashed (the lock owner is no longer alive, or the machine has rebooted), Axolotl detects the stale lock and silently takes over without showing the picker.
+
+### Managing profiles from inside the app
+
+`File → Profiles...` opens the management window. From there you can:
+
+- See all profiles, sorted by most recently used.
+- **Create** a new profile, forked from the current one (preserves UI scale, fonts, HTTP server settings, window geometry — but not slot connections, server URL, or graph history).
+- **Switch** to another profile. This saves the current profile's state, releases its lock, and re-launches Axolotl in the chosen profile.
+- **Delete** a profile (only when it's not currently in use by another instance).
+
+The active profile name appears in the OS window title.
+
 ## Embedded HTTP Server
 
 Axolotl contains an embedded HTTP server that can be used to host custom browser-source overlays for streaming.  The server is **not** enabled by default, but can be enabled in the settings window.  The server is accessible at `127.0.0.1` on port `3621` by default, so all of the URL examples in this documentation will use these values, but if desired, the bind address and port can be changed in the settings window.
@@ -211,4 +248,55 @@ Here are a few examples of CSS with various styling:
 #games-text { display: flex; flex-direction: row; gap: 8px; justify-content: flex-start; text-align: left; }
 #overview-container { flex-direction: row; justify-content: flex-start;     gap: 20px; padding: 4px 12px; }
 .games-label { display: none; }
+```
+
+### Graph Browser Source
+
+This is served at `/graph`. It displays a line graph of location checks over time. The graph history is persisted across restarts.
+
+Like the other sources, the graph requires a tracker URL to be configured and the Overview window to be syncing data.
+
+This source is designed for use as an OBS Browser Source overlay. The background is transparent by default.
+
+#### CSS Variables
+
+The graph supports the following CSS custom properties, which can be set in the OBS Browser Source's **Custom CSS** field:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `font-family` | `Segoe UI` | Font used for axis labels (set on `body`) |
+| `--graph-line-color` | `rgba(75, 192, 192, 1)` | Color of the data line |
+| `--graph-line-smoothing` | `0` | Line curve tension (`0` = sharp, `0.4` = smooth) |
+| `--graph-show-x-labels` | `1` | Show time labels on X axis (`0` to hide) |
+| `--graph-show-y-labels` | `1` | Show count labels on Y axis (`0` to hide) |
+| `--graph-text-color` | `#fff` | Fill color of axis label text |
+| `--graph-text-outline-color` | `#000` | Outline/stroke color around text |
+| `--graph-text-outline-width` | `4` | Outline thickness in pixels |
+
+#### Examples
+
+**Change the line color to green, use Montserrat font, and add slight smoothing:**
+```css
+body {
+    font-family: 'Montserrat', sans-serif;
+    --graph-line-color: #047500;
+    --graph-line-smoothing: 0.3;
+}
+```
+
+**Hide all labels for a minimal line-only overlay:**
+```css
+body {
+    --graph-show-x-labels: 0;
+    --graph-show-y-labels: 0;
+}
+```
+
+**Yellow text with a dark red outline:**
+```css
+body {
+    --graph-text-color: #ffdd00;
+    --graph-text-outline-color: #8b0000;
+    --graph-text-outline-width: 3;
+}
 ```

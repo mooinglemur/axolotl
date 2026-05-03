@@ -71,10 +71,12 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
                          flags)) {
       if (input_buf == server_url_) {
         live_server_url_ = server_url_;
+        ap_network_.SetServerUrl(live_server_url_);
         if (live_server_url_ != old_url) {
+          // Clear player stats / history but keep the tracker URL — async
+          // events frequently change AP server ports without changing
+          // their tracker page, so re-typing it every time is annoying.
           ap_network_.ClearAllData(true);
-          settings_.tracker_url = "";
-          ap_network_.SetTrackerUrl("");
         }
       }
     }

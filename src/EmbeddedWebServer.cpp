@@ -8,6 +8,41 @@
 #include <sys/socket.h>
 #endif
 
+namespace {
+
+// Decode application/x-www-form-urlencoded text: '+' → space, '%XX' → byte.
+// Malformed escapes are left untouched.
+std::string UrlDecode(const std::string &in) {
+  std::string out;
+  out.reserve(in.size());
+  for (size_t i = 0; i < in.size(); ++i) {
+    char c = in[i];
+    if (c == '+') {
+      out.push_back(' ');
+    } else if (c == '%' && i + 2 < in.size()) {
+      auto hex = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+        return -1;
+      };
+      int hi = hex(in[i + 1]);
+      int lo = hex(in[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        out.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+      } else {
+        out.push_back(c);
+      }
+    } else {
+      out.push_back(c);
+    }
+  }
+  return out;
+}
+
+} // namespace
+
 EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
     : settings_(settings) {
 
@@ -36,6 +71,8 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
       [this](std::shared_ptr<ix::ConnectionState> connectionState,
              ix::WebSocket &webSocket, const ix::WebSocketMessagePtr &msg) {
         if (msg->type == ix::WebSocketMessageType::Open) {
+          bool send_graph_history = false;
+          {
           std::lock_guard<std::mutex> lock(clients_mutex_);
           if (debug_mode_) {
             std::cout << "[WebServer] WebSocket opened: " << msg->openInfo.uri
@@ -62,8 +99,8 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
                                                          : end - start);
               size_t eq = pair.find('=');
               if (eq != std::string::npos) {
-                std::string key = pair.substr(0, eq);
-                std::string val = pair.substr(eq + 1);
+                std::string key = UrlDecode(pair.substr(0, eq));
+                std::string val = UrlDecode(pair.substr(eq + 1));
                 bool enabled = (val != "0" && val != "false");
                 if (key == "items")
                   prefs.items = enabled;
@@ -84,8 +121,19 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
             if (!last_overview_payload_.empty()) {
               webSocket.sendText(last_overview_payload_);
             }
+          } else if (path == "/graph") {
+            graph_clients_.insert(&webSocket);
+            // Defer history send until after we release clients_mutex_ — the
+            // provider acquires its own (foreign) mutex and may be slow.
+            send_graph_history = true;
           } else {
             webSocket.close(1008, "Invalid endpoint");
+          }
+          } // release clients_mutex_
+          if (send_graph_history && graph_history_provider_) {
+            std::string history = graph_history_provider_();
+            if (!history.empty())
+              webSocket.sendText(history);
           }
         } else if (msg->type == ix::WebSocketMessageType::Close) {
           std::lock_guard<std::mutex> lock(clients_mutex_);
@@ -94,6 +142,7 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
           }
           feed_clients_.erase(&webSocket);
           overview_clients_.erase(&webSocket);
+          graph_clients_.erase(&webSocket);
         } else if (msg->type == ix::WebSocketMessageType::Error) {
           if (debug_mode_) {
             std::cout << "[WebServer] WebSocket error: "
@@ -110,22 +159,28 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
 
 EmbeddedWebServer::~EmbeddedWebServer() { Stop(); }
 
-void EmbeddedWebServer::Start() {
-  if (server_ && !is_running_) {
-    std::string addr = settings_.http_server_bind_address;
-    if (addr.find(':') != std::string::npos) {
-      addr = "[" + addr + "]";
-    }
-    std::cout << "Starting embedded HTTP server on " << addr << ":"
-              << settings_.http_server_port << std::endl;
-    auto res = server_->listen();
-    if (!res.first) {
-      std::cerr << "Failed to start HTTP server: " << res.second << std::endl;
-      return;
-    }
-    is_running_ = true;
-    server_->start();
+EmbeddedWebServer::StartResult EmbeddedWebServer::Start() {
+  StartResult result;
+  result.bind_address = settings_.http_server_bind_address;
+  result.port = settings_.http_server_port;
+  if (!server_ || is_running_)
+    return result; // attempted=false (disabled or already running)
+  result.attempted = true;
+  std::string addr = result.bind_address;
+  if (addr.find(':') != std::string::npos)
+    addr = "[" + addr + "]";
+  std::cout << "Starting embedded HTTP server on " << addr << ":"
+            << result.port << std::endl;
+  auto res = server_->listen();
+  if (!res.first) {
+    std::cerr << "Failed to start HTTP server: " << res.second << std::endl;
+    result.error = res.second;
+    return result;
   }
+  is_running_ = true;
+  server_->start();
+  result.success = true;
+  return result;
 }
 
 void EmbeddedWebServer::Stop() {
@@ -251,8 +306,52 @@ ix::HttpResponsePtr EmbeddedWebServer::HandleRequest(
         std::string((const char *)overview_css, overview_css_len));
   }
 
+  if (path == "/graph") {
+    ix::WebSocketHttpHeaders headers;
+    headers["Content-Type"] = "text/html";
+    return std::make_shared<ix::HttpResponse>(
+        200, "OK", ix::HttpErrorCode::Ok, headers,
+        std::string((const char *)graph_html, graph_html_len));
+  }
+
+  if (path == "/graph.js") {
+    ix::WebSocketHttpHeaders headers;
+    headers["Content-Type"] = "application/javascript";
+    return std::make_shared<ix::HttpResponse>(
+        200, "OK", ix::HttpErrorCode::Ok, headers,
+        std::string((const char *)graph_js, graph_js_len));
+  }
+
+  if (path == "/graph.css") {
+    ix::WebSocketHttpHeaders headers;
+    headers["Content-Type"] = "text/css";
+    return std::make_shared<ix::HttpResponse>(
+        200, "OK", ix::HttpErrorCode::Ok, headers,
+        std::string((const char *)graph_css, graph_css_len));
+  }
+
+  if (path == "/chart.min.js") {
+    ix::WebSocketHttpHeaders headers;
+    headers["Content-Type"] = "application/javascript";
+    return std::make_shared<ix::HttpResponse>(
+        200, "OK", ix::HttpErrorCode::Ok, headers,
+        std::string((const char *)chart_min_js, chart_min_js_len));
+  }
+
   ix::WebSocketHttpHeaders headers;
   headers["Content-Type"] = "text/plain";
   return std::make_shared<ix::HttpResponse>(
       404, "Not Found", ix::HttpErrorCode::Ok, headers, "Not Found");
+}
+
+void EmbeddedWebServer::BroadcastGraphEvent(
+    const std::string &json_payload) {
+  std::lock_guard<std::mutex> lock(clients_mutex_);
+  if (debug_mode_ && !graph_clients_.empty()) {
+    std::cout << "[WebServer] Broadcasting graph event to "
+              << graph_clients_.size() << " clients" << std::endl;
+  }
+  for (auto *ws : graph_clients_) {
+    ws->sendText(json_payload);
+  }
 }

@@ -1,17 +1,29 @@
 #include "Config.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <random>
+#include <regex>
 #include <yaml-cpp/yaml.h>
 
 #ifdef _WIN32
 #include <shlobj.h>
 #endif
 
-std::filesystem::path Config::GetConfigDir() {
+namespace {
+std::string g_active_profile = "default";
+}
+
+void Config::SetActiveProfile(const std::string &name) {
+  g_active_profile = name;
+}
+
+const std::string &Config::GetActiveProfile() { return g_active_profile; }
+
+std::filesystem::path Config::GetConfigRoot() {
   std::filesystem::path config_dir;
 #ifdef __APPLE__
   const char *home = getenv("HOME");
@@ -43,12 +55,165 @@ std::filesystem::path Config::GetConfigDir() {
   return config_dir;
 }
 
+std::filesystem::path Config::GetProfilesRoot() {
+  auto dir = GetConfigRoot() / "profiles";
+  if (!std::filesystem::exists(dir))
+    std::filesystem::create_directories(dir);
+  return dir;
+}
+
+std::filesystem::path Config::GetProfileDir(const std::string &name) {
+  auto dir = GetProfilesRoot() / name;
+  if (!std::filesystem::exists(dir))
+    std::filesystem::create_directories(dir);
+  return dir;
+}
+
+std::filesystem::path Config::GetConfigDir() {
+  return GetProfileDir(g_active_profile);
+}
+
 std::filesystem::path Config::GetConfigPath() {
   return GetConfigDir() / "config.yaml";
 }
 
 std::filesystem::path Config::GetImguiIniPath() {
   return GetConfigDir() / "imgui.ini";
+}
+
+bool Config::ValidateProfileName(const std::string &name) {
+  if (name.empty() || name.size() > 64)
+    return false;
+  static const std::regex re("^[A-Za-z0-9_-]+$");
+  return std::regex_match(name, re);
+}
+
+bool Config::ProfileExists(const std::string &name) {
+  if (!ValidateProfileName(name))
+    return false;
+  return std::filesystem::exists(GetProfilesRoot() / name);
+}
+
+std::vector<ProfileInfo> Config::ListProfiles() {
+  std::vector<ProfileInfo> result;
+  std::error_code ec;
+  for (const auto &entry : std::filesystem::directory_iterator(
+           GetProfilesRoot(), ec)) {
+    if (!entry.is_directory(ec))
+      continue;
+    std::string name = entry.path().filename().string();
+    if (!ValidateProfileName(name))
+      continue;
+    ProfileInfo info;
+    info.name = name;
+    auto last_used = entry.path() / ".last_used";
+    std::error_code mt_ec;
+    auto t = std::filesystem::last_write_time(last_used, mt_ec);
+    if (!mt_ec) {
+      info.last_used = t;
+      info.has_last_used = true;
+    }
+    result.push_back(std::move(info));
+  }
+  std::sort(result.begin(), result.end(),
+            [](const ProfileInfo &a, const ProfileInfo &b) {
+              if (a.has_last_used != b.has_last_used)
+                return a.has_last_used; // present sorts before absent
+              if (!a.has_last_used)
+                return a.name < b.name;
+              return a.last_used > b.last_used; // most-recent first
+            });
+  return result;
+}
+
+bool Config::CreateProfile(const std::string &name,
+                           const std::string &fork_from) {
+  if (!ValidateProfileName(name))
+    return false;
+  auto dir = GetProfilesRoot() / name;
+  if (std::filesystem::exists(dir))
+    return false;
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  if (ec)
+    return false;
+  if (!fork_from.empty() && ProfileExists(fork_from)) {
+    auto src = GetProfilesRoot() / fork_from;
+    for (const char *fname : {"config.yaml", "imgui.ini"}) {
+      auto src_path = src / fname;
+      if (std::filesystem::exists(src_path)) {
+        std::filesystem::copy_file(src_path, dir / fname,
+                                   std::filesystem::copy_options::overwrite_existing,
+                                   ec);
+      }
+    }
+  }
+  TouchLastUsed(name);
+  return true;
+}
+
+bool Config::DeleteProfile(const std::string &name) {
+  if (!ValidateProfileName(name))
+    return false;
+  auto dir = GetProfilesRoot() / name;
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  return !ec;
+}
+
+void Config::TouchLastUsed(const std::string &name) {
+  if (!ValidateProfileName(name))
+    return;
+  auto path = GetProfilesRoot() / name / ".last_used";
+  // Create if missing.
+  if (!std::filesystem::exists(path)) {
+    std::ofstream(path).close();
+  }
+  // Bump mtime to now.
+  std::error_code ec;
+  std::filesystem::last_write_time(
+      path, std::filesystem::file_time_type::clock::now(), ec);
+}
+
+void Config::EnsureMigrated() {
+  auto root = GetConfigRoot();
+  // Only act if there are legacy top-level state files to migrate. We must
+  // NOT unconditionally re-create profiles/default/ — the user is allowed
+  // to delete that profile, and resurrecting it on every launch would be
+  // surprising.
+  bool has_legacy = false;
+  for (const char *fname :
+       {"config.yaml", "imgui.ini", "checks_history.json"}) {
+    if (std::filesystem::exists(root / fname)) {
+      has_legacy = true;
+      break;
+    }
+  }
+  if (!has_legacy)
+    return;
+
+  auto target = root / "profiles" / "default";
+  std::error_code ec;
+  std::filesystem::create_directories(target, ec);
+
+  bool moved_any = false;
+  for (const char *fname :
+       {"config.yaml", "imgui.ini", "checks_history.json"}) {
+    auto src = root / fname;
+    auto dst = target / fname;
+    if (std::filesystem::exists(src) && !std::filesystem::exists(dst)) {
+      std::filesystem::rename(src, dst, ec);
+      if (ec) {
+        std::cerr << "Migration warning: could not move " << src << ": "
+                  << ec.message() << std::endl;
+        ec.clear();
+      } else {
+        moved_any = true;
+      }
+    }
+  }
+  if (moved_any)
+    TouchLastUsed("default");
 }
 
 std::filesystem::path Config::GetBundleDir() {
@@ -200,6 +365,8 @@ ConnectionSettings Config::Load() {
     if (config["show_deathlinks_in_personal_feed"])
       settings.show_deathlinks_in_personal_feed =
           config["show_deathlinks_in_personal_feed"].as<bool>(false);
+    if (config["hide_found_hints"])
+      settings.hide_found_hints = config["hide_found_hints"].as<bool>(false);
     if (config["timestamp_format_long"])
       settings.timestamp_format_long =
           config["timestamp_format_long"].as<std::string>();
@@ -267,6 +434,8 @@ void Config::Save(const ConnectionSettings &settings) {
       << settings.show_deathlink_messages;
   out << YAML::Key << "show_deathlinks_in_personal_feed" << YAML::Value
       << settings.show_deathlinks_in_personal_feed;
+  out << YAML::Key << "hide_found_hints" << YAML::Value
+      << settings.hide_found_hints;
   out << YAML::Key << "timestamp_format_long" << YAML::Value
       << settings.timestamp_format_long;
   out << YAML::Key << "timestamp_format_short" << YAML::Value

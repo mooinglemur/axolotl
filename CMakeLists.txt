@@ -225,6 +225,7 @@ set(SRC_FILES
     src/Application.cpp
     src/ArchipelagoNetwork.cpp
     src/ChatWindow.cpp
+    src/ChecksGraphWindow.cpp
     src/Config.cpp
     src/DataPackageCache.cpp
     src/EmbeddedWebServer.cpp
@@ -235,6 +236,8 @@ set(SRC_FILES
     src/OverviewWindow.cpp
     src/PackStore.cpp
     src/Platform.cpp
+    src/ProfileLock.cpp
+    src/ProfilesWindow.cpp
     src/ReceivedItemsWindow.cpp
     src/SettingsWindow.cpp
     src/SpoilerLog.cpp
@@ -268,8 +271,8 @@ add_custom_target(UpdateVersion ALL
 
 add_custom_command(
     OUTPUT ${CMAKE_BINARY_DIR}/embedded_static.h
-    COMMAND ${CMAKE_COMMAND} -E env python3 ${CMAKE_SOURCE_DIR}/tools/embed_static.py ${CMAKE_BINARY_DIR}/embedded_static.h ${CMAKE_SOURCE_DIR}/static/feed.html ${CMAKE_SOURCE_DIR}/static/feed.css ${CMAKE_SOURCE_DIR}/static/feed.js ${CMAKE_SOURCE_DIR}/static/overview.html ${CMAKE_SOURCE_DIR}/static/overview.css ${CMAKE_SOURCE_DIR}/static/overview.js
-    DEPENDS ${CMAKE_SOURCE_DIR}/static/feed.html ${CMAKE_SOURCE_DIR}/static/feed.css ${CMAKE_SOURCE_DIR}/static/feed.js ${CMAKE_SOURCE_DIR}/static/overview.html ${CMAKE_SOURCE_DIR}/static/overview.css ${CMAKE_SOURCE_DIR}/static/overview.js ${CMAKE_SOURCE_DIR}/tools/embed_static.py
+    COMMAND ${CMAKE_COMMAND} -E env python3 ${CMAKE_SOURCE_DIR}/tools/embed_static.py ${CMAKE_BINARY_DIR}/embedded_static.h ${CMAKE_SOURCE_DIR}/static/feed.html ${CMAKE_SOURCE_DIR}/static/feed.css ${CMAKE_SOURCE_DIR}/static/feed.js ${CMAKE_SOURCE_DIR}/static/overview.html ${CMAKE_SOURCE_DIR}/static/overview.css ${CMAKE_SOURCE_DIR}/static/overview.js ${CMAKE_SOURCE_DIR}/static/graph.html ${CMAKE_SOURCE_DIR}/static/graph.css ${CMAKE_SOURCE_DIR}/static/graph.js ${CMAKE_SOURCE_DIR}/static/chart.min.js
+    DEPENDS ${CMAKE_SOURCE_DIR}/static/feed.html ${CMAKE_SOURCE_DIR}/static/feed.css ${CMAKE_SOURCE_DIR}/static/feed.js ${CMAKE_SOURCE_DIR}/static/overview.html ${CMAKE_SOURCE_DIR}/static/overview.css ${CMAKE_SOURCE_DIR}/static/overview.js ${CMAKE_SOURCE_DIR}/static/graph.html ${CMAKE_SOURCE_DIR}/static/graph.css ${CMAKE_SOURCE_DIR}/static/graph.js ${CMAKE_SOURCE_DIR}/static/chart.min.js ${CMAKE_SOURCE_DIR}/tools/embed_static.py
     COMMENT "Generating embedded_static.h"
 )
 

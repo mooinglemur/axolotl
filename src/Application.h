@@ -2,10 +2,15 @@
 #include "Config.h"
 #include "EmbeddedWebServer.h"
 #include "LogicManager.h"
+#include "ProfileLock.h"
 #include "Window.h"
 #include <atomic>
+#include <chrono>
+#include <fstream>
+#include <functional>
 #include <imgui.h>
 #include <memory>
+#include <mutex>
 #include <vector>
 #if defined(__APPLE__) && defined(__OBJC__)
 #import <Metal/Metal.h>
@@ -22,16 +27,55 @@ public:
   Application();
   ~Application();
 
+  // Take ownership of the acquired profile lock. Optional; if not set, the
+  // Application doesn't release a lock at shutdown. main() should always set
+  // it after acquiring.
+  void SetProfileLock(std::unique_ptr<ProfileLock> lock) {
+    profile_lock_ = std::move(lock);
+  }
+
   bool InitializeNetwork();
-  bool InitializeUI();
-  void CleanupUI();
+
+  // Two-phase UI lifecycle so the pre-init profile picker can render on the
+  // platform-native backend (Metal/DX11/OpenGL) without duplicating the
+  // per-platform setup. Backend init is idempotent across recovery loop
+  // iterations; AppState (windows_, web server) is per-iteration.
+  bool InitializeBackend();
+  void ShutdownBackend();
+  bool InitializeUI();   // assumes backend is up; sets up app state
+  void CleanupUI();      // tears down app state; backend stays
+
   void Run();
+
+  // Pre-init modal: renders a profile-conflict picker using the established
+  // backend. Returns the user's decision; does not modify Application state.
+  // Caller is responsible for acting on the result (acquire/force-acquire/
+  // re-exec).
+  struct PickerResult {
+    enum class Action { TakeOver, SwitchTo, Quit };
+    Action action = Action::Quit;
+    std::string profile_name; // populated for SwitchTo
+  };
+  PickerResult ShowProfilePicker(const std::string &locked_profile,
+                                 long long owner_pid, bool is_stale);
+
+  // Save all in-memory state to disk without exiting. Used by SwitchProfile.
+  void SaveAllState();
+
+  // Everything Application::~Application() does *except* GLFW teardown:
+  // save state, stop the web server, stop the network thread (so AP
+  // server sees a clean disconnect), join pack-loader threads, etc. Used
+  // before ReExec, where the process is replaced and no destructor runs.
+  void PrepareForExit();
+
+  // Schedule a switch to another profile: saves state, releases the current
+  // profile lock, and re-execs this binary with --profile=<new>. Does not
+  // return on success.
+  void SwitchProfile(const std::string &new_profile_name);
   void ReloadFonts();
   void ParseArguments(int argc, char **argv);
 
   bool UserRequestedExit() const { return user_requested_exit_ || should_exit_; }
-  bool WasDisconnected() const { return is_disconnected_; }
-  void ResetDisconnected() { is_disconnected_ = false; }
 
   static void SignalHandler(int signum);
 
@@ -45,6 +89,22 @@ public:
 
   void AddWindow(std::unique_ptr<Window> window);
   ArchipelagoNetwork &GetNetwork() { return ap_network_; }
+
+  struct ChecksSnapshot {
+    double timestamp;
+    int checked_locations;
+    int total_locations;
+  };
+
+  // Run callback under the mutex protecting checks_history_. Callers must not
+  // store the reference past the callback's return, and must not block on
+  // anything that could re-enter Application.
+  void WithChecksHistory(
+      const std::function<void(const std::vector<ChecksSnapshot> &)> &cb) const;
+  void SaveChecksHistory();
+  void LoadChecksHistory();
+  void ClearChecksHistory();
+
   LogicManager *GetOrCreateLogicForSession(
       const std::string &name, const std::string &game,
       const nlohmann::json &slotData = nlohmann::json{});
@@ -52,6 +112,14 @@ public:
 
 private:
   void RenderUI(std::tm *current_tm);
+  std::string BuildGraphHistoryJson() const;
+  // Push a "[System]"-prefixed message into the chat history. Used for
+  // events that aren't tied to any AP session (e.g. web server bind).
+  void PostSystemChatMessage(const std::string &text, uint32_t color);
+  // Convert a StartResult into an appropriate chat message (or skip if the
+  // server wasn't even attempted).
+  void ReportWebServerStart(const EmbeddedWebServer::StartResult &result,
+                            bool streamer_mode);
 
   GLFWwindow *window_ = nullptr;
 
@@ -105,7 +173,20 @@ private:
   bool first_render_ = true;
 
   bool user_requested_exit_ = false;
-  bool is_disconnected_ = false;
   bool debug_mode_ = false;
+  bool in_picker_modal_ = false;
+  // Set by SwitchProfile() to defer the actual teardown+exec to the end
+  // of the current Run() frame. Switching mid-render would destroy the
+  // ProfilesWindow whose Render() is on the call stack.
+  std::string pending_switch_profile_;
+
+  // Picker-only cache: ListProfiles() result refreshed at ~1Hz so the modal
+  // doesn't stat the profiles dir 60+ times per second.
+  std::vector<ProfileInfo> picker_profiles_cache_;
+  std::chrono::steady_clock::time_point picker_last_refresh_{};
   static std::atomic<bool> should_exit_;
+  mutable std::mutex checks_history_mutex_;
+  std::vector<ChecksSnapshot> checks_history_;
+  std::string checks_history_server_url_;
+  std::unique_ptr<ProfileLock> profile_lock_;
 };

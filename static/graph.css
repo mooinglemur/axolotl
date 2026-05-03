@@ -1,0 +1,41 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: rgba(0, 0, 0, 0);
+    overflow: hidden;
+
+    /* Default font — override in OBS Custom CSS with:
+       body { font-family: 'Your Font Name'; } */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: white;
+
+    /* Customizable via OBS Custom CSS:
+       body {
+         --graph-line-color: #ff6384;
+         --graph-line-smoothing: 0.4;
+         --graph-show-x-labels: 0;
+         --graph-show-y-labels: 0;
+         --graph-text-color: yellow;
+         --graph-text-outline-color: red;
+         --graph-text-outline-width: 3;
+       } */
+    --graph-line-color: rgba(75, 192, 192, 1);
+    --graph-line-smoothing: 0;
+    --graph-show-x-labels: 1;
+    --graph-show-y-labels: 1;
+    --graph-text-color: #fff;
+    --graph-text-outline-color: #000;
+    --graph-text-outline-width: 4;
+}
+
+#graph-container {
+    width: 100vw;
+    height: 100vh;
+    padding: 8px;
+    box-sizing: border-box;
+}
+
+canvas {
+    width: 100% !important;
+    height: 100% !important;
+}

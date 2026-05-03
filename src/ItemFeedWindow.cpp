@@ -39,6 +39,8 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
 
     bool filter_changed = (filter_text_ != last_filter_text_);
     bool exclude_filler_changed = (exclude_filler_ != last_exclude_filler_);
+    bool hide_found_hints_changed =
+        (settings_.hide_found_hints != last_hide_found_hints_);
     uint64_t current_generation = ap_network_.GetHistoryGeneration();
     bool generation_changed = (current_generation != last_history_generation_);
     if (generation_changed) {
@@ -51,7 +53,8 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
       selection_active_idx_ = -1;
     }
     if (history.size() != last_history_data_size_ || filter_changed ||
-        exclude_filler_changed || generation_changed) {
+        exclude_filler_changed || hide_found_hints_changed ||
+        generation_changed) {
       display_indices_.clear();
       std::string l_filter = filter_text_;
       std::transform(l_filter.begin(), l_filter.end(), l_filter.begin(),
@@ -79,6 +82,11 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
           continue;
         }
 
+        if (settings_.hide_found_hints && rm.type == "Hint" &&
+            rm.already_found) {
+          continue;
+        }
+
         if (!l_filter.empty()) {
           std::string full_text;
           for (const auto &p : rm.parts)
@@ -97,12 +105,14 @@ void ItemFeedWindow::Render(std::tm *current_tm, ImFont *custom_font,
         display_indices_.push_back(i);
       }
       row_height_cache_.resize(history.size(), -1.0f);
-      if (filter_changed || exclude_filler_changed || generation_changed)
+      if (filter_changed || exclude_filler_changed ||
+          hide_found_hints_changed || generation_changed)
         last_stable_height_ = 0.0;
       last_history_data_size_ = history.size();
       last_history_generation_ = current_generation;
       last_filter_text_ = filter_text_;
       last_exclude_filler_ = exclude_filler_;
+      last_hide_found_hints_ = settings_.hide_found_hints;
     }
 
     if (ImGui::BeginChild("FeedScrollingRegion", ImVec2(0, 0),

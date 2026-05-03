@@ -45,4 +45,5 @@ private:
   bool last_reported_locked_ = false;
   double last_stable_height_ = 0.0f;
   bool last_exclude_filler_ = false;
+  bool last_hide_found_hints_ = false;
 };

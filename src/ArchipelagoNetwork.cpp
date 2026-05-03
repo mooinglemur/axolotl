@@ -624,6 +624,7 @@ bool ArchipelagoSession::Update() {
 
               rm.receiver_slot = h.receiver_slot;
               rm.sender_slot = h.finder_slot;
+              rm.already_found = h.found;
             } catch (...) {
             }
           }
@@ -1143,6 +1144,9 @@ void ArchipelagoNetwork::SetSettings(const ConnectionSettings *settings) {
   if (settings_ && live_tracker_url_.empty()) {
     live_tracker_url_ = settings_->tracker_url;
   }
+  if (settings_ && live_server_url_.empty()) {
+    live_server_url_ = settings_->server_url;
+  }
 }
 
 void ArchipelagoNetwork::SetTrackerUrl(const std::string &url) {
@@ -1150,6 +1154,11 @@ void ArchipelagoNetwork::SetTrackerUrl(const std::string &url) {
   live_tracker_url_ = url;
   SetTrackerSyncActive(true); // Force sync and allow polls
   ForceTrackerSync();
+}
+
+void ArchipelagoNetwork::SetServerUrl(const std::string &url) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  live_server_url_ = url;
 }
 
 void ArchipelagoNetwork::StartNetworkThread() {
@@ -1355,7 +1364,7 @@ void ArchipelagoNetwork::ClearGlobalStats() {
   last_successful_sync_activity_time_ = -1.0;
 
   if (on_stats_updated)
-    on_stats_updated(*global_stats_);
+    on_stats_updated(*global_stats_, live_server_url_);
 }
 
 void ArchipelagoNetwork::ClearSessionStats(int global_slot) {
@@ -1372,7 +1381,7 @@ void ArchipelagoNetwork::ClearSessionStats(int global_slot) {
     global_stats_ = new_stats;
 
     if (on_stats_updated)
-      on_stats_updated(*global_stats_);
+      on_stats_updated(*global_stats_, live_server_url_);
   }
 }
 
@@ -1486,7 +1495,7 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
         global_stats_ = new_stats;
 
         if (on_stats_updated)
-          on_stats_updated(*global_stats_);
+          on_stats_updated(*global_stats_, live_server_url_);
       }
     }
   } else {
@@ -1525,7 +1534,7 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
         if (changed) {
           global_stats_ = new_stats;
           if (on_stats_updated)
-            on_stats_updated(*global_stats_);
+            on_stats_updated(*global_stats_, live_server_url_);
         }
       }
     }
@@ -1917,6 +1926,7 @@ void ArchipelagoNetwork::SyncTotalLocations() {
             j["player_locations_total"].is_array()) {
 
           std::shared_ptr<MultiworldStats> snap;
+          std::string snap_url;
           {
             std::lock_guard<std::recursive_mutex> lock(state_mutex_);
             for (const auto &p : j["player_locations_total"]) {
@@ -1933,10 +1943,11 @@ void ArchipelagoNetwork::SyncTotalLocations() {
             }
             global_stats_->total_locations = total_l;
             snap = global_stats_;
+            snap_url = live_server_url_;
           }
 
           if (on_stats_updated) {
-            on_stats_updated(*snap);
+            on_stats_updated(*snap, snap_url);
           }
 
           if (debug_mode_) {
@@ -2147,6 +2158,7 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
           // Brief lock: merge parsed data into live global_stats_ without
           // replacing fields that may have been updated by the live feed.
           std::shared_ptr<MultiworldStats> new_stats;
+          std::string snap_url;
           {
             std::lock_guard<std::recursive_mutex> lock(state_mutex_);
             new_stats = std::make_shared<MultiworldStats>(*global_stats_);
@@ -2196,10 +2208,11 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
 
             global_stats_ = new_stats;
             last_successful_sync_activity_time_ = last_item_activity_time_;
+            snap_url = live_server_url_;
           }
 
           if (on_stats_updated)
-            on_stats_updated(*new_stats);
+            on_stats_updated(*new_stats, snap_url);
 
           tracker_checked_status_ = TrackerPollStatus::Succeeded;
           if (debug_mode_) {

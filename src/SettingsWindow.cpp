@@ -152,6 +152,15 @@ void SettingsWindow::Render(std::tm *current_tm, ImFont *custom_font,
             "Also include DeathLink events in the Personal Feed (which "
             "otherwise only shows items to/from your own slots).");
 
+      ImGui::Checkbox("Hide \"found\" hints from feed",
+                      &settings_.hide_found_hints);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "Hide hint messages whose location was already checked when\n"
+            "the hint was created. Reduces feed spam when someone hints an\n"
+            "item with many copies (e.g. SM64 power stars). The Hints\n"
+            "window is unaffected.");
+
       ImGui::Dummy(ImVec2(0.0f, 10.0f));
     }
 

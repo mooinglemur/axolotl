@@ -42,6 +42,7 @@ struct ConnectionSettings {
   bool show_feed_timestamps = true;
   bool show_deathlink_messages = true;
   bool show_deathlinks_in_personal_feed = false;
+  bool hide_found_hints = false;
   std::string uuid = "";
   std::map<std::string, bool> show_windows;
 
@@ -50,16 +51,51 @@ struct ConnectionSettings {
   int http_server_port = 3621;
 };
 
+struct ProfileInfo {
+  std::string name;
+  std::filesystem::file_time_type last_used; // mtime of .last_used; epoch if absent
+  bool has_last_used = false;
+};
+
 class Config {
 public:
+  // Active profile is set once at startup before any other Config use.
+  static void SetActiveProfile(const std::string &name);
+  static const std::string &GetActiveProfile();
+
+  // Returns <root>/profiles/<active>/. Creates if missing.
   static std::filesystem::path GetConfigDir();
   static std::filesystem::path GetConfigPath();
   static std::filesystem::path GetImguiIniPath();
+
+  // Profile-agnostic locations.
+  static std::filesystem::path GetProfilesRoot();          // <root>/profiles/
+  static std::filesystem::path GetProfileDir(const std::string &name);
   static std::filesystem::path GetBundleDir();
   static std::filesystem::path GetCaBundlePath();
   static std::filesystem::path GetCacheDir();
   static std::filesystem::path GetDataPackageCacheDir();
+
+  // Profile management.
+  static bool ValidateProfileName(const std::string &name);
+  static bool ProfileExists(const std::string &name);
+  static std::vector<ProfileInfo> ListProfiles(); // sorted: most-recent first
+  // Creates a new profile dir; if fork_from is non-empty and exists, copies
+  // config.yaml and imgui.ini from it. Returns true on success.
+  static bool CreateProfile(const std::string &name,
+                            const std::string &fork_from);
+  static bool DeleteProfile(const std::string &name);
+  static void TouchLastUsed(const std::string &name);
+
+  // Idempotent. Moves any pre-profile state files from <root>/ into
+  // profiles/default/ if profiles/ does not yet exist.
+  static void EnsureMigrated();
+
   static ConnectionSettings Load();
   static void Save(const ConnectionSettings &settings);
   static std::string GenerateUUID();
+
+private:
+  // Root config dir (no profiles/ suffix). Always exists after first call.
+  static std::filesystem::path GetConfigRoot();
 };

@@ -1,11 +1,13 @@
 #include "Application.h"
 #include "ChatWindow.h"
+#include "ChecksGraphWindow.h"
 #include "FontScanner.h"
 #include "HintWindow.h"
 #include "ItemFeedWindow.h"
 #include "OverviewWindow.h"
 #include "PackStore.h"
 #include "Platform.h"
+#include "ProfilesWindow.h"
 #include "ReceivedItemsWindow.h"
 #include "SettingsWindow.h"
 #include "SpoilerSphereTrackerWindow.h"
@@ -68,6 +70,8 @@ bool Application::InitializeNetwork() {
     ap_network_.AddSession(slot.name);
   }
   ap_network_.StartNetworkThread();
+  PostSystemChatMessage("Using profile: " + Config::GetActiveProfile(),
+                        0xFFFFFF55);
   return true;
 }
 
@@ -75,28 +79,21 @@ void Application::CleanupUI() {
   if (!window_)
     return;
 
-  for (const auto &window : windows_) {
-    current_config_.show_windows[window->GetName()] = window->GetOpen();
-    window->SaveState(current_config_);
-  }
-
-  glfwGetWindowSize(window_, &current_config_.window_width,
-                    &current_config_.window_height);
-  glfwGetWindowPos(window_, &current_config_.window_x,
-                   &current_config_.window_y);
-
-  current_config_.server_url = live_server_url_;
-  current_config_.slots = live_slots_;
-  current_config_.tracker_url = ap_network_.GetTrackerUrl();
-  Config::Save(current_config_);
+  SaveAllState();
 
   if (web_server_) {
     web_server_->Stop();
     web_server_.reset();
   }
 
-  // Clear windows (destroying UI objects) before ImGui shutdown
+  // Clear windows (destroying UI objects). Backend stays up — see
+  // ShutdownBackend() for the rest of teardown.
   windows_.clear();
+}
+
+void Application::ShutdownBackend() {
+  if (!window_)
+    return;
 
 #ifdef __APPLE__
   ImGui_ImplMetal_Shutdown();
@@ -115,11 +112,16 @@ void Application::CleanupUI() {
   glfwDestroyWindow(window_);
   window_ = nullptr;
 
+  // Drain any pending events (closures on Wayland) before terminate;
+  // libwayland-client can crash inside destroy_queued_closure during
+  // glfwTerminate() if there are stale callbacks queued.
+  glfwPollEvents();
+
   glfwSetErrorCallback(nullptr);
   glfwTerminate();
 }
 
-Application::~Application() {
+void Application::PrepareForExit() {
   // Clear all callbacks before stopping threads to prevent races
   ap_network_.on_history_updated = nullptr;
   ap_network_.on_session_removed = nullptr;
@@ -130,13 +132,28 @@ Application::~Application() {
   // Join all logic load threads before UI teardown
   logic_managers_.clear();
 
-  CleanupUI();
+  CleanupUI(); // saves state, stops web server, clears windows
+
+  // Explicitly disconnect all sessions
+  ap_network_.DisconnectAll();
+
+  // Release the profile lock here so main() can _Exit() to bypass the
+  // NVIDIA EGL atexit teardown without leaving a stale lockfile behind.
+  if (profile_lock_) {
+    profile_lock_->Release();
+    profile_lock_.reset();
+  }
+}
+
+Application::~Application() {
+  PrepareForExit();
+  // Intentionally NOT calling ShutdownBackend(): glfwDestroyWindow /
+  // glfwTerminate can crash in the NVIDIA EGL driver on Wayland. Process
+  // exit reclaims GLFW resources cleanly.
 
 #ifdef _WIN32
   ix::uninitNetSystem();
 #endif
-  // Explicitly disconnect all sessions
-  ap_network_.DisconnectAll();
 
   if (s_instance == this) {
     s_instance = nullptr;
@@ -150,17 +167,6 @@ void Application::glfw_error_callback(int error, const char *description) {
     return;
   }
   std::cerr << "GLFW Error " << error << ": " << description << std::endl;
-
-  // Detect fatal Wayland errors or connection loss
-  if (error == 65544 ||
-      (description &&
-       (std::string(description).find("Wayland") != std::string::npos ||
-        std::string(description).find("Protocol error") !=
-            std::string::npos))) {
-    if (s_instance) {
-      s_instance->is_disconnected_ = true;
-    }
-  }
 }
 
 static void RenderLink(const char *label, const char *url) {
@@ -176,9 +182,11 @@ static void RenderLink(const char *label, const char *url) {
   }
 }
 
-bool Application::InitializeUI() {
+bool Application::InitializeBackend() {
+  if (window_)
+    return true; // already initialized
+
   s_instance = this;
-  is_disconnected_ = false;
   glfwSetErrorCallback(glfw_error_callback);
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW." << std::endl;
@@ -203,8 +211,9 @@ bool Application::InitializeUI() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
-  std::string window_title =
-      "Axolotl - Archipelago Text Client (" AXOLOTL_VERSION_STRING;
+  std::string window_title = "Axolotl - Archipelago Text Client - ";
+  window_title += Config::GetActiveProfile();
+  window_title += " (" AXOLOTL_VERSION_STRING;
 #ifdef GIT_HASH
   window_title += "-" + std::string(GIT_HASH);
 #endif
@@ -297,11 +306,22 @@ bool Application::InitializeUI() {
   glfwSetWindowUserPointer(window_, this);
   glfwSetWindowCloseCallback(window_, [](GLFWwindow *w) {
     auto app = static_cast<Application *>(glfwGetWindowUserPointer(w));
+    // In picker mode, accept the close event; ShowProfilePicker checks
+    // glfwWindowShouldClose() and treats it as Quit.
+    if (app->in_picker_modal_)
+      return;
     if (app->current_config_.confirm_exit) {
       glfwSetWindowShouldClose(w, GLFW_FALSE);
       app->show_exit_confirmation_ = true;
     }
   });
+
+  return true;
+}
+
+bool Application::InitializeUI() {
+  if (!window_ && !InitializeBackend())
+    return false;
 
   ReloadFonts();
 
@@ -335,6 +355,8 @@ bool Application::InitializeUI() {
   AddWindow(
       std::make_unique<TrackerWindow>(ap_network_, current_config_, *this));
   AddWindow(std::make_unique<OverviewWindow>(ap_network_, current_config_));
+  AddWindow(std::make_unique<ChecksGraphWindow>(*this));
+  AddWindow(std::make_unique<ProfilesWindow>(*this));
 
   if (is_first_launch_) {
     current_config_.show_windows["Chat"] = true;
@@ -345,6 +367,7 @@ bool Application::InitializeUI() {
     current_config_.show_windows["Settings"] = false;
     current_config_.show_windows["Tracker"] = false;
     current_config_.show_windows["Overview"] = false;
+    current_config_.show_windows["Checks Graph"] = false;
   }
 
   // Load visibility from config
@@ -356,9 +379,16 @@ bool Application::InitializeUI() {
 
   web_server_ = std::make_unique<EmbeddedWebServer>(current_config_);
   web_server_->SetDebugMode(debug_mode_);
-  web_server_->Start();
+  web_server_->SetGraphHistoryProvider(
+      [this]() { return BuildGraphHistoryJson(); });
+  ReportWebServerStart(web_server_->Start(), current_config_.streamer_mode);
 
   ap_network_.on_message_received = [this](const RichMessage &msg) {
+    if (msg.local_only)
+      return; // intentionally not broadcast to /feed
+    if (current_config_.hide_found_hints && msg.type == "Hint" &&
+        msg.already_found)
+      return; // suppressed by user preference
     if (web_server_) {
       nlohmann::json j;
       j["type"] = "feed_item";
@@ -402,7 +432,26 @@ bool Application::InitializeUI() {
     }
   };
 
-  ap_network_.on_stats_updated = [this](const MultiworldStats &stats) {
+  ap_network_.on_stats_updated = [this](const MultiworldStats &stats,
+                                        const std::string &server_url) {
+    // Record history point only when real tracker data is available.
+    // Require checked > 0 to avoid transient zeros during two-phase sync.
+    if (stats.total_locations > 0 && stats.checked_locations > 0) {
+      std::lock_guard<std::mutex> lock(checks_history_mutex_);
+      // Detect new multiworld by comparing server URL
+      if (!checks_history_server_url_.empty() &&
+          server_url != checks_history_server_url_) {
+        checks_history_.clear();
+      }
+      checks_history_server_url_ = server_url;
+
+      ChecksSnapshot snap;
+      snap.timestamp = ArchipelagoNetwork::GetCurrentTimestamp();
+      snap.checked_locations = stats.checked_locations;
+      snap.total_locations = stats.total_locations;
+      checks_history_.push_back(snap);
+    }
+
     if (web_server_) {
       int fully_completed = 0;
       for (const auto &[slot_id, s_stats] : stats.slot_info) {
@@ -423,8 +472,20 @@ bool Application::InitializeUI() {
       j["checked_locations"] = stats.checked_locations;
 
       web_server_->BroadcastOverviewEvent(j.dump());
+
+      // Broadcast graph update
+      {
+        nlohmann::json gj;
+        gj["type"] = "graph_update";
+        gj["timestamp"] = ArchipelagoNetwork::GetCurrentTimestamp();
+        gj["checked"] = stats.checked_locations;
+        gj["total"] = stats.total_locations;
+        web_server_->BroadcastGraphEvent(gj.dump());
+      }
     }
   };
+
+  LoadChecksHistory();
 
   return true;
 }
@@ -552,10 +613,277 @@ void Application::SetPreviewFont(const std::string &path) {
 
 void Application::ParseArguments(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "--debug") {
+    std::string arg = argv[i];
+    if (arg == "--debug") {
       debug_mode_ = true;
     }
+    // --profile / --profile=NAME consumed earlier in main(); skip silently
+    // here so unknown-flag warnings don't fire when we add them.
   }
+}
+
+Application::PickerResult
+Application::ShowProfilePicker(const std::string &locked_profile,
+                               long long owner_pid, bool is_stale) {
+  PickerResult result;
+  bool decided = false;
+  in_picker_modal_ = true;
+
+  char new_name_buf[80] = {0};
+  int selected_idx = -1;
+  std::string status_message;
+  picker_last_refresh_ = std::chrono::steady_clock::time_point{};
+  picker_profiles_cache_.clear();
+
+#ifdef __APPLE__
+  id<CAMetalDrawable> drawable;
+  id<MTLCommandBuffer> commandBuffer;
+  MTLRenderPassDescriptor *renderPassDescriptor;
+#endif
+
+  while (!decided && !glfwWindowShouldClose(window_) && !should_exit_.load()) {
+    glfwWaitEventsTimeout(0.05);
+
+#ifdef __APPLE__
+    int width, height;
+    glfwGetFramebufferSize(window_, &width, &height);
+    layer_.drawableSize = CGSizeMake(width, height);
+    drawable = [layer_ nextDrawable];
+    if (drawable == nil)
+      continue;
+    commandBuffer = [commandQueue_ commandBuffer];
+    renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+    renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+    renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+    renderPassDescriptor.colorAttachments[0].clearColor =
+        MTLClearColorMake(0.1f, 0.1f, 0.12f, 1.0f);
+    renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+    ImGui_ImplMetal_NewFrame(renderPassDescriptor);
+#elif defined(_WIN32)
+    ImGui_ImplDX11_NewFrame();
+#else
+    ImGui_ImplOpenGL3_NewFrame();
+#endif
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    // Center a modal-shaped window in the viewport.
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                   vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(580, 460), ImGuiCond_Always);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("Axolotl - Profile in use", nullptr, flags)) {
+      ImGui::TextWrapped(
+          "Profile '%s' is already in use by another instance (PID %lld)%s.",
+          locked_profile.c_str(), owner_pid,
+          is_stale ? " — the lock appears stale" : "");
+      ImGui::Separator();
+
+      ImGui::Text("Pick another profile, create a new one, or take over:");
+
+      // Throttle directory iteration to ~1Hz; the picker can otherwise
+      // stat the profiles dir 60+ times per second.
+      {
+        auto now = std::chrono::steady_clock::now();
+        if (picker_profiles_cache_.empty() ||
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - picker_last_refresh_)
+                    .count() >= 1000) {
+          picker_profiles_cache_ = Config::ListProfiles();
+          picker_last_refresh_ = now;
+        }
+      }
+      const auto &profiles = picker_profiles_cache_;
+      if (selected_idx >= (int)profiles.size())
+        selected_idx = -1;
+
+      if (ImGui::BeginTable("picker_profiles", 3,
+                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_ScrollY |
+                                ImGuiTableFlags_Resizable,
+                            ImVec2(-1, 180))) {
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Last used", ImGuiTableColumnFlags_WidthFixed,
+                                150.0f);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed,
+                                90.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < (int)profiles.size(); ++i) {
+          const auto &p = profiles[i];
+          bool is_locked_target = (p.name == locked_profile);
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          if (ImGui::Selectable(p.name.c_str(), selected_idx == i,
+                                ImGuiSelectableFlags_SpanAllColumns))
+            selected_idx = i;
+          ImGui::TableSetColumnIndex(1);
+          if (p.has_last_used) {
+            auto sctp = std::chrono::time_point_cast<
+                std::chrono::system_clock::duration>(
+                p.last_used - std::filesystem::file_time_type::clock::now() +
+                std::chrono::system_clock::now());
+            std::time_t tt = std::chrono::system_clock::to_time_t(sctp);
+            std::tm lt{};
+#ifdef _WIN32
+            localtime_s(&lt, &tt);
+#else
+            localtime_r(&tt, &lt);
+#endif
+            char buf[64];
+            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &lt);
+            ImGui::TextUnformatted(buf);
+          } else {
+            ImGui::TextDisabled("(never)");
+          }
+          ImGui::TableSetColumnIndex(2);
+          if (is_locked_target)
+            ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "in use");
+          else
+            ImGui::TextDisabled("idle");
+        }
+        ImGui::EndTable();
+      }
+
+      bool sel_valid =
+          (selected_idx >= 0 && selected_idx < (int)profiles.size());
+      std::string sel_name = sel_valid ? profiles[selected_idx].name : "";
+      bool sel_is_locked_target = sel_valid && (sel_name == locked_profile);
+
+      ImGui::BeginDisabled(!sel_valid || sel_is_locked_target);
+      if (ImGui::Button("Open selected")) {
+        result.action = PickerResult::Action::SwitchTo;
+        result.profile_name = sel_name;
+        decided = true;
+      }
+      ImGui::EndDisabled();
+
+      ImGui::SameLine();
+      std::string take_over_label = "Take over '" + locked_profile + "'";
+      if (ImGui::Button(take_over_label.c_str())) {
+        result.action = PickerResult::Action::TakeOver;
+        decided = true;
+      }
+
+      ImGui::SameLine();
+      if (ImGui::Button("Quit")) {
+        result.action = PickerResult::Action::Quit;
+        decided = true;
+      }
+
+      ImGui::Separator();
+      ImGui::Text("Or create a new profile (forked from '%s'):",
+                  locked_profile.c_str());
+      ImGui::SetNextItemWidth(-180.0f);
+      ImGui::InputText("##NewProfile", new_name_buf, sizeof(new_name_buf));
+      ImGui::SameLine();
+      std::string new_name = new_name_buf;
+      bool name_valid = Config::ValidateProfileName(new_name);
+      // Use the cached list rather than stat'ing every frame.
+      bool name_taken = false;
+      if (name_valid) {
+        for (const auto &p : profiles)
+          if (p.name == new_name) {
+            name_taken = true;
+            break;
+          }
+      }
+      ImGui::BeginDisabled(!name_valid || name_taken);
+      if (ImGui::Button("Create and open")) {
+        if (Config::CreateProfile(new_name, locked_profile)) {
+          result.action = PickerResult::Action::SwitchTo;
+          result.profile_name = new_name;
+          decided = true;
+        } else {
+          status_message = "Failed to create profile.";
+        }
+      }
+      ImGui::EndDisabled();
+      if (!new_name.empty() && !name_valid) {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1),
+                           "Name must match [A-Za-z0-9_-] (1-64 chars).");
+      } else if (name_taken) {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1),
+                           "A profile with that name already exists.");
+      }
+
+      if (!status_message.empty()) {
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", status_message.c_str());
+      }
+    }
+    ImGui::End();
+
+    ImGui::Render();
+#ifdef __APPLE__
+    if (renderPassDescriptor != nil) {
+      id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer
+          renderCommandEncoderWithDescriptor:renderPassDescriptor];
+      ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer,
+                                     renderEncoder);
+      [renderEncoder endEncoding];
+      [commandBuffer presentDrawable:drawable];
+    }
+    [commandBuffer commit];
+#elif defined(_WIN32)
+    const float clear_color[4] = {0.1f, 0.1f, 0.12f, 1.0f};
+    pd3dDeviceContext_->OMSetRenderTargets(1, &mainRenderTargetView_, nullptr);
+    pd3dDeviceContext_->ClearRenderTargetView(mainRenderTargetView_,
+                                              clear_color);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    pSwapChain_->Present(1, 0);
+#else
+    int display_w, display_h;
+    glfwGetFramebufferSize(window_, &display_w, &display_h);
+    glViewport(0, 0, display_w, display_h);
+    glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(window_);
+#endif
+  }
+
+  if (!decided) {
+    result.action = PickerResult::Action::Quit;
+    glfwSetWindowShouldClose(window_, GLFW_FALSE); // reset for normal flow
+  }
+
+  in_picker_modal_ = false;
+  return result;
+}
+
+void Application::SaveAllState() {
+  if (window_) {
+    glfwGetWindowSize(window_, &current_config_.window_width,
+                      &current_config_.window_height);
+    glfwGetWindowPos(window_, &current_config_.window_x,
+                     &current_config_.window_y);
+  }
+  for (const auto &window : windows_) {
+    current_config_.show_windows[window->GetName()] = window->GetOpen();
+    window->SaveState(current_config_);
+  }
+  current_config_.server_url = live_server_url_;
+  current_config_.slots = live_slots_;
+  current_config_.tracker_url = ap_network_.GetTrackerUrl();
+  Config::Save(current_config_);
+  SaveChecksHistory();
+  // Ask ImGui to flush its ini now (otherwise it only writes on
+  // DestroyContext or its periodic timer).
+  ImGui::SaveIniSettingsToDisk(imgui_ini_path_.c_str());
+  Config::TouchLastUsed(Config::GetActiveProfile());
+}
+
+void Application::SwitchProfile(const std::string &new_profile_name) {
+  if (!Config::ValidateProfileName(new_profile_name))
+    return;
+  // Defer to end-of-frame in Run(). Tearing down here would destroy the
+  // ProfilesWindow whose Render() is currently on the call stack and
+  // invalidate the windows_ iterator that RenderUI() is walking.
+  pending_switch_profile_ = new_profile_name;
 }
 
 void Application::SetPreviewFallbackFont(const std::string &path) {
@@ -565,7 +893,7 @@ void Application::SetPreviewFallbackFont(const std::string &path) {
 
 void Application::RemovePopTrackerPack(const std::string &game) {
   if (PackStore::RemovePack(game)) {
-    for (auto it = logic_managers_.begin(); it != logic_managers_.end(); ) {
+    for (auto it = logic_managers_.begin(); it != logic_managers_.end();) {
       if (it->second->GetPendingGame() == game)
         it = logic_managers_.erase(it);
       else
@@ -574,14 +902,17 @@ void Application::RemovePopTrackerPack(const std::string &game) {
   }
 }
 
-LogicManager *Application::GetOrCreateLogicForSession(
-    const std::string &name, const std::string &game,
-    const nlohmann::json &slotData) {
-  if (game.empty()) return nullptr;
+LogicManager *
+Application::GetOrCreateLogicForSession(const std::string &name,
+                                        const std::string &game,
+                                        const nlohmann::json &slotData) {
+  if (game.empty())
+    return nullptr;
   // Slot data must be available (Connected packet received) before creating a
   // LogicManager. An empty slot_data means the session has not yet connected
   // (or has disconnected), so there is nothing useful to load.
-  if (!slotData.is_object() || slotData.empty()) return nullptr;
+  if (!slotData.is_object() || slotData.empty())
+    return nullptr;
   auto it = logic_managers_.find(name);
   if (it != logic_managers_.end()) {
     if (it->second->GetPendingGame() == game)
@@ -601,8 +932,7 @@ void Application::DestroyLogicForSession(const std::string &name) {
 }
 
 void Application::Run() {
-  while (!glfwWindowShouldClose(window_) && !is_disconnected_ &&
-         !should_exit_) {
+  while (!glfwWindowShouldClose(window_) && !should_exit_) {
     double t_start_frame = glfwGetTime();
 #ifdef __APPLE__
     id<CAMetalDrawable> drawable = nil;
@@ -642,7 +972,10 @@ void Application::Run() {
       if (need_web_restart) {
         web_server_ = std::make_unique<EmbeddedWebServer>(current_config_);
         web_server_->SetDebugMode(debug_mode_);
-        web_server_->Start();
+        web_server_->SetGraphHistoryProvider(
+            [this]() { return BuildGraphHistoryJson(); });
+        ReportWebServerStart(web_server_->Start(),
+                             current_config_.streamer_mode);
       }
 
       fonts_reload_pending_ = true;
@@ -713,6 +1046,12 @@ void Application::Run() {
           // Open Settings
           for (auto &w : windows_) {
             if (w->GetName() == "Settings")
+              w->SetOpen(true);
+          }
+        }
+        if (ImGui::MenuItem("Profiles...")) {
+          for (auto &w : windows_) {
+            if (w->GetName() == "Profiles")
               w->SetOpen(true);
           }
         }
@@ -859,6 +1198,13 @@ void Application::Run() {
       ImGui::OpenPopup("Confirm Exit");
     }
 
+    {
+      ImGuiViewport *vp = ImGui::GetMainViewport();
+      ImGui::SetNextWindowPos(
+          ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                 vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+          ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    }
     if (ImGui::BeginPopupModal("Confirm Exit", &show_exit_confirmation_,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
       ImGui::Text("Are you sure you want to exit Axolotl?");
@@ -925,6 +1271,25 @@ void Application::Run() {
       std::this_thread::sleep_for(
           std::chrono::duration<double>(0.0166 - frame_dt));
     }
+
+    // Deferred profile switch — see SwitchProfile(). Runs here, after
+    // the windows iteration has unwound and the calling ProfilesWindow
+    // is no longer on the call stack.
+    if (!pending_switch_profile_.empty()) {
+      std::string target = std::move(pending_switch_profile_);
+      pending_switch_profile_.clear();
+      PrepareForExit();
+      if (profile_lock_)
+        profile_lock_->Release();
+      // execv replaces the process image; do NOT shutdown GLFW/ImGui
+      // first — glfwTerminate can crash on NVIDIA + Wayland.
+      Platform::ReExec({"--profile=" + target});
+      // Only reached on failure. State has already been torn down.
+      std::cerr << "SwitchProfile: ReExec failed; cannot recover."
+                << std::endl;
+      user_requested_exit_ = true;
+      break;
+    }
   }
 
   if (glfwWindowShouldClose(window_)) {
@@ -939,6 +1304,136 @@ void Application::Run() {
 
 void Application::AddWindow(std::unique_ptr<Window> window) {
   windows_.push_back(std::move(window));
+}
+
+void Application::WithChecksHistory(
+    const std::function<void(const std::vector<ChecksSnapshot> &)> &cb) const {
+  std::lock_guard<std::mutex> lock(checks_history_mutex_);
+  cb(checks_history_);
+}
+
+void Application::PostSystemChatMessage(const std::string &text,
+                                        uint32_t color) {
+  RichMessage rm;
+  rm.timestamp = ArchipelagoNetwork::GetCurrentTimestamp();
+  rm.populate_local_time();
+  rm.local_only = true; // never broadcast to /feed
+  rm.parts.push_back({"[System] " + text, color});
+  ap_network_.OnGlobalMessage(nullptr, rm, false);
+}
+
+void Application::ReportWebServerStart(
+    const EmbeddedWebServer::StartResult &result, bool streamer_mode) {
+  if (!result.attempted)
+    return; // server disabled in config — nothing to report
+
+  std::string addr = result.bind_address;
+  std::string port = std::to_string(result.port);
+  if (streamer_mode) {
+    addr = std::string(addr.size(), '*');
+    port = std::string(port.size(), '*');
+  }
+  if (addr.find(':') != std::string::npos)
+    addr = "[" + addr + "]";
+  std::string endpoint = addr + ":" + port;
+
+  if (result.success) {
+    PostSystemChatMessage("HTTP server listening on " + endpoint + ".",
+                          0xFF00FF00);
+  } else {
+    std::string body = "HTTP server failed to bind " + endpoint;
+    if (!streamer_mode && !result.error.empty())
+      body += " — " + result.error;
+    body += ". (Another instance using the same port?)";
+    PostSystemChatMessage(body, 0xFF0000FF);
+  }
+}
+
+std::string Application::BuildGraphHistoryJson() const {
+  std::lock_guard<std::mutex> lock(checks_history_mutex_);
+  const auto &history = checks_history_;
+  if (history.empty())
+    return "";
+
+  // Downsample to at most 500 points for the browser overlay
+  static constexpr size_t kMaxWebPoints = 500;
+  nlohmann::json j;
+  j["type"] = "graph_history";
+  nlohmann::json points = nlohmann::json::array();
+
+  if (history.size() <= kMaxWebPoints) {
+    for (const auto &snap : history) {
+      points.push_back({{"timestamp", snap.timestamp},
+                        {"checked", snap.checked_locations},
+                        {"total", snap.total_locations}});
+    }
+  } else {
+    double stride =
+        static_cast<double>(history.size() - 1) / (kMaxWebPoints - 1);
+    for (size_t i = 0; i < kMaxWebPoints; ++i) {
+      size_t idx = std::min(static_cast<size_t>(i * stride),
+                            history.size() - 1);
+      const auto &snap = history[idx];
+      points.push_back({{"timestamp", snap.timestamp},
+                        {"checked", snap.checked_locations},
+                        {"total", snap.total_locations}});
+    }
+  }
+
+  j["points"] = points;
+  return j.dump();
+}
+
+void Application::ClearChecksHistory() {
+  std::lock_guard<std::mutex> lock(checks_history_mutex_);
+  checks_history_.clear();
+  checks_history_server_url_.clear();
+}
+
+void Application::SaveChecksHistory() {
+  auto path = Config::GetConfigDir() / "checks_history.json";
+  std::ofstream out(path, std::ios::trunc);
+  if (!out)
+    return;
+
+  std::lock_guard<std::mutex> lock(checks_history_mutex_);
+  nlohmann::json j;
+  j["server_url"] = checks_history_server_url_;
+  nlohmann::json points = nlohmann::json::array();
+  for (const auto &snap : checks_history_) {
+    points.push_back({{"t", snap.timestamp},
+                      {"c", snap.checked_locations},
+                      {"n", snap.total_locations}});
+  }
+  j["points"] = points;
+  out << j.dump();
+}
+
+void Application::LoadChecksHistory() {
+  auto path = Config::GetConfigDir() / "checks_history.json";
+  std::ifstream in(path);
+  if (!in)
+    return;
+
+  std::lock_guard<std::mutex> lock(checks_history_mutex_);
+  try {
+    nlohmann::json j = nlohmann::json::parse(in);
+    if (j.contains("server_url"))
+      checks_history_server_url_ = j["server_url"].get<std::string>();
+    if (j.contains("points") && j["points"].is_array()) {
+      for (const auto &p : j["points"]) {
+        ChecksSnapshot snap;
+        snap.timestamp = p["t"].get<double>();
+        snap.checked_locations = p["c"].get<int>();
+        snap.total_locations = p["n"].get<int>();
+        checks_history_.push_back(snap);
+      }
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "Error loading checks history: " << e.what() << std::endl;
+    checks_history_.clear();
+    checks_history_server_url_.clear();
+  }
 }
 
 void Application::RenderUI(std::tm *current_tm) {
