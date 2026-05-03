@@ -7,6 +7,12 @@
 #include <sstream>
 
 #ifdef _WIN32
+// GetTickCount64 requires Windows Vista (0x0600). MinGW defaults to an
+// older target than MSVC; bump it before <windows.h> drags in headers.
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
 #include <windows.h>
 #else
 #include <signal.h>
