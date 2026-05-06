@@ -28,7 +28,7 @@ As the project started becoming functional, it made sense to add a few more feat
 * Custom font support
 * Substring search filter for most windows
 
-With an increasing number of users, the feature set is continuing to expand and the project continues to be under active development as of April 2026.
+With an increasing number of users, the feature set is continuing to expand and the project continues to be under active development as of May 2026.
 
 ## Features
 
@@ -40,6 +40,7 @@ With an increasing number of users, the feature set is continuing to expand and 
 * **Spoiler Sphere Tracker**: Load a spoiler log to visualize the logical progression of your multiworld.  For each of your connected slots, the default view shows the unchecked locations in the earliest sphere that contains unchecked locations. You can also view the sphere-based playthrough for all players.
 * **Tracker**: Shows all unchecked locations in your connected slots. Future support is planned for integrated logic to determine which locations are reachable with your current items.
 * **Multiworld Overview**: Using the tracker API from the Archipelago server, display real-time statistics showing checked locations, total locations, and games completed across all players.
+* **Profiles**: Run multiple independent profiles (settings, window layout, tracker URL, graph history) side by side — useful for participating in more than one Archipelago event simultaneously. Each profile is locked to a single instance; second instances see a profile picker with the option to switch, fork, or take over.
 
 ### Streamer & OBS Integration
 * **Streamer Mode**: Avoids accidentally revealing the server name and port number in the UI and status messages when sharing the screen.
@@ -47,6 +48,8 @@ With an increasing number of users, the feature set is continuing to expand and 
 * **Real-Time Overlays**:
     * **Item Feed**: A sliding vertical feed of items (similar to the in-game UI) that updates via WebSocket.
     * **Progress Overview**: A dynamic header/footer showing multiworld completion percentages and location counts.
+    * **Checks Graph**: A line graph of total location checks over time, persisted across restarts.
+    * **Stats**: Per-slot progress bars, a rotating "notable players" callout (most ahead / falling behind / most idle / not yet started), and a CSS-only fireworks goal popup.
 * **Custom Styling**: Overlays are provided with default CSS that can be easily customized via OBS's "Custom CSS" field.
 
 ### Technical & UI Highlights
@@ -60,7 +63,13 @@ With an increasing number of users, the feature set is continuing to expand and 
 
 ## General Usage
 
-The first time Axolotl is run, it will create a configuration file in `~/.config/axolotl/` (Linux) or `%APPDATA%/axolotl/` (Windows).  This file will be updated as you make changes to the settings in the client.
+The first time Axolotl is run, it will create a configuration directory under `axolotl-apclient`:
+
+* **Linux**: `$XDG_CONFIG_HOME/axolotl-apclient/` if set, otherwise `~/.config/axolotl-apclient/`
+* **Windows**: `%APPDATA%\axolotl-apclient\`
+* **macOS**: `~/Library/Application Support/axolotl-apclient/`
+
+Cached data packages and PopTracker packs live alongside, under `axolotl-apclient` in `$XDG_CACHE_HOME` (or `~/.cache/`) on Linux, `%LOCALAPPDATA%\axolotl-apclient\cache\` on Windows, and `~/Library/Caches/axolotl-apclient/` on macOS. The configuration files are updated as you make changes to settings in the client.
 
 The first time that the application is run, UI will look something like this:
 
@@ -134,7 +143,7 @@ If a previous instance crashed (the lock owner is no longer alive, or the machin
 `File → Profiles...` opens the management window. From there you can:
 
 - See all profiles, sorted by most recently used.
-- **Create** a new profile, forked from the current one (preserves UI scale, fonts, HTTP server settings, window geometry — but not slot connections, server URL, or graph history).
+- **Create** a new profile, forked from the current one. The fork copies the full `config.yaml` (server URL, slot connections, tracker URL, UI scale, fonts, HTTP server settings, window geometry, all toggles) and `imgui.ini` (window layout). Caches (data packages, PopTracker packs) are shared at the install level. Graph history (`checks_history.json`) is **not** copied, so the new profile starts with an empty checks history.
 - **Switch** to another profile. This saves the current profile's state, releases its lock, and re-launches Axolotl in the chosen profile.
 - **Delete** a profile (only when it's not currently in use by another instance).
 
@@ -348,7 +357,7 @@ Example: `http://127.0.0.1:3621/stats?mine=cycle&notable=ahead,not_started`
 
 #### Rotation Animations
 
-The default rotation transition is a quick crossfade. The shipped CSS includes two alternative presets — _index-card slide-and-tuck_ and _horizontal slide_ — as commented blocks at the bottom of `stats.css`. To swap, comment out the default `.rotation-item.entering` / `.leaving` rules and uncomment one of the alternatives.
+The default rotation transition is a quick crossfade. `/stats.css` ships with two commented-out alternative presets at the bottom — _index-card slide-and-tuck_ and _horizontal slide_. To use one, copy its block from `/stats.css`, uncomment it, and paste it into your OBS browser source's Custom CSS field; that override beats the bundled default.
 
 Each section has `overflow: hidden`, so any animation that escapes the section's bounding box is clipped (slide-style transitions won't bleed into adjacent OBS scene elements).
 
@@ -409,7 +418,7 @@ http://127.0.0.1:3621/stats?players=Alice,Bob&mine=cycle
 .slot-row.is-mine .slot-name { color: #ffeb3b; }
 ```
 
-**Dedicated goal-popup browser source — fullscreen celebration with a 25% opaque dim, transparent the rest of the time.** Use `/stats` as a separate OBS browser source layered on top of your scene (no query params needed); set the Custom CSS below. The two stats sections are hidden, so the source is visually empty most of the time; when a goal fires, the popup spans the whole source and dims the scene behind it to 25% opacity:
+**Dedicated goal-popup browser source — fullscreen celebration with a lightly dimmed background (25% opacity), transparent the rest of the time.** Use `/stats` as a separate OBS browser source layered on top of your scene (no query params needed); set the Custom CSS below. The two stats sections are hidden, so the source is visually empty most of the time; when a goal fires, the popup spans the whole source and dims the scene behind it:
 ```css
 #my-slots, #notable { display: none; }
 #goal-popup { grid-row: 1 / -1; }
