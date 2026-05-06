@@ -1,0 +1,491 @@
+body {
+    margin: 0;
+    padding: 0;
+    /* Dark background for desktop browsers. OBS overrides this to transparent via default Custom CSS. */
+    background-color: #1e1e24;
+    overflow: hidden;
+    color: white;
+
+    /* Default font — override in OBS Custom CSS:
+       body { font-family: 'Your Font Name'; } */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+    /* Customizable via OBS Custom CSS — see documentation for the full list. */
+    --stats-bar-bg: rgba(0, 0, 0, 0.3);
+    --stats-text-color: #fff;
+    --stats-text-outline-color: #000;
+    --stats-text-outline-width: 4px;
+    --stats-show-game: 1;
+    --stats-show-percent: 1;
+    --stats-show-counts: 1;
+    --stats-mine-cycle-seconds: 5;
+    --stats-notable-cycle-seconds: 7;
+    --stats-rotation-transition-seconds: 0.4;
+    --stats-idle-threshold-seconds: 600;
+    --stats-goal-duration: 5s;
+    --stats-goal-color: #4caf50;
+    --stats-goal-bg: #1e1e24;
+    --stats-goal-fireworks: 1;
+    /* Comma-separated palette for the burst sparks, sparkles, and mini
+       bursts. Each particle picks one of these at random, so the popup
+       feels like a real fireworks show instead of a single-hue flash. */
+    --stats-burst-palette: '#ff3b3b, #ff9d00, #ffeb3b, #4caf50, #2196f3, #ab47bc';
+}
+
+#stats-container {
+    width: 100vw;
+    height: 100vh;
+    box-sizing: border-box;
+    padding: 8px;
+    /* Grid lets the goal popup occupy the same cell as either #my-slots
+       or #notable, so OBS Custom CSS can pick which area the popup
+       overlays just by changing `#goal-popup { grid-row: ... }`. */
+    display: grid;
+    grid-template-rows: auto minmax(80px, auto);
+    grid-template-columns: 1fr;
+    gap: 12px;
+    /* Keep rows at their content size and park leftover space at the
+       bottom; otherwise grid auto-stretches the rows to fill the viewport,
+       which makes the notable card look centered with a huge gap between
+       it and the slot rows above. */
+    align-content: start;
+    /* Required so the absolutely-positioned #goal-popup is anchored to
+       its assigned grid cell instead of escaping to the viewport. */
+    position: relative;
+}
+
+/* Sections clip their contents so transitions can't leak into adjacent
+   OBS scene elements. */
+.section {
+    position: relative;
+    overflow: hidden;
+}
+
+#my-slots {
+    grid-row: 1;
+    grid-column: 1;
+    /* Use flex gap for inter-row spacing instead of margin-bottom on each
+       slot row, so a single-row layout (cycle / latest mode) doesn't have
+       a trailing 6px under the row. */
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+#notable { grid-row: 2; grid-column: 1; }
+
+/* Default: overlay the notable section. To overlay #my-slots instead,
+   override in OBS Custom CSS:  `#goal-popup { grid-row: 1; }` */
+#goal-popup {
+    grid-row: 2;
+    grid-column: 1;
+    /* Absolute positioning with explicit grid placement uses the grid
+       area as the containing block, so `inset: 0` covers the chosen
+       cell exactly without affecting layout when hidden. */
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    pointer-events: none;
+    /* Establish a size container so `.goal-text` can scale via cqh/cqw. */
+    container-type: size;
+}
+
+/* ====== Slot rows (#my-slots) ====== */
+
+.slot-row {
+    display: flex;
+    flex-direction: column;
+    text-shadow:
+        calc(-1 * var(--stats-text-outline-width)) 0 var(--stats-text-outline-color),
+        var(--stats-text-outline-width) 0 var(--stats-text-outline-color),
+        0 calc(-1 * var(--stats-text-outline-width)) var(--stats-text-outline-color),
+        0 var(--stats-text-outline-width) var(--stats-text-outline-color);
+}
+
+.slot-row .slot-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    color: var(--stats-text-color);
+    font-weight: bold;
+    font-size: 1.1em;
+    padding: 0 4px 2px;
+}
+
+.slot-row .slot-name { flex: 1 1 auto; }
+
+.slot-row .slot-game {
+    flex: 0 0 auto;
+    font-weight: normal;
+    font-size: 0.85em;
+    opacity: 0.85;
+    margin-left: 8px;
+}
+
+/* Progress bar primitives — shared by slot rows in #my-slots and the
+   ahead/behind cards in #notable. */
+.slot-bar-container {
+    position: relative;
+    width: 100%;
+}
+
+.slot-bar-track {
+    height: 24px;
+    background-color: rgba(0, 0, 0, 0.7);
+    border: 1px solid #fcfcfc;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.slot-bar-fill {
+    height: 100%;
+    width: 0%;
+    /* Red at 0% (hue 0) to green at 100% (hue 120). Same ramp as /overview. */
+    background-color: hsl(calc(var(--pct, 0) * 1.2), 60%, 40%);
+    transition: width 0.5s ease-out, background-color 2.0s ease-out;
+}
+
+.slot-row.completed .slot-bar-fill {
+    background-color: var(--stats-goal-color);
+}
+
+.slot-bar-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95em;
+    font-weight: bold;
+    color: var(--stats-text-color);
+    text-shadow: 1px 1px 2px #000;
+    pointer-events: none;
+}
+
+.slot-percent { margin-right: 0.25em; }
+.slot-counts  { font-weight: normal; opacity: 0.9; }
+
+/* CSS-variable visibility toggles. JS reads --stats-show-* via
+   getComputedStyle and adds .hide-game / .hide-percent / .hide-counts
+   to <body> — necessary because the body[style*=...] inline-attribute
+   trick doesn't pick up vars set from a <style> block (OBS Custom CSS). */
+body.hide-game    .slot-game    { display: none; }
+body.hide-counts  .slot-counts  { display: none; }
+body.hide-percent .slot-percent { display: none; }
+
+/* ====== Notable cards (#notable) ====== */
+
+.card {
+    padding: 8px 12px;
+    background: var(--stats-bar-bg);
+    border-radius: 4px;
+    color: var(--stats-text-color);
+    text-shadow:
+        calc(-1 * var(--stats-text-outline-width)) 0 var(--stats-text-outline-color),
+        var(--stats-text-outline-width) 0 var(--stats-text-outline-color),
+        0 calc(-1 * var(--stats-text-outline-width)) var(--stats-text-outline-color),
+        0 var(--stats-text-outline-width) var(--stats-text-outline-color);
+}
+
+.card .card-label {
+    font-size: 0.85em;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.card .card-body {
+    font-size: 1.1em;
+    font-weight: bold;
+    margin-top: 2px;
+}
+
+.card .card-detail {
+    font-size: 0.85em;
+    font-weight: normal;
+    opacity: 0.85;
+    margin-left: 6px;
+}
+
+/* Card category labels are written into .card-label by JS, which reads
+   the --label-* CSS variables below at build time. To localize, override
+   the variables in OBS Custom CSS. */
+
+/* ahead/behind layout: slot name on the left, progress bar on the right;
+   game name on its own line below. */
+.card .card-progress-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    margin-top: 4px;
+}
+
+.card .card-progress-line .card-slot-name {
+    flex: 0 0 auto;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.card .card-progress-line .slot-bar-container {
+    flex: 1 1 auto;
+}
+
+.card .card-game-line {
+    margin-top: 4px;
+    font-size: 0.85em;
+    opacity: 0.85;
+}
+
+/* Tweak ::before content above by replacing the rule entirely in OBS Custom
+   CSS, e.g. `.card.idle .card-label::before { content: 'AFK: '; }` */
+
+/* ====== Rotation transitions ======
+   JS adds .entering / .leaving classes to .rotation-item children for
+   --stats-rotation-transition-seconds. Both items overlap during the
+   transition (leaving is positioned absolutely so they share the slot).
+   Default style is a quick crossfade. To pick a different style, comment
+   the default block and uncomment one of the alternatives below. */
+
+@keyframes stats-fade-in   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes stats-fade-out  { from { opacity: 1; } to { opacity: 0; } }
+
+@keyframes stats-card-in {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes stats-card-out {
+    /* "Index card sliding off the top, then to the back of the stack." */
+    0%   { transform: translateY(0)    scale(1);    opacity: 1; z-index: 2; }
+    50%  { transform: translateY(-40%) scale(0.92); opacity: 0.7; z-index: 2; }
+    100% { transform: translateY(0)    scale(0.85); opacity: 0;   z-index: 0; }
+}
+
+@keyframes stats-slide-in-right { from { transform: translateX( 100%); } to { transform: translateX(0); } }
+@keyframes stats-slide-out-left { from { transform: translateX(0);    } to { transform: translateX(-100%); } }
+
+/* === Default: Crossfade === */
+.rotation-item.entering {
+    animation: stats-fade-in calc(var(--stats-rotation-transition-seconds) * 1s) forwards;
+}
+.rotation-item.leaving {
+    animation: stats-fade-out calc(var(--stats-rotation-transition-seconds) * 1s) forwards;
+    position: absolute;
+    inset: 0;
+}
+
+/* === Alternative: Index-card slide-and-tuck (uncomment to use; comment the crossfade above) ===
+.rotation-item.entering {
+    animation: stats-card-in calc(var(--stats-rotation-transition-seconds) * 1s) forwards;
+}
+.rotation-item.leaving {
+    animation: stats-card-out calc(var(--stats-rotation-transition-seconds) * 1s) forwards;
+    position: absolute;
+    inset: 0;
+}
+*/
+
+/* === Alternative: Horizontal slide ===
+.rotation-item.entering {
+    animation: stats-slide-in-right calc(var(--stats-rotation-transition-seconds) * 1s) forwards;
+}
+.rotation-item.leaving {
+    animation: stats-slide-out-left calc(var(--stats-rotation-transition-seconds) * 1s) forwards;
+    position: absolute;
+    inset: 0;
+}
+*/
+
+/* ====== Goal popup ======
+   Hidden by default; JS adds .visible to play the celebration. */
+
+#goal-popup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Paint the background always so it fades together with opacity on
+       both ends; setting it only on .visible makes the bg vanish
+       instantly when the class is removed (the opacity transition then
+       has no bg left to fade). */
+    background-color: var(--stats-goal-bg);
+    opacity: 0;
+    transition: opacity 0.3s ease-out;
+}
+
+#goal-popup.visible {
+    opacity: 1;
+}
+
+#goal-popup .goal-text {
+    position: relative;
+    z-index: 2;
+    /* Scale with the popup's own size: ~12% of the popup's height,
+       floored / capped so it stays sensible on tiny and huge sources. */
+    font-size: clamp(1.25rem, 12cqh, 4rem);
+    font-weight: bold;
+    text-align: center;
+    color: var(--stats-text-color);
+    text-shadow:
+        calc(-1 * var(--stats-text-outline-width)) 0 var(--stats-text-outline-color),
+        var(--stats-text-outline-width) 0 var(--stats-text-outline-color),
+        0 calc(-1 * var(--stats-text-outline-width)) var(--stats-text-outline-color),
+        0 var(--stats-text-outline-width) var(--stats-text-outline-color);
+    opacity: 0;
+}
+
+#goal-popup .goal-name {
+    color: var(--stats-goal-color);
+}
+
+#goal-popup.visible .goal-text {
+    animation: stats-goal-text var(--stats-goal-duration) forwards;
+}
+
+@keyframes stats-goal-text {
+    0%   { opacity: 0; }
+    8%   { opacity: 1; }
+    92%  { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+/* The .fireworks container hosts a central flash via ::before and a
+   batch of JS-spawned shooting sparks. .sparkles hosts JS-spawned
+   twinkling dots scattered across the popup. */
+#goal-popup .fireworks,
+#goal-popup .sparkles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    overflow: hidden;
+}
+
+/* Central flash — a brief, bright punch at the start of the popup. */
+#goal-popup .fireworks::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 0 60px 30px white, 0 0 140px 60px var(--stats-goal-color);
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0;
+}
+
+#goal-popup.visible .fireworks::before {
+    animation: stats-flash 0.55s ease-out forwards;
+}
+
+@keyframes stats-flash {
+    0%   { transform: translate(-50%, -50%) scale(0);   opacity: 0; }
+    18%  { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
+}
+
+/* Smaller secondary explosions scattered across the popup, in addition
+   to the central flash. JS spawns them with random --x / --y / --delay /
+   --size. */
+#goal-popup .mini-burst {
+    position: absolute;
+    left: var(--x);
+    top: var(--y);
+    width: var(--size, 80px);
+    height: var(--size, 80px);
+    margin-left: calc(var(--size, 80px) / -2);
+    margin-top:  calc(var(--size, 80px) / -2);
+    border-radius: 50%;
+    /* JS sets `color` per element from the palette; the radial-gradient
+       picks it up via currentColor. */
+    color: var(--stats-goal-color);
+    background: radial-gradient(circle,
+        rgba(255, 255, 255, 0.9) 0%,
+        currentColor 28%,
+        transparent 70%);
+    transform: scale(0);
+    opacity: 0;
+}
+
+#goal-popup.visible .mini-burst {
+    animation: stats-mini-burst 0.45s var(--delay, 0s) ease-out forwards;
+}
+
+@keyframes stats-mini-burst {
+    0%   { transform: scale(0);   opacity: 0; }
+    25%  { transform: scale(1);   opacity: 1; }
+    100% { transform: scale(1.7); opacity: 0; }
+}
+
+/* Each .spark is generated by JS with --dx / --dy / --delay / --size
+   inline styles. They all originate at the popup's center and shoot
+   outward to (--dx, --dy) before fading. */
+#goal-popup .spark {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--size, 6px);
+    height: var(--size, 6px);
+    margin-left: calc(var(--size, 6px) / -2);
+    margin-top:  calc(var(--size, 6px) / -2);
+    /* JS sets `color` per element from the palette. */
+    color: var(--stats-goal-color);
+    background: currentColor;
+    border-radius: 50%;
+    box-shadow:
+        0 0 6px currentColor,
+        0 0 14px currentColor;
+    opacity: 0;
+}
+
+#goal-popup.visible .spark {
+    animation: stats-spark-shoot 0.9s var(--delay, 0s)
+        cubic-bezier(0.18, 0.7, 0.3, 1) forwards;
+}
+
+@keyframes stats-spark-shoot {
+    0%   { transform: translate(0, 0);                       opacity: 0; }
+    8%   { transform: translate(calc(var(--dx) * 0.05),
+                                calc(var(--dy) * 0.05));     opacity: 1; }
+    70%  {                                                    opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy));       opacity: 0; }
+}
+
+/* Per-particle twinkles. JS scatters them with --x / --y / --delay /
+   --size; they fade in/out independently for a continuous shimmer
+   throughout the popup duration. */
+#goal-popup .sparkle {
+    position: absolute;
+    left: var(--x);
+    top: var(--y);
+    width: var(--size, 3px);
+    height: var(--size, 3px);
+    margin-left: calc(var(--size, 3px) / -2);
+    margin-top:  calc(var(--size, 3px) / -2);
+    /* JS sets `color` per element from the palette. */
+    color: var(--stats-goal-color);
+    background: currentColor;
+    border-radius: 50%;
+    box-shadow: 0 0 6px currentColor;
+    opacity: 0;
+}
+
+#goal-popup.visible .sparkle {
+    animation: stats-sparkle-twinkle 1.2s var(--delay, 0s)
+        ease-in-out infinite;
+}
+
+@keyframes stats-sparkle-twinkle {
+    0%, 100% { opacity: 0; transform: scale(0.4); }
+    50%      { opacity: 1; transform: scale(1.3); }
+}
+
+/* `--stats-goal-fireworks: 0` (read by JS into body class) disables the
+   burst + sparkle layers, leaving just the text. */
+body.no-goal-fireworks #goal-popup .fireworks,
+body.no-goal-fireworks #goal-popup .sparkles {
+    display: none;
+}

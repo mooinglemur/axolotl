@@ -126,6 +126,11 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
             // Defer history send until after we release clients_mutex_ — the
             // provider acquires its own (foreign) mutex and may be slow.
             send_graph_history = true;
+          } else if (path == "/stats") {
+            stats_clients_.insert(&webSocket);
+            if (!last_stats_payload_.empty()) {
+              webSocket.sendText(last_stats_payload_);
+            }
           } else {
             webSocket.close(1008, "Invalid endpoint");
           }
@@ -143,6 +148,7 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
           feed_clients_.erase(&webSocket);
           overview_clients_.erase(&webSocket);
           graph_clients_.erase(&webSocket);
+          stats_clients_.erase(&webSocket);
         } else if (msg->type == ix::WebSocketMessageType::Error) {
           if (debug_mode_) {
             std::cout << "[WebServer] WebSocket error: "
@@ -338,6 +344,30 @@ ix::HttpResponsePtr EmbeddedWebServer::HandleRequest(
         std::string((const char *)chart_min_js, chart_min_js_len));
   }
 
+  if (path == "/stats") {
+    ix::WebSocketHttpHeaders headers;
+    headers["Content-Type"] = "text/html";
+    return std::make_shared<ix::HttpResponse>(
+        200, "OK", ix::HttpErrorCode::Ok, headers,
+        std::string((const char *)stats_html, stats_html_len));
+  }
+
+  if (path == "/stats.js") {
+    ix::WebSocketHttpHeaders headers;
+    headers["Content-Type"] = "application/javascript";
+    return std::make_shared<ix::HttpResponse>(
+        200, "OK", ix::HttpErrorCode::Ok, headers,
+        std::string((const char *)stats_js, stats_js_len));
+  }
+
+  if (path == "/stats.css") {
+    ix::WebSocketHttpHeaders headers;
+    headers["Content-Type"] = "text/css";
+    return std::make_shared<ix::HttpResponse>(
+        200, "OK", ix::HttpErrorCode::Ok, headers,
+        std::string((const char *)stats_css, stats_css_len));
+  }
+
   ix::WebSocketHttpHeaders headers;
   headers["Content-Type"] = "text/plain";
   return std::make_shared<ix::HttpResponse>(
@@ -352,6 +382,33 @@ void EmbeddedWebServer::BroadcastGraphEvent(
               << graph_clients_.size() << " clients" << std::endl;
   }
   for (auto *ws : graph_clients_) {
+    ws->sendText(json_payload);
+  }
+}
+
+void EmbeddedWebServer::BroadcastStatsEvent(
+    const std::string &json_payload) {
+  std::lock_guard<std::mutex> lock(clients_mutex_);
+  last_stats_payload_ = json_payload;
+  if (debug_mode_ && !stats_clients_.empty()) {
+    std::cout << "[WebServer] Broadcasting stats event to "
+              << stats_clients_.size() << " clients" << std::endl;
+  }
+  for (auto *ws : stats_clients_) {
+    ws->sendText(json_payload);
+  }
+}
+
+void EmbeddedWebServer::BroadcastGoalEvent(
+    const std::string &json_payload) {
+  // Discrete event — no caching; clients connecting after the fact don't
+  // see prior goals (would be stale celebration anyway).
+  std::lock_guard<std::mutex> lock(clients_mutex_);
+  if (debug_mode_ && !stats_clients_.empty()) {
+    std::cout << "[WebServer] Broadcasting goal event to "
+              << stats_clients_.size() << " clients" << std::endl;
+  }
+  for (auto *ws : stats_clients_) {
     ws->sendText(json_payload);
   }
 }

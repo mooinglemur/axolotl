@@ -1308,6 +1308,11 @@ bool ArchipelagoNetwork::Update() {
           }
           ForceTrackerSync();
         }
+        // Re-fire stats so /stats subscribers learn about the new
+        // is_mine set immediately, instead of waiting for the first
+        // tracker poll or item to flow through.
+        if (on_stats_updated)
+          on_stats_updated(*global_stats_, live_server_url_);
         changed = true;
       }
     }

@@ -300,3 +300,133 @@ body {
     --graph-text-outline-width: 3;
 }
 ```
+
+### Stats Browser Source
+
+This is served at `/stats`. It rolls three independent overlays into a single page:
+
+- **My slots** — progress bars for the slots this Axolotl client is connected to (or any slots named via `?players=`). Display as a stacked column, cycle one at a time, or always show only the slot that most recently sent a check. The bar fill follows the same red→yellow→green hue ramp as `/overview`, with `xx.x% (xxx/yyyyy)` overlaid in the bar.
+- **Notable players** — a rotating callout that picks among _most ahead_ (highest checked/total ratio under 100%), _falling behind_ (lowest non-zero ratio), _most idle_ (longest silence past the idle threshold, displayed as live elapsed time like `10m0s` or `1d6h`), and a _not yet started_ counter. Categories that don't currently qualify are skipped, so the rotation only ever shows useful information.
+- **Goal popup** — a celebratory animation (CSS-only fireworks + sparkles) that pops up whenever any player in the multiworld reaches their goal. By default it overlays the notable card while it's on screen; one Custom CSS line moves it over the my-slots column instead.
+
+The page is laid out as a CSS grid: `#my-slots` is in row 1 and `#notable` is in row 2. `#goal-popup` is placed in row 2 by default — it shares that cell with `#notable` and overlays it during a celebration. To overlay the my-slots cell instead, set `#goal-popup { grid-row: 1; }` in OBS Custom CSS.
+
+The page has a dark background (`#1e1e24`) for desktop browsers — OBS overrides it to transparent via the default Custom CSS.
+
+#### Query Parameters
+
+| Param | Default | Description |
+|---|---|---|
+| `mine` | `all` | `#my-slots` display mode: `all` (stacked), `cycle` (rotate one at a time), or `latest` (show only the slot that most recently sent a check). |
+| `players` | _(empty)_ | Comma-separated player names. When present, the "my slots" set uses these instead of the connected-slots default — useful for watching a friend's progress instead of your own. |
+| `notable` | `ahead,behind,idle,not_started` | Which notable categories are eligible to appear in the rotation. |
+| `showtop` | `1` | Number of "ahead" cards to expose. Default `1` shows just _Most ahead_; higher values add _2nd most ahead_, _3rd most ahead_, etc. as additional rotation cards. Behind / idle / not-started are unaffected. |
+
+Example: `http://127.0.0.1:3621/stats?mine=cycle&notable=ahead,not_started`
+
+#### CSS Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `font-family` | `Segoe UI` | Set on `body`. |
+| `--stats-bar-bg` | `rgba(0, 0, 0, 0.3)` | Notable-card background. |
+| `--stats-text-color` | `#fff` | Body text. |
+| `--stats-text-outline-color` | `#000` | Text outline (matches Graph). |
+| `--stats-text-outline-width` | `4px` | Outline thickness. |
+| `--stats-show-game` | `1` | Set to `0` to hide the game name on slot rows. |
+| `--stats-show-percent` | `1` | Set to `0` to hide the percentage. |
+| `--stats-show-counts` | `1` | Set to `0` to hide the `87/120` counts. |
+| `--stats-mine-cycle-seconds` | `5` | Rotation interval for `?mine=cycle`. |
+| `--stats-notable-cycle-seconds` | `7` | Rotation interval for the notable section. |
+| `--stats-rotation-transition-seconds` | `0.4` | Duration of the entering/leaving animation when an item rotates. |
+| `--stats-idle-threshold-seconds` | `600` | A slot is only eligible for the `idle` category once it's been silent this long. |
+| `--stats-goal-duration` | `5s` | How long the goal popup stays on screen. |
+| `--stats-goal-color` | `#4caf50` | Accent color for the player name in the popup text. |
+| `--stats-goal-bg` | `#1e1e24` | Opaque background painted under the popup so the section beneath it doesn't bleed through. Set to `transparent` for an alpha-blended celebration over the live stats. |
+| `--stats-goal-fireworks` | `1` | Set to `0` to disable the spark + sparkle layers (text-only popup). |
+| `--stats-burst-palette` | `'#ff3b3b, #ff9d00, #ffeb3b, #4caf50, #2196f3, #ab47bc'` | Quoted, comma-separated list of colors. Each spark, mini-burst, and sparkle picks one at random. Each spark wave shares a single base color so they read as a coordinated burst, with ~25% of sparks rerolled to other colors for variety. |
+
+#### Rotation Animations
+
+The default rotation transition is a quick crossfade. The shipped CSS includes two alternative presets — _index-card slide-and-tuck_ and _horizontal slide_ — as commented blocks at the bottom of `stats.css`. To swap, comment out the default `.rotation-item.entering` / `.leaving` rules and uncomment one of the alternatives.
+
+Each section has `overflow: hidden`, so any animation that escapes the section's bounding box is clipped (slide-style transitions won't bleed into adjacent OBS scene elements).
+
+#### Examples
+
+**Goal popup only — hide the live stats sections, and let the popup fill the page:**
+```css
+#my-slots, #notable { display: none; }
+#stats-container { grid-template-rows: 1fr; }
+#goal-popup { grid-row: 1; }
+```
+
+**Move the goal popup to overlay the my-slots column instead of the notable card:**
+```css
+#goal-popup { grid-row: 1; }
+```
+
+**Make the goal popup cover the whole browser source (useful when you're showing only one of `#my-slots` or `#notable` and want the celebration to fill the entire scene):**
+```css
+#goal-popup { grid-row: 1 / -1; }
+```
+
+Progress bar fill colors transition from red (0%) through yellow to green (100%) automatically — same hue ramp as `/overview`. To override with a flat color, target `.slot-bar-fill` directly:
+```css
+.slot-bar-fill { background-color: #4caf50 !important; }
+```
+
+**Tighter rotations, no game names, gold goal accents:**
+```css
+body {
+    --stats-mine-cycle-seconds: 3;
+    --stats-notable-cycle-seconds: 4;
+    --stats-show-game: 0;
+    --stats-goal-color: #ffb300;
+}
+```
+
+**Watch specific players from another stream and pop up only on goals:**
+```
+http://127.0.0.1:3621/stats?players=Alice,Bob&mine=cycle
+```
+```css
+#notable { display: none; }
+```
+
+**Highlight your own slot rows in OBS:**
+```css
+.slot-row.is-mine .slot-name { color: #ffeb3b; }
+```
+
+**Dedicated goal-popup browser source — fullscreen celebration with a 25% opaque dim, transparent the rest of the time.** Use `/stats` as a separate OBS browser source layered on top of your scene (no query params needed); set the Custom CSS below. The two stats sections are hidden, so the source is visually empty most of the time; when a goal fires, the popup spans the whole source and dims the scene behind it to 25% opacity:
+```css
+#my-slots, #notable { display: none; }
+#goal-popup { grid-row: 1 / -1; }
+body { --stats-goal-bg: rgba(30, 30, 36, 0.25); }
+```
+
+#### Localizing Notable Card Labels
+
+Each notable category title (the `MOST AHEAD:` / `FALLING BEHIND:` / `MOST IDLE:` / `NOT STARTED:` text) is read by JS from CSS variables at the moment a card is built, so OBS Custom CSS can replace the strings without touching the JS:
+
+| Variable | Default | Used for |
+|---|---|---|
+| `--label-ahead-1` | `'Most ahead: '` | the rank-1 "ahead" card |
+| `--label-ahead-n` | `'most ahead: '` | suffix appended after the ordinal on rank-2+ ahead cards. Full label = `<ordinal> ` + this. |
+| `--label-behind` | `'Falling behind: '` | behind card |
+| `--label-idle` | `'Most idle: '` | idle card |
+| `--label-not-started` | `'Not started: '` | not-started card |
+
+Example — Spanish labels:
+```css
+:root {
+    --label-ahead-1: 'Más avanzado: ';
+    --label-ahead-n: 'más avanzado: ';
+    --label-behind: 'Más retrasado: ';
+    --label-idle: 'Más inactivo: ';
+    --label-not-started: 'No iniciado: ';
+}
+```
+
+Note: the ordinal prefix on rank-2+ ahead cards (`2nd `, `3rd `, `122nd `, …) is generated in JS using English suffixes, so a layout that places the ordinal differently (e.g. French `2ème plus avancé`) will read awkwardly. For non-English deployments, the simplest path is `?showtop=1`.

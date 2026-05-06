@@ -36,6 +36,8 @@ public:
                           const std::string &category);
   void BroadcastOverviewEvent(const std::string &json_payload);
   void BroadcastGraphEvent(const std::string &json_payload);
+  void BroadcastStatsEvent(const std::string &json_payload);
+  void BroadcastGoalEvent(const std::string &json_payload);
   void SetDebugMode(bool debug) { debug_mode_ = debug; }
   void SetGraphHistoryProvider(std::function<std::string()> provider) {
     graph_history_provider_ = std::move(provider);
@@ -52,7 +54,9 @@ private:
   std::map<ix::WebSocket *, FeedClientPrefs> feed_clients_;
   std::set<ix::WebSocket *> overview_clients_;
   std::set<ix::WebSocket *> graph_clients_;
+  std::set<ix::WebSocket *> stats_clients_;
   std::string last_overview_payload_;
+  std::string last_stats_payload_;
   bool is_running_ = false;
   bool debug_mode_ = false;
   std::function<std::string()> graph_history_provider_;

@@ -1141,6 +1141,51 @@ bool ChatWindow::HandleCommand(const std::string &line) {
         }
       }
       return true;
+    } else if (subcmd == "goal") {
+      // Synthesize a Goal RichMessage and route it through the
+      // on_message_received callback. That fires the /stats goal_event
+      // broadcast (and the /feed entry) without going through
+      // OnGlobalMessage — so we don't pollute chat history or actually
+      // mark the slot as completed.
+      int sender_slot = -1;
+      if (!selected_send_slot_name_.empty()) {
+        if (auto session = ap_network_.GetSession(selected_send_slot_name_)) {
+          if (session->IsConnected()) {
+            sender_slot =
+                (session->GetTeam() << 16) | session->GetLocalSlot();
+          }
+        }
+      }
+      if (sender_slot < 0) {
+        for (const auto &session : ap_network_.GetSessions()) {
+          if (session->IsConnected()) {
+            sender_slot =
+                (session->GetTeam() << 16) | session->GetLocalSlot();
+            break;
+          }
+        }
+      }
+      if (sender_slot < 0) {
+        ap_network_.OnStatusMessage(
+            nullptr, "[/debug goal] No connected slot to goal as.");
+        return true;
+      }
+
+      RichMessage rm;
+      rm.type = "Goal";
+      rm.sender_slot = sender_slot;
+      rm.timestamp = ArchipelagoNetwork::GetCurrentTimestamp();
+      rm.populate_local_time();
+      std::string slot_name = ap_network_.ResolvePlayerName(sender_slot);
+      rm.parts.push_back(
+          {slot_name, 0xFFFF00FF, sender_slot, "player_id"});
+      rm.parts.push_back(
+          {" completed their goal!", 0xFFFFFFFF, -1, "text"});
+
+      if (ap_network_.on_message_received) {
+        ap_network_.on_message_received(rm);
+      }
+      return true;
     }
     return true; // Handle all /debug subcommands locally
   }

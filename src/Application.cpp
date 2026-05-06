@@ -429,6 +429,16 @@ bool Application::InitializeUI() {
       j["flags"] = msg.item_flags;
 
       web_server_->BroadcastFeedEvent(j.dump(), msg.type);
+
+      // Discrete celebration trigger for the /stats overlay popup.
+      if (msg.type == "Goal" && msg.sender_slot >= 0) {
+        nlohmann::json gj;
+        gj["type"] = "goal_event";
+        gj["slot"] = msg.sender_slot;
+        gj["name"] = ap_network_.ResolvePlayerName(msg.sender_slot);
+        gj["game"] = ap_network_.ResolvePlayerGame(msg.sender_slot);
+        web_server_->BroadcastGoalEvent(gj.dump());
+      }
     }
   };
 
@@ -481,6 +491,49 @@ bool Application::InitializeUI() {
         gj["checked"] = stats.checked_locations;
         gj["total"] = stats.total_locations;
         web_server_->BroadcastGraphEvent(gj.dump());
+      }
+
+      // Broadcast per-slot stats snapshot for the /stats overlay.
+      {
+        nlohmann::json sj;
+        sj["type"] = "stats_snapshot";
+        sj["now"] = ArchipelagoNetwork::GetCurrentTimestamp();
+        nlohmann::json slots = nlohmann::json::array();
+        const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
+
+        // Build a universe of slot ids from session metadata as well as
+        // stats.slot_info — the latter is empty until the first tracker
+        // poll or item flow, but `my-slots` should appear as soon as a
+        // session connects (with 0/0 progress).
+        std::set<int> all_slot_ids;
+        for (const auto &[slot_id, _] : stats.slot_info)
+          all_slot_ids.insert(slot_id);
+        for (const auto &session : ap_network_.GetSessions()) {
+          for (const auto &[slot_id, _] : session->GetPlayerNames())
+            all_slot_ids.insert(slot_id);
+        }
+
+        for (int slot_id : all_slot_ids) {
+          nlohmann::json slot;
+          slot["slot"] = slot_id;
+          slot["name"] = ap_network_.ResolvePlayerName(slot_id);
+          slot["game"] = ap_network_.ResolvePlayerGame(slot_id);
+          auto it = stats.slot_info.find(slot_id);
+          if (it != stats.slot_info.end()) {
+            slot["checked"] = it->second.checked_locations;
+            slot["total"] = it->second.total_locations;
+            slot["last_activity"] = it->second.last_activity_time;
+          } else {
+            slot["checked"] = 0;
+            slot["total"] = 0;
+            slot["last_activity"] = 0.0;
+          }
+          slot["completed"] = stats.completed_slots.count(slot_id) > 0;
+          slot["is_mine"] = my_slots.count(slot_id) > 0;
+          slots.push_back(slot);
+        }
+        sj["slots"] = slots;
+        web_server_->BroadcastStatsEvent(sj.dump());
       }
     }
   };
