@@ -352,6 +352,16 @@ The default rotation transition is a quick crossfade. The shipped CSS includes t
 
 Each section has `overflow: hidden`, so any animation that escapes the section's bounding box is clipped (slide-style transitions won't bleed into adjacent OBS scene elements).
 
+#### Previewing the Goal Popup
+
+Real goals are rare, so styling the celebration is hard to iterate on. Type `/debug goal` into the in-app chat to fire a synthetic goal event:
+
+- The currently selected slot (or the first connected session if none is selected) is used as the "player" — the popup shows your real player name and game so you can see what your audience would.
+- The event is delivered straight to `/stats`'s `goal_event` channel and to the `/feed` overlay, but **not** through the network message handler — so chat history isn't touched and the slot isn't actually marked as completed in `/overview` or anywhere else.
+- Run it as many times as you want while tweaking Custom CSS; the popup queue handles back-to-back triggers gracefully.
+
+Requires at least one connected session; otherwise you'll see `[/debug goal] No connected slot to goal as.` in the chat.
+
 #### Examples
 
 **Goal popup only — hide the live stats sections, and let the popup fill the page:**
