@@ -18,8 +18,13 @@ body {
     --stats-show-game: 1;
     --stats-show-percent: 1;
     --stats-show-counts: 1;
+    --stats-show-mine: 1;
+    --stats-show-overall: 1;
+    --stats-show-notable: 1;
+    --stats-show-waiting: 1;
     --stats-mine-cycle-seconds: 5;
     --stats-notable-cycle-seconds: 7;
+    --stats-unified-cycle-seconds: 5;
     --stats-rotation-transition-seconds: 0.4;
     --stats-idle-threshold-seconds: 600;
     --stats-goal-duration: 5s;
@@ -37,11 +42,11 @@ body {
     height: 100vh;
     box-sizing: border-box;
     padding: 8px;
-    /* Grid lets the goal popup occupy the same cell as either #my-slots
-       or #notable, so OBS Custom CSS can pick which area the popup
-       overlays just by changing `#goal-popup { grid-row: ... }`. */
+    /* Grid lets the goal popup occupy the same cell as #my-slots,
+       #overall, or #notable, so OBS Custom CSS can pick which area the
+       popup overlays just by changing `#goal-popup { grid-row: ... }`. */
     display: grid;
-    grid-template-rows: auto minmax(80px, auto);
+    grid-template-rows: auto auto minmax(80px, auto);
     grid-template-columns: 1fr;
     gap: 12px;
     /* Keep rows at their content size and park leftover space at the
@@ -71,12 +76,103 @@ body {
     flex-direction: column;
     gap: 6px;
 }
-#notable { grid-row: 2; grid-column: 1; }
+#overall { grid-row: 2; grid-column: 1; }
+#notable { grid-row: 3; grid-column: 1; }
+/* #unified is the single rotation region for `?layout=unified`; spans
+   the whole stats area and is hidden in the default stacked layout. */
+#unified {
+    grid-row: 1 / -1;
+    grid-column: 1;
+    display: none;
+}
 
-/* Default: overlay the notable section. To overlay #my-slots instead,
-   override in OBS Custom CSS:  `#goal-popup { grid-row: 1; }` */
+/* "Waiting for connection" overlay — covers the whole stats area when
+   the page has no connection (initial page load before any slot
+   connects, after disconnecting all slots, or while the /stats
+   WebSocket itself is closed). JS adds `body.has-connection` once a
+   snapshot with at least one connected slot arrives; until then this
+   section is visible. */
+#waiting {
+    grid-row: 1 / -1;
+    grid-column: 1;
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    background-color: var(--stats-goal-bg);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--stats-text-color);
+    font-weight: bold;
+    text-align: center;
+    text-shadow: 1px 1px 2px #000;
+    /* Same scaling trick as the goal text — track popup-area height. */
+    container-type: size;
+    /* Fade in/out when JS toggles `body.has-connection`. */
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.3s ease-out;
+}
+
+#waiting::before {
+    content: var(--label-waiting, 'Waiting for connection…');
+    position: relative;
+    z-index: 2;
+    font-size: clamp(1rem, 8cqh, 2.5rem);
+    padding: 0 1em;
+}
+
+body.has-connection #waiting {
+    opacity: 0;
+}
+
+/* Animated background — a glowing light-blue point that bounces
+   horizontally with a fading afterglow trail of ghost dots. The trail
+   dots share the same animation but with progressively positive delays
+   so each one lags slightly behind the leader. */
+#waiting .waiting-anim {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+
+#waiting .dot {
+    position: absolute;
+    top: 50%;
+    width: 18px;
+    height: 18px;
+    margin-top: -9px;
+    margin-left: -9px;
+    border-radius: 50%;
+    background: #87cefa;
+    box-shadow:
+        0 0 14px #87cefa,
+        0 0 32px #87cefa,
+        0 0 64px rgba(135, 206, 250, 0.6);
+    animation: waiting-bounce 6s ease-in-out infinite;
+    animation-fill-mode: both;
+}
+
+#waiting .trail-1 { animation-delay: 0.06s; opacity: 0.70; }
+#waiting .trail-2 { animation-delay: 0.12s; opacity: 0.50; }
+#waiting .trail-3 { animation-delay: 0.18s; opacity: 0.32; }
+#waiting .trail-4 { animation-delay: 0.24s; opacity: 0.16; }
+
+@keyframes waiting-bounce {
+    0%   { left: 8%;  }
+    50%  { left: 92%; }
+    100% { left: 8%;  }
+}
+
+/* Default: overlay the notable section. To overlay #my-slots or
+   #overall instead, override in OBS Custom CSS:
+     `#goal-popup { grid-row: 1; }`  (over #my-slots)
+     `#goal-popup { grid-row: 2; }`  (over #overall)
+   `grid-row: 1 / -1` covers the whole stats area. */
 #goal-popup {
-    grid-row: 2;
+    grid-row: 3;
     grid-column: 1;
     /* Absolute positioning with explicit grid placement uses the grid
        area as the containing block, so `inset: 0` covers the chosen
@@ -119,6 +215,11 @@ body {
     font-size: 0.85em;
     opacity: 0.85;
     margin-left: 8px;
+    /* Soft drop shadow instead of the chunky outline that .slot-row
+       inherits — at 0.85em the outline is proportionally heavy and can
+       smother thin separator characters like `/` between adjacent
+       glyphs. */
+    text-shadow: 1px 1px 2px #000;
 }
 
 /* Progress bar primitives — shared by slot rows in #my-slots and the
@@ -168,13 +269,45 @@ body {
 .slot-percent { margin-right: 0.25em; }
 .slot-counts  { font-weight: normal; opacity: 0.9; }
 
+/* ====== Overall card (#overall) ======
+   Reuses the .slot-row markup so typography, bar styling, header
+   layout (bold name on the left, faded "game" / summary on the right)
+   are all inherited. The leading "Overall" label sits in the slot-name
+   slot; "X/Y games finished" sits in the slot-game slot. */
+.overall-summary { white-space: nowrap; }
+
+/* ====== Unified layout (?layout=unified) ======
+   Hide the per-section regions and let #unified take the whole stats
+   area, cycling through every card (slots, overall, notable) in one
+   rotating slot. The goal popup automatically expands too. */
+body.layout-unified #my-slots,
+body.layout-unified #overall,
+body.layout-unified #notable {
+    display: none;
+}
+body.layout-unified #unified {
+    display: block;
+}
+body.layout-unified #goal-popup {
+    grid-row: 1 / -1;
+}
+
 /* CSS-variable visibility toggles. JS reads --stats-show-* via
    getComputedStyle and adds .hide-game / .hide-percent / .hide-counts
    to <body> — necessary because the body[style*=...] inline-attribute
    trick doesn't pick up vars set from a <style> block (OBS Custom CSS). */
-body.hide-game    .slot-game    { display: none; }
+/* `--stats-show-game: 0` only suppresses the per-slot game name —
+   the overall card reuses .slot-game for its "X/Y games finished"
+   summary, which has nothing to do with a game name. */
+body.hide-game    .slot-row:not(.overall-content) .slot-game { display: none; }
 body.hide-counts  .slot-counts  { display: none; }
 body.hide-percent .slot-percent { display: none; }
+/* Section-level toggles: drive both stacked-mode visibility AND
+   unified-mode rotation skipping (the JS reads the same variables). */
+body.hide-mine    #my-slots     { display: none; }
+body.hide-overall #overall      { display: none; }
+body.hide-notable #notable      { display: none; }
+body.hide-waiting #waiting      { display: none; }
 
 /* ====== Notable cards (#notable) ====== */
 

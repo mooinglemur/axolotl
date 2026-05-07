@@ -315,10 +315,15 @@ body {
 This is served at `/stats`. It rolls three independent overlays into a single page:
 
 - **My slots** — progress bars for the slots this Axolotl client is connected to (or any slots named via `?players=`). Display as a stacked column, cycle one at a time, or always show only the slot that most recently sent a check. The bar fill follows the same red→yellow→green hue ramp as `/overview`, with `xx.x% (xxx/yyyyy)` overlaid in the bar.
+- **Overall** — a multiworld progress bar (mirroring the legacy `/overview` content) plus a "X/Y games finished" counter. Same red→green hue ramp and bar styling as the per-slot rows.
 - **Notable players** — a rotating callout that picks among _most ahead_ (highest checked/total ratio under 100%), _falling behind_ (lowest non-zero ratio), _most idle_ (longest silence past the idle threshold, displayed as live elapsed time like `10m0s` or `1d6h`), and a _not yet started_ counter. Categories that don't currently qualify are skipped, so the rotation only ever shows useful information.
-- **Goal popup** — a celebratory animation (CSS-only fireworks + sparkles) that pops up whenever any player in the multiworld reaches their goal. By default it overlays the notable card while it's on screen; one Custom CSS line moves it over the my-slots column instead.
+- **Goal popup** — a celebratory animation (CSS-only fireworks + sparkles) that pops up whenever any player in the multiworld reaches their goal. By default it overlays the notable card while it's on screen; one Custom CSS line moves it over my-slots or overall instead.
 
-The page is laid out as a CSS grid: `#my-slots` is in row 1 and `#notable` is in row 2. `#goal-popup` is placed in row 2 by default — it shares that cell with `#notable` and overlays it during a celebration. To overlay the my-slots cell instead, set `#goal-popup { grid-row: 1; }` in OBS Custom CSS.
+The page is laid out as a CSS grid with three rows: `#my-slots` in row 1, `#overall` in row 2, and `#notable` in row 3. `#goal-popup` is placed in row 3 by default — it shares that cell with `#notable` and overlays it during a celebration. To overlay a different row, set `#goal-popup { grid-row: 1; }` (my-slots), `2` (overall), or `1 / -1` (whole stats area).
+
+Hide any section you don't want via the `--stats-show-mine` / `--stats-show-overall` / `--stats-show-notable` CSS variables — e.g. `body { --stats-show-overall: 0; }`. These variables work in both stacked and unified layouts (in unified, they skip the matching cards from the rotation). The legacy `/overview` overlay remains available unchanged for existing setups.
+
+When no client session is connected — initial page load before any slot connects, or after disconnecting all slots — a `#waiting` overlay covers the whole stats area with a "Waiting for connection…" message (customizable via `--label-waiting`). It hides automatically once any of the user's slots is connected.
 
 The page has a dark background (`#1e1e24`) for desktop browsers — OBS overrides it to transparent via the default Custom CSS.
 
@@ -330,6 +335,7 @@ The page has a dark background (`#1e1e24`) for desktop browsers — OBS override
 | `players` | _(empty)_ | Comma-separated player names. When present, the "my slots" set uses these instead of the connected-slots default — useful for watching a friend's progress instead of your own. |
 | `notable` | `ahead,behind,idle,not_started` | Which notable categories are eligible to appear in the rotation. |
 | `showtop` | `1` | Number of "ahead" cards to expose. Default `1` shows just _Most ahead_; higher values add _2nd most ahead_, _3rd most ahead_, etc. as additional rotation cards. Behind / idle / not-started are unaffected. |
+| `layout` | `stacked` | `stacked` (default) shows the three sections — `#my-slots`, `#overall`, `#notable` — as separate stacked regions. `unified` hides those and instead shows a single rotating region that walks through every card in order: each my-slot row, the overall card, and each qualifying notable card. The goal popup automatically expands to cover the whole stats area in unified mode. |
 
 Example: `http://127.0.0.1:3621/stats?mine=cycle&notable=ahead,not_started`
 
@@ -345,8 +351,13 @@ Example: `http://127.0.0.1:3621/stats?mine=cycle&notable=ahead,not_started`
 | `--stats-show-game` | `1` | Set to `0` to hide the game name on slot rows. |
 | `--stats-show-percent` | `1` | Set to `0` to hide the percentage. |
 | `--stats-show-counts` | `1` | Set to `0` to hide the `87/120` counts. |
+| `--stats-show-mine` | `1` | Set to `0` to hide the my-slots section in stacked layout, and skip my-slot rows from the unified rotation. |
+| `--stats-show-overall` | `1` | Same, for the overall card. |
+| `--stats-show-notable` | `1` | Same, for the notable section. |
+| `--stats-show-waiting` | `1` | Set to `0` to disable the "Waiting for connection…" overlay entirely (the page will be transparent until a connected snapshot arrives). |
 | `--stats-mine-cycle-seconds` | `5` | Rotation interval for `?mine=cycle`. |
 | `--stats-notable-cycle-seconds` | `7` | Rotation interval for the notable section. |
+| `--stats-unified-cycle-seconds` | `5` | Rotation interval for `?layout=unified`. |
 | `--stats-rotation-transition-seconds` | `0.4` | Duration of the entering/leaving animation when an item rotates. |
 | `--stats-idle-threshold-seconds` | `600` | A slot is only eligible for the `idle` category once it's been silent this long. |
 | `--stats-goal-duration` | `5s` | How long the goal popup stays on screen. |
@@ -375,7 +386,11 @@ Requires at least one connected session; otherwise you'll see `[/debug goal] No 
 
 **Goal popup only — hide the live stats sections, and let the popup fill the page:**
 ```css
-#my-slots, #notable { display: none; }
+body {
+    --stats-show-mine: 0;
+    --stats-show-overall: 0;
+    --stats-show-notable: 0;
+}
 #stats-container { grid-template-rows: 1fr; }
 #goal-popup { grid-row: 1; }
 ```
@@ -390,7 +405,7 @@ Requires at least one connected session; otherwise you'll see `[/debug goal] No 
 #goal-popup { grid-row: 1 / -1; }
 ```
 
-Progress bar fill colors transition from red (0%) through yellow to green (100%) automatically — same hue ramp as `/overview`. To override with a flat color, target `.slot-bar-fill` directly:
+**Override the bar fill with a flat color (instead of the red→yellow→green hue ramp):**
 ```css
 .slot-bar-fill { background-color: #4caf50 !important; }
 ```
@@ -400,17 +415,22 @@ Progress bar fill colors transition from red (0%) through yellow to green (100%)
 body {
     --stats-mine-cycle-seconds: 3;
     --stats-notable-cycle-seconds: 4;
+    --stats-unified-cycle-seconds: 3;
     --stats-show-game: 0;
     --stats-goal-color: #ffb300;
 }
 ```
+(`--stats-unified-cycle-seconds` only matters in `?layout=unified`; safe to leave in for stacked sources too.)
 
-**Watch specific players from another stream and pop up only on goals:**
+**Spotlight specific players' progress and pop up only on goals:**
 ```
 http://127.0.0.1:3621/stats?players=Alice,Bob&mine=cycle
 ```
 ```css
-#notable { display: none; }
+body {
+    --stats-show-overall: 0;
+    --stats-show-notable: 0;
+}
 ```
 
 **Highlight your own slot rows in OBS:**
@@ -418,11 +438,37 @@ http://127.0.0.1:3621/stats?players=Alice,Bob&mine=cycle
 .slot-row.is-mine .slot-name { color: #ffeb3b; }
 ```
 
-**Dedicated goal-popup browser source — fullscreen celebration with a lightly dimmed background (25% opacity), transparent the rest of the time.** Use `/stats` as a separate OBS browser source layered on top of your scene (no query params needed); set the Custom CSS below. The two stats sections are hidden, so the source is visually empty most of the time; when a goal fires, the popup spans the whole source and dims the scene behind it:
+**Single rotating region cycling through everything (slots, overall, notable):**
+```
+http://127.0.0.1:3621/stats?layout=unified
+```
+
+**Hide the overall card (keep my-slots and notable). Works in both layouts:**
 ```css
-#my-slots, #notable { display: none; }
-#goal-popup { grid-row: 1 / -1; }
-body { --stats-goal-bg: rgba(30, 30, 36, 0.25); }
+body { --stats-show-overall: 0; }
+```
+
+**Show only the overall card (works in both layouts):**
+```css
+body {
+    --stats-show-mine: 0;
+    --stats-show-notable: 0;
+}
+```
+
+**Dedicated goal-popup browser source — fullscreen celebration with a lightly dimmed background (25% opacity), transparent the rest of the time.** Use `/stats` as a separate OBS browser source layered on top of your scene (no query params needed); set the Custom CSS below. All three stats sections are hidden, so the source is visually empty most of the time; when a goal fires, the popup spans the whole source and dims the scene behind it:
+```css
+body {
+    --stats-show-mine: 0;
+    --stats-show-overall: 0;
+    --stats-show-notable: 0;
+    --stats-goal-bg: rgba(30, 30, 36, 0.25);
+}
+/* Collapse the grid into a single row so the popup actually fills
+   the browser source instead of being clipped to the (now-empty)
+   default 3-row track sizes. */
+#stats-container { grid-template-rows: 1fr; }
+#goal-popup { grid-row: 1; }
 ```
 
 #### Localizing Notable Card Labels
@@ -436,6 +482,9 @@ Each notable category title (the `MOST AHEAD:` / `FALLING BEHIND:` / `MOST IDLE:
 | `--label-behind` | `'Falling behind: '` | behind card |
 | `--label-idle` | `'Most idle: '` | idle card |
 | `--label-not-started` | `'Not started: '` | not-started card |
+| `--label-overall` | `'Overall'` | leading label on the overall card (sits where a slot's name would go) |
+| `--label-overall-suffix` | `'games finished'` | trailing summary text after the X/Y count on the overall card |
+| `--label-waiting` | `'Waiting for connection…'` | text shown by the `#waiting` overlay when no client session is connected |
 
 Example — Spanish labels:
 ```css
@@ -445,6 +494,8 @@ Example — Spanish labels:
     --label-behind: 'Más retrasado: ';
     --label-idle: 'Más inactivo: ';
     --label-not-started: 'No iniciado: ';
+    --label-overall: 'Total';
+    --label-overall-suffix: 'juegos terminados';
 }
 ```
 

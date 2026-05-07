@@ -261,6 +261,12 @@ public:
   ArchipelagoSession *AddSession(const std::string &name);
   void RemoveSession(const std::string &name);
   void DisconnectAll();
+  // Force-fire the on_stats_updated callback so /stats subscribers
+  // pick up an immediate state change. Used when something flips a
+  // session's connection state synchronously from outside the polling
+  // loop in Update() (e.g. the UI's Disconnect button), where the
+  // loop's transition detection would otherwise miss it.
+  void NotifyStateChanged();
   void ClearGlobalStats();
   void ClearSessionStats(int global_slot);
 

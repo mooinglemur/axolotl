@@ -103,6 +103,10 @@ void ArchipelagoSession::Disconnect() {
   is_connected_ = false;
   user_wants_connection_ = false;
   manager_->OnStatusMessage(this, "Disconnected by user");
+  // Synchronous flip — Update()'s transition detector won't catch this
+  // (was_connected and IsConnected() are both false by the time it
+  // runs), so push a stats update directly.
+  manager_->NotifyStateChanged();
 }
 
 ArchipelagoSession::State ArchipelagoSession::GetState() const {
@@ -1233,9 +1237,21 @@ void ArchipelagoNetwork::RemoveSession(const std::string &name) {
       SetHintsDirty();
       if (on_history_updated)
         on_history_updated();
+      // Re-fire stats so /stats subscribers learn the slot is gone
+      // immediately, instead of waiting for the next tracker poll or
+      // item flow.
+      if (on_stats_updated)
+        on_stats_updated(*global_stats_, live_server_url_);
       return;
     }
   }
+}
+
+void ArchipelagoNetwork::NotifyStateChanged() {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+  slots_dirty_ = true;
+  if (on_stats_updated)
+    on_stats_updated(*global_stats_, live_server_url_);
 }
 
 void ArchipelagoNetwork::DisconnectAll() {

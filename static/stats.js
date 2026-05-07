@@ -17,6 +17,13 @@ const eligibleNotable = new Set(
 const showTopAhead = Math.max(1, Math.min(99,
     parseInt(params.get('showtop') || '1', 10) || 1));
 
+// Layout mode: 'stacked' (default — three independent sections) or
+// 'unified' (single cycling region that walks through every card).
+const layoutMode = (params.get('layout') || 'stacked').toLowerCase();
+if (layoutMode === 'unified') {
+    document.body.classList.add('layout-unified');
+}
+
 // ---- WebSocket plumbing ------------------------------------------------
 
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -42,6 +49,10 @@ function connect() {
         }
     };
     socket.onclose = () => {
+        // The embedded server is gone (Axolotl quit, web server toggled
+        // off, etc.). Drop the connection class so the #waiting overlay
+        // reappears until reconnect.
+        document.body.classList.remove('has-connection');
         console.log('Disconnected. Reconnecting in 5s...');
         setTimeout(connect, 5000);
     };
@@ -78,6 +89,10 @@ function syncVisibilityClasses() {
     document.body.classList.toggle('hide-game',    isOff('--stats-show-game'));
     document.body.classList.toggle('hide-percent', isOff('--stats-show-percent'));
     document.body.classList.toggle('hide-counts',  isOff('--stats-show-counts'));
+    document.body.classList.toggle('hide-mine',    isOff('--stats-show-mine'));
+    document.body.classList.toggle('hide-overall', isOff('--stats-show-overall'));
+    document.body.classList.toggle('hide-notable', isOff('--stats-show-notable'));
+    document.body.classList.toggle('hide-waiting', isOff('--stats-show-waiting'));
     document.body.classList.toggle('no-goal-fireworks',
                                    isOff('--stats-goal-fireworks'));
 }
@@ -125,6 +140,14 @@ function formatIdleDelta(seconds) {
 
 function onSnapshot(snap) {
     syncVisibilityClasses();
+
+    // "Connected" = at least one slot in this snapshot is one of the
+    // client's own connected sessions. When false, the #waiting overlay
+    // covers the rest of the page; we still update the underlying
+    // sections so they're current the moment a connection lands.
+    const connected = snap.slots.some(s => s.is_mine);
+    document.body.classList.toggle('has-connection', connected);
+
     // Apply ?players= override to flag is_watched.
     if (playersOverride.length > 0) {
         const wanted = new Set(playersOverride);
@@ -134,8 +157,13 @@ function onSnapshot(snap) {
     } else {
         for (const slot of snap.slots) slot.is_watched = false;
     }
-    renderMySlots(snap);
-    renderNotable(snap);
+    if (layoutMode === 'unified') {
+        renderUnified(snap);
+    } else {
+        renderMySlots(snap);
+        renderOverall(snap);
+        renderNotable(snap);
+    }
 }
 
 // Helpers for picking the "my-slots" set.
@@ -187,11 +215,11 @@ function renderMySlots(snap) {
     if (mineCycleIdx >= mine.length) mineCycleIdx = 0;
     renderMineSingle(mine[mineCycleIdx]);
     if (!mineCycleTimer) {
-        scheduleMineCycle(mine);
+        scheduleMineCycle();
     }
 }
 
-function scheduleMineCycle(mine) {
+function scheduleMineCycle() {
     const seconds = readNumberVar('--stats-mine-cycle-seconds', 5);
     mineCycleTimer = setTimeout(() => {
         mineCycleTimer = null;
@@ -203,7 +231,7 @@ function scheduleMineCycle(mine) {
         }
         mineCycleIdx = (mineCycleIdx + 1) % fresh.length;
         renderMineSingle(fresh[mineCycleIdx]);
-        scheduleMineCycle(fresh);
+        scheduleMineCycle();
     }, seconds * 1000);
 }
 
@@ -514,6 +542,169 @@ function buildSlotRow(slot) {
     row.appendChild(header);
     row.appendChild(buildProgressBar(slot));
     return row;
+}
+
+// ---- #overall -----------------------------------------------------------
+//
+// Mirrors the legacy /overview content (multiworld progress bar + games
+// finished count). Built once per layout transition and updated in place
+// on each snapshot so the bar's CSS transitions can play smoothly.
+
+const overallEl = document.getElementById('overall');
+
+function buildOverallContent(snap) {
+    // Same shape as a per-slot row so typography and bar styling all
+    // carry over: the slot-name slot is the "Overall" label, and the
+    // slot-game slot holds the "X/Y games finished" summary.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'overall-content slot-row';
+    wrapper.innerHTML = `
+        <div class="slot-header">
+            <span class="slot-name overall-name"></span>
+            <span class="slot-game overall-summary">
+                <span class="overall-completed">0</span>/<span class="overall-totalgames">0</span>
+                <span class="overall-summary-suffix"></span>
+            </span>
+        </div>
+        <div class="slot-bar-container">
+            <div class="slot-bar-track"><div class="slot-bar-fill"></div></div>
+            <div class="slot-bar-text">
+                <span class="slot-percent">0.0%</span>
+                <span class="slot-counts">(<span class="slot-checked">0</span>/<span class="slot-total">0</span>)</span>
+            </div>
+        </div>
+    `;
+    updateOverallContent(wrapper, snap);
+    return wrapper;
+}
+
+function updateOverallContent(container, snap) {
+    const total   = snap.total_locations   || 0;
+    const checked = snap.checked_locations || 0;
+    const ratio   = total > 0 ? Math.max(0, Math.min(1, checked / total)) : 0;
+    const pct     = ratio * 100;
+
+    const fill = container.querySelector('.slot-bar-fill');
+    fill.style.width = `${pct.toFixed(2)}%`;
+    fill.style.setProperty('--pct', pct.toFixed(2));
+    container.querySelector('.slot-percent').textContent = `${pct.toFixed(1)}%`;
+    container.querySelector('.slot-checked').textContent = checked;
+    container.querySelector('.slot-total').textContent = total;
+    container.querySelector('.overall-completed').textContent  = snap.completed_games || 0;
+    container.querySelector('.overall-totalgames').textContent = snap.total_games || 0;
+    container.querySelector('.overall-name').textContent =
+        readLabelVar('--label-overall', 'Overall');
+    container.querySelector('.overall-summary-suffix').textContent =
+        readLabelVar('--label-overall-suffix', 'games finished');
+}
+
+function renderOverall(snap) {
+    let content = overallEl.querySelector(':scope > .overall-content');
+    if (!content) {
+        content = buildOverallContent(snap);
+        overallEl.replaceChildren(content);
+    } else {
+        updateOverallContent(content, snap);
+    }
+}
+
+// ---- Unified layout (?layout=unified) -----------------------------------
+//
+// One rotating region that walks through every card the page can show:
+// my-slot rows, the overall card, then the qualifying notable cards, in
+// that order. Same swapRotationItem / key-based in-place refresh as the
+// individual sections, so a snapshot during a card's hold time refreshes
+// values without retriggering the rotation animation.
+
+const unifiedEl = document.getElementById('unified');
+let unifiedCycleIdx = 0;
+let unifiedCycleTimer = null;
+
+function buildUnifiedCardList(snap) {
+    // Read the same --stats-show-* variables that drive section visibility
+    // in stacked mode, so a single toggle disables a category in either
+    // layout.
+    const cs = getComputedStyle(document.body);
+    const skip = (name) => cs.getPropertyValue(name).trim() === '0';
+
+    const cards = [];
+    if (!skip('--stats-show-mine')) {
+        for (const slot of pickMySlots(snap)) cards.push({ kind: 'slot', slot });
+    }
+    if (!skip('--stats-show-overall') &&
+        ((snap.total_locations || 0) > 0 || (snap.total_games || 0) > 0)) {
+        cards.push({ kind: 'overall', snap });
+    }
+    if (!skip('--stats-show-notable')) {
+        for (const c of computeNotable(snap)) {
+            cards.push({ kind: 'notable', card: c });
+        }
+    }
+    return cards;
+}
+
+function renderUnified(snap) {
+    const cards = buildUnifiedCardList(snap);
+    if (cards.length === 0) {
+        clearTimeout(unifiedCycleTimer);
+        unifiedCycleTimer = null;
+        unifiedEl.replaceChildren();
+        return;
+    }
+    if (unifiedCycleIdx >= cards.length) unifiedCycleIdx = 0;
+    renderUnifiedSingle(cards[unifiedCycleIdx]);
+    if (!unifiedCycleTimer && cards.length > 1) {
+        scheduleUnifiedCycle();
+    } else if (cards.length <= 1) {
+        clearTimeout(unifiedCycleTimer);
+        unifiedCycleTimer = null;
+    }
+}
+
+function scheduleUnifiedCycle() {
+    const seconds = readNumberVar('--stats-unified-cycle-seconds', 5);
+    unifiedCycleTimer = setTimeout(() => {
+        unifiedCycleTimer = null;
+        if (!lastSnapshot) return;
+        const cards = buildUnifiedCardList(lastSnapshot);
+        if (cards.length === 0) {
+            unifiedEl.replaceChildren();
+            return;
+        }
+        unifiedCycleIdx = (unifiedCycleIdx + 1) % cards.length;
+        renderUnifiedSingle(cards[unifiedCycleIdx]);
+        if (cards.length > 1) scheduleUnifiedCycle();
+    }, seconds * 1000);
+}
+
+function renderUnifiedSingle(card) {
+    let key, fresh;
+    if (card.kind === 'slot') {
+        key = `slot:${card.slot.slot}`;
+        fresh = buildSlotRow(card.slot);
+        fresh.classList.add('rotation-item');
+    } else if (card.kind === 'overall') {
+        key = 'overall';
+        fresh = buildOverallContent(card.snap);
+        fresh.classList.add('rotation-item');
+    } else {
+        const c = card.card;
+        key = (c.kind === 'not_started')
+            ? 'not_started'
+            : (c.kind === 'ahead'
+                ? `ahead:${c.rank}:${c.slot.slot}`
+                : `${c.kind}:${c.slot.slot}`);
+        fresh = buildNotableCard(c);
+    }
+    fresh.dataset.rotationKey = key;
+
+    const existing = unifiedEl.querySelector(':scope > .rotation-item:not(.leaving)');
+    if (existing && existing.dataset.rotationKey === key) {
+        existing.className = fresh.className;
+        existing.replaceChildren(...fresh.children);
+        return;
+    }
+    swapRotationItem(unifiedEl, fresh);
 }
 
 // ---- Goal popup --------------------------------------------------------

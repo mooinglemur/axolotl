@@ -498,6 +498,13 @@ bool Application::InitializeUI() {
         nlohmann::json sj;
         sj["type"] = "stats_snapshot";
         sj["now"] = ArchipelagoNetwork::GetCurrentTimestamp();
+        // Multiworld totals — same fields the /overview overlay receives,
+        // re-exposed here so /stats can render an overall progress card
+        // without spinning up a second WebSocket.
+        sj["total_games"] = stats.total_games;
+        sj["completed_games"] = fully_completed;
+        sj["total_locations"] = stats.total_locations;
+        sj["checked_locations"] = stats.checked_locations;
         nlohmann::json slots = nlohmann::json::array();
         const std::set<int> &my_slots = ap_network_.GetConnectedSlots();
 
