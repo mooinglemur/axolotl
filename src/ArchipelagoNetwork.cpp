@@ -809,10 +809,14 @@ bool ArchipelagoSession::Update() {
             continue; // Skip if disabled
           }
           auto &data = packet["data"];
-          std::string source =
-              data.contains("source") ? data["source"].get<std::string>() : "";
-          std::string cause =
-              data.contains("cause") ? data["cause"].get<std::string>() : "";
+          auto get_str = [&](const char *key) -> std::string {
+            auto it = data.find(key);
+            return (it != data.end() && it->is_string())
+                       ? it->get<std::string>()
+                       : "";
+          };
+          std::string source = get_str("source");
+          std::string cause = get_str("cause");
 
           RichMessage rm;
           rm.timestamp = msg_time;

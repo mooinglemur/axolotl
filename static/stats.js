@@ -112,6 +112,12 @@ function computeCardLabel(card) {
     return '';
 }
 
+// Floor to one decimal so a near-complete game (e.g. 99.95%) never reads as
+// 100.0% while checks remain.
+function floorPct(pct) {
+    return (Math.floor(pct * 10) / 10).toFixed(1);
+}
+
 // English ordinal suffix: 1→"st", 2→"nd", 3→"rd", 4..20→"th",
 // then the cycle continues (21st, 22nd, 23rd, 24th... 111th, 112th, 113th).
 function ordinalSuffix(n) {
@@ -493,7 +499,7 @@ function buildProgressBar(slot) {
 
         const pctEl = document.createElement('span');
         pctEl.className = 'slot-percent';
-        pctEl.textContent = `${(slot.checked / slot.total * 100).toFixed(1)}%`;
+        pctEl.textContent = `${floorPct(slot.checked / slot.total * 100)}%`;
         overlay.appendChild(pctEl);
 
         // Granular structure mirrors /overview so users can target/restyle
@@ -587,7 +593,7 @@ function updateOverallContent(container, snap) {
     const fill = container.querySelector('.slot-bar-fill');
     fill.style.width = `${pct.toFixed(2)}%`;
     fill.style.setProperty('--pct', pct.toFixed(2));
-    container.querySelector('.slot-percent').textContent = `${pct.toFixed(1)}%`;
+    container.querySelector('.slot-percent').textContent = `${floorPct(pct)}%`;
     container.querySelector('.slot-checked').textContent = checked;
     container.querySelector('.slot-total').textContent = total;
     container.querySelector('.overall-completed').textContent  = snap.completed_games || 0;

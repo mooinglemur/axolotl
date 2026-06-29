@@ -9,6 +9,12 @@ const wsUrl = `${protocol}//${window.location.host}/overview${window.location.se
 
 let socket = null;
 
+// Floor to one decimal so a near-complete game (e.g. 99.95%) never reads as
+// 100.0% while checks remain.
+function floorPct(pct) {
+    return (Math.floor(pct * 10) / 10).toFixed(1);
+}
+
 function connect() {
     socket = new WebSocket(wsUrl);
 
@@ -58,7 +64,7 @@ function updateOverview(data) {
         pct = Math.min(Math.max(pct, 0), 100);
         progressBarFill.style.width = `${pct}%`;
         progressBarFill.style.setProperty('--pct', pct);
-        document.getElementById('progress-percent').innerText = `${pct.toFixed(1)}%`;
+        document.getElementById('progress-percent').innerText = `${floorPct(pct)}%`;
     } else {
         progressBarFill.style.width = `0%`;
         progressBarFill.style.setProperty('--pct', 0);
