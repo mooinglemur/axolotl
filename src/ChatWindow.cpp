@@ -63,12 +63,13 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
     const char *label =
         (input_buf == server_url_) ? "Server URL" : "Server URL##Masked";
     ImGuiInputTextFlags flags =
-        (input_buf == server_url_) ? 0 : ImGuiInputTextFlags_ReadOnly;
+        ((input_buf == server_url_) ? 0 : ImGuiInputTextFlags_ReadOnly) |
+        ImGuiInputTextFlags_CallbackAlways;
     std::string old_url = live_server_url_;
     if (ImGui::InputText(label, input_buf,
                          (input_buf == server_url_) ? sizeof(server_url_)
                                                     : strlen(input_buf) + 1,
-                         flags)) {
+                         flags, &UrlWordSelect::Callback, &url_word_select_)) {
       if (input_buf == server_url_) {
         live_server_url_ = server_url_;
         ap_network_.SetServerUrl(live_server_url_);

@@ -243,6 +243,7 @@ set(SRC_FILES
     src/SpoilerLog.cpp
     src/SpoilerSphereTrackerWindow.cpp
     src/TrackerWindow.cpp
+    src/UrlWordSelect.cpp
     src/main.cpp
 )
 # Options

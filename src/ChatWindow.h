@@ -1,6 +1,7 @@
 #pragma once
 #include "ArchipelagoNetwork.h"
 #include "Config.h"
+#include "UrlWordSelect.h"
 #include "Window.h"
 #include <string>
 #include <vector>
@@ -22,6 +23,9 @@ private:
 
   char server_url_[256] = "archipelago.gg:0";
   char masked_url_[256] = "";
+  // ':' isn't a word boundary in ImGui, so "archipelago.gg:12345" would
+  // otherwise double-click-select as "gg:12345".
+  UrlWordSelect url_word_select_;
   std::string selected_send_slot_name_;
 
   std::string input_text_;
