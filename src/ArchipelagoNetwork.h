@@ -173,6 +173,7 @@ public:
 
 private:
   void HandleMessage(const ix::WebSocketMessagePtr &msg);
+  void ConfigureSocket();
   void SendConnect();
   void SendGetDataPackage(const std::vector<std::string> &games = {});
   void SendSync();
@@ -184,12 +185,12 @@ private:
   ix::WebSocket webSocket_;
   std::string original_url_;
   std::string password_;
-  bool is_connected_ = false;
-  bool user_wants_connection_ = false;
+  // Read from the UI thread (GetState) and written from the network and
+  // websocket threads, so these have to be atomic.
+  std::atomic<bool> is_connected_{false};
+  std::atomic<bool> user_wants_connection_{false};
   bool tried_wss_ = false;
   bool tried_ws_ = false;
-  bool pending_fallback_ = false;
-  std::string pending_url_;
   int local_slot_ = -1;
   int team_ = 0;
   double connection_error_time_ = -1.0;
@@ -210,8 +211,28 @@ private:
 
   std::deque<std::string> outgoing_queue_;
   std::mutex outgoing_mutex_;
+
+  // Deferred websocket lifecycle requests. Written from the UI thread
+  // (Connect/Disconnect), the websocket thread (the TLS fallback in
+  // HandleMessage) and the network thread; consumed by
+  // ProcessNetworkCommands(). pending_mutex_ is a strict leaf — only ever held
+  // across plain assignments, never across a call.
+  std::mutex pending_mutex_;
   bool pending_start_ = false;
   bool pending_stop_ = false;
+  bool pending_configure_ = false;
+  bool pending_fallback_ = false;
+  std::string pending_url_;
+
+  // Serializes the ix::WebSocket lifecycle calls in ProcessNetworkCommands().
+  // ix::WebSocket::start() and stop() both mutate an internal std::thread with
+  // no locking of their own, so two threads reaching them at once can join it
+  // twice and wedge forever.
+  //
+  // MUST NOT be acquired while holding ArchipelagoNetwork::state_mutex_:
+  // stop() joins the websocket thread, which may be inside HandleMessage()
+  // waiting on state_mutex_.
+  std::mutex socket_cmd_mutex_;
 
   // Shared Metadata
   std::shared_ptr<ServerMetadata> metadata_;

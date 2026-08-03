@@ -56,22 +56,39 @@ ArchipelagoSession::~ArchipelagoSession() {
 
 void ArchipelagoSession::Connect(const std::string &url,
                                  const std::string &password) {
-  original_url_ = url;
   password_ = password;
-  tried_wss_ = false;
-  tried_ws_ = false;
-  pending_fallback_ = false;
   connection_error_time_ = -1.0;
 
   metadata_ = manager_->GetOrCreateMetadata(url);
 
   std::string full_url = url;
-  if (full_url.find("://") == std::string::npos) {
-    tried_wss_ = true;
+  const bool implicit_scheme = (full_url.find("://") == std::string::npos);
+  if (implicit_scheme)
     full_url = "wss://" + full_url;
-  }
 
-  webSocket_.setUrl(full_url);
+  {
+    // Configuring the socket is deferred along with start/stop. Touching
+    // webSocket_ from here would race the network thread, which may be inside
+    // ProcessNetworkCommands() for this same session right now. original_url_
+    // and the tried_* flags share the lock because the TLS fallback in
+    // HandleMessage() reads and drives them from the websocket thread.
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    original_url_ = url;
+    tried_wss_ = implicit_scheme;
+    tried_ws_ = false;
+    pending_fallback_ = false;
+    pending_url_ = full_url;
+    pending_configure_ = true;
+    pending_start_ = true;
+    pending_stop_ = true;
+  }
+  user_wants_connection_ = true;
+  manager_->OnStatusMessage(this, "Connecting to " + full_url + "...");
+}
+
+// Applies the static socket configuration. Only called from
+// ProcessNetworkCommands(), with socket_cmd_mutex_ held and the socket stopped.
+void ArchipelagoSession::ConfigureSocket() {
   webSocket_.enableAutomaticReconnection();
   webSocket_.enablePerMessageDeflate();
 
@@ -88,18 +105,20 @@ void ArchipelagoSession::Connect(const std::string &url,
     tls_options.caFile = ca_path.string();
     webSocket_.setTLSOptions(tls_options);
   }
-
-  pending_url_ = full_url;
-  pending_start_ = true;
-  pending_stop_ = true;
-  user_wants_connection_ = true;
-  manager_->OnStatusMessage(this, "Connecting to " + full_url + "...");
 }
 
 void ArchipelagoSession::Disconnect() {
   if (!user_wants_connection_)
     return;
-  pending_stop_ = true;
+  {
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    pending_stop_ = true;
+    // Drop any queued start/configure, or a Connect() from moments ago would
+    // bring the socket straight back up after this stop.
+    pending_start_ = false;
+    pending_configure_ = false;
+    pending_fallback_ = false;
+  }
   is_connected_ = false;
   user_wants_connection_ = false;
   manager_->OnStatusMessage(this, "Disconnected by user");
@@ -162,6 +181,9 @@ void ArchipelagoSession::HandleMessage(const ix::WebSocketMessagePtr &msg) {
                          reason.find("handshake") != std::string::npos);
 
     if (is_tls_error) {
+      // Runs on the websocket thread; Update() consumes these on the network
+      // thread and Connect() writes them from the UI thread.
+      std::lock_guard<std::mutex> lock(pending_mutex_);
       if (tried_wss_ && !tried_ws_) {
         tried_ws_ = true;
         pending_url_ = "ws://" + original_url_;
@@ -178,13 +200,24 @@ void ArchipelagoSession::HandleMessage(const ix::WebSocketMessagePtr &msg) {
 
 bool ArchipelagoSession::Update() {
   bool changed = false;
-  if (pending_fallback_) {
+  bool do_fallback = false;
+  std::string fallback_url;
+  {
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    if (pending_fallback_) {
+      do_fallback = true;
+      pending_fallback_ = false;
+      pending_stop_ = true;
+      pending_start_ = true;
+      // pending_url_ is already set by HandleMessage
+      fallback_url = pending_url_;
+    }
+  }
+  if (do_fallback) {
+    // Outside pending_mutex_ — OnStatusMessage takes state_mutex_, and
+    // pending_mutex_ has to stay a leaf.
     manager_->OnStatusMessage(this,
-                              "Executing deferred fallback to " + pending_url_);
-    pending_fallback_ = false;
-    pending_stop_ = true;
-    pending_start_ = true;
-    // pending_url_ is already set
+                              "Executing deferred fallback to " + fallback_url);
     changed = true;
   }
 
@@ -925,17 +958,36 @@ void ArchipelagoSession::SendPacket(const json &packet) {
 }
 
 void ArchipelagoSession::ProcessNetworkCommands() {
-  if (pending_stop_) {
-    webSocket_.stop();
+  // Reached from the UI thread (AddSession, DisconnectAll) as well as the
+  // network thread's Update() loop. ix::WebSocket::start()/stop() are not
+  // thread-safe against each other, so without this two callers can join the
+  // socket's internal thread twice and block forever.
+  std::lock_guard<std::mutex> cmd_lock(socket_cmd_mutex_);
+
+  bool do_stop, do_configure, do_start;
+  std::string url;
+  {
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    do_stop = pending_stop_;
+    do_configure = pending_configure_;
+    do_start = pending_start_;
     pending_stop_ = false;
-  }
-  if (!pending_url_.empty()) {
-    webSocket_.setUrl(pending_url_);
-    pending_url_.clear();
-  }
-  if (pending_start_) {
-    webSocket_.start();
+    pending_configure_ = false;
     pending_start_ = false;
+    url.swap(pending_url_);
+  }
+
+  if (do_stop) {
+    webSocket_.stop();
+  }
+  if (!url.empty()) {
+    webSocket_.setUrl(url);
+  }
+  if (do_configure) {
+    ConfigureSocket();
+  }
+  if (do_start) {
+    webSocket_.start();
   }
 
   std::deque<std::string> to_send;
@@ -983,11 +1035,16 @@ void ArchipelagoSession::ClearData() {
   received_item_counts_.clear();
   slot_data_ = nlohmann::json::object();
   metadata_ = nullptr;
+
+  // Capture the global slot before dropping it — clearing local_slot_/team_
+  // first would leave nothing to identify the stats entry by.
+  const bool had_slot = (local_slot_ != -1);
+  const int global_slot = (team_ << 16) | local_slot_;
   local_slot_ = -1;
   team_ = -1;
 
-  if (manager_ && local_slot_ != -1) {
-    manager_->ClearSessionStats((team_ << 16) | local_slot_);
+  if (manager_ && had_slot) {
+    manager_->ClearSessionStats(global_slot);
   }
 
   {
