@@ -202,6 +202,9 @@ void EmbeddedWebServer::Stop() {
   }
 }
 
+// TODO(cleanup): `category` here is really the RichMessage type ("DeathLink",
+// "ItemSend", ...), not the lowercase "category" field inside json_payload that
+// the browser uses as a CSS class. Rename the parameter to `type` sometime.
 void EmbeddedWebServer::BroadcastFeedEvent(const std::string &json_payload,
                                            const std::string &category) {
   std::lock_guard<std::mutex> lock(clients_mutex_);
@@ -214,6 +217,11 @@ void EmbeddedWebServer::BroadcastFeedEvent(const std::string &json_payload,
     bool should_send = true;
     if (category == "ItemSend" || category == "ItemCheat") {
       should_send = prefs.items;
+    } else if (category == "DeathLink") {
+      // DeathLink events only reach us when they're enabled in settings, so
+      // no further gating here. They ride along with the item feed, but stay
+      // in "misc" too so existing misc-only setups keep receiving them.
+      should_send = prefs.items || prefs.misc;
     } else if (category == "Hint") {
       should_send = prefs.hints;
     } else if (category == "Chat") {
