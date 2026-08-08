@@ -1272,40 +1272,53 @@ ArchipelagoNetwork::~ArchipelagoNetwork() {
 }
 
 ArchipelagoSession *ArchipelagoNetwork::AddSession(const std::string &name) {
-  ArchipelagoSession *session = nullptr;
+  // Keep a strong reference across the lock release so the session can't be
+  // removed out from under the ProcessNetworkCommands() call below.
+  std::shared_ptr<ArchipelagoSession> session;
   {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-    if (GetSession(name))
-      return GetSession(name);
-    sessions_.push_back(std::make_unique<ArchipelagoSession>(this, name));
+    if (ArchipelagoSession *existing = GetSession(name))
+      return existing;
+    sessions_.push_back(std::make_shared<ArchipelagoSession>(this, name));
     slots_dirty_ = true;
-    session = sessions_.back().get();
+    session = sessions_.back();
   }
   if (session)
     session->ProcessNetworkCommands();
-  return session;
+  return session.get();
 }
 
 void ArchipelagoNetwork::RemoveSession(const std::string &name) {
-  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-  for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
-    if ((*it)->GetName() == name) {
-      if (on_session_removed)
-        on_session_removed(name);
-      sessions_.erase(it);
-      slots_dirty_ = true;
-      SetItemsDirty();
-      SetHintsDirty();
-      if (on_history_updated)
-        on_history_updated();
-      // Re-fire stats so /stats subscribers learn the slot is gone
-      // immediately, instead of waiting for the next tracker poll or
-      // item flow.
-      if (on_stats_updated)
-        on_stats_updated(*global_stats_, live_server_url_);
-      return;
+  // Destroying an ArchipelagoSession runs ~ix::WebSocket, which joins the
+  // websocket thread — and that thread may be inside HandleMessage() waiting
+  // on state_mutex_. So the session is moved out of the vector under the lock
+  // and released only once the lock is gone.
+  std::shared_ptr<ArchipelagoSession> doomed;
+  {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
+      if ((*it)->GetName() == name) {
+        if (on_session_removed)
+          on_session_removed(name);
+        doomed = std::move(*it);
+        sessions_.erase(it);
+        slots_dirty_ = true;
+        SetItemsDirty();
+        SetHintsDirty();
+        if (on_history_updated)
+          on_history_updated();
+        // Re-fire stats so /stats subscribers learn the slot is gone
+        // immediately, instead of waiting for the next tracker poll or
+        // item flow.
+        if (on_stats_updated)
+          on_stats_updated(*global_stats_, live_server_url_);
+        break;
+      }
     }
   }
+  // doomed drops here, outside state_mutex_. If a snapshot loop elsewhere
+  // still holds a reference, destruction happens there instead — also
+  // outside the lock.
 }
 
 void ArchipelagoNetwork::NotifyStateChanged() {
@@ -1316,14 +1329,19 @@ void ArchipelagoNetwork::NotifyStateChanged() {
 }
 
 void ArchipelagoNetwork::DisconnectAll() {
+  // Snapshot under the lock, then drive the sockets without it —
+  // ProcessNetworkCommands() joins websocket threads that may want
+  // state_mutex_, and iterating sessions_ unlocked would race RemoveSession().
+  std::vector<std::shared_ptr<ArchipelagoSession>> snapshot;
   {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-    for (auto &session : sessions_) {
+    snapshot = sessions_;
+    for (auto &session : snapshot) {
       session->Disconnect();
     }
     ClearGlobalStats();
   }
-  for (auto &session : sessions_) {
+  for (auto &session : snapshot) {
     session->ProcessNetworkCommands();
   }
 }
@@ -1367,9 +1385,13 @@ ArchipelagoNetwork::GetOrCreateMetadata(const std::string &url) {
 
 bool ArchipelagoNetwork::Update() {
   bool changed = false;
+  // Snapshot taken under the lock and reused for the unlocked loop below, so
+  // the sessions stay alive even if RemoveSession() drops one meanwhile.
+  std::vector<std::shared_ptr<ArchipelagoSession>> snapshot;
   {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-    for (auto &session : sessions_) {
+    snapshot = sessions_;
+    for (auto &session : snapshot) {
       bool was_connected = session->IsConnected();
       if (session->Update())
         changed = true;
@@ -1406,7 +1428,7 @@ bool ArchipelagoNetwork::Update() {
     UpdateTrackerStats();
   }
 
-  for (auto &session : sessions_) {
+  for (auto &session : snapshot) {
     session->ProcessNetworkCommands();
   }
 

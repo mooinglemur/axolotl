@@ -298,7 +298,13 @@ public:
   // doesn't need to read a string concurrently mutated by the UI thread.
   void SetServerUrl(const std::string &url);
   ArchipelagoSession *GetSessionBySlot(int slot);
-  const std::vector<std::unique_ptr<ArchipelagoSession>> &GetSessions() const {
+  // Returns a snapshot, by value and taken under state_mutex_, rather than a
+  // reference to the live vector: callers iterate on the UI thread while the
+  // network thread may be adding or removing sessions. The shared_ptr copies
+  // also keep every session alive for the duration of the caller's loop even
+  // if RemoveSession() drops it meanwhile.
+  std::vector<std::shared_ptr<ArchipelagoSession>> GetSessions() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
     return sessions_;
   }
   ArchipelagoSession *GetSession(const std::string &name);
@@ -415,7 +421,11 @@ private:
   int64_t last_item_day_ = -1;
   int64_t last_chat_day_ = -1;
 
-  std::vector<std::unique_ptr<ArchipelagoSession>> sessions_;
+  // shared_ptr rather than unique_ptr so that callers can hold a session alive
+  // across a lock release — see GetSessions() and the snapshot loops in
+  // Update() / DisconnectAll(), which must not hold state_mutex_ while
+  // ProcessNetworkCommands() joins a websocket thread.
+  std::vector<std::shared_ptr<ArchipelagoSession>> sessions_;
   std::vector<RichMessage> chat_history_;
   std::vector<RichMessage> item_history_;
   int max_history_size_ = 0;
