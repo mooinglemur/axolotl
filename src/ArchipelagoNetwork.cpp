@@ -92,6 +92,14 @@ void ArchipelagoSession::ConfigureSocket() {
   webSocket_.enableAutomaticReconnection();
   webSocket_.enablePerMessageDeflate();
 
+  // Without this, a socket that dies without an RST (server killed, NAT entry
+  // evicted, path blackholed) leaves us wedged in Open forever: nothing at the
+  // TCP layer probes liveness either, since IXWebSocket only sets TCP_NODELAY.
+  // IXWebSocket uses this one value as both the ping interval and the pong
+  // deadline, so a dead peer surfaces as a Close in 30-60s, and the automatic
+  // reconnection above takes it from there.
+  webSocket_.setPingInterval(30);
+
   std::string user_agent = "AxolotlAPTextClient/";
   user_agent += AXOLOTL_VERSION_STRING;
 #ifdef GIT_HASH
