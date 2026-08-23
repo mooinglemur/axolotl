@@ -11,8 +11,8 @@ linux-flatpak:
   image: bilelmoussaoui/flatpak-github-actions:freedesktop-23.08
   stage: build
   tags:
-    - docker-sandboxed
     - linux
+    - k8s-sandboxed
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
     FLATPAK_BUILDER_NO_USER_CHROOT: "1"
@@ -37,8 +37,8 @@ linux-flatpak:
 linux-appimage:
   stage: build
   tags:
-    - docker
     - linux
+    - k8s
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
   rules:
@@ -181,8 +181,8 @@ windows:
 windows-cross:
   stage: build
   tags:
-    - docker
     - linux
+    - k8s
   image: ubuntu:22.04
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
@@ -319,8 +319,8 @@ sync-github:
   stage: build
   image: alpine:latest
   tags:
-    - docker
     - linux
+    - k8s
   before_script:
     - apk add git
   script:
