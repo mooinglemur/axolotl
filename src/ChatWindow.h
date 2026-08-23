@@ -40,6 +40,32 @@ private:
   std::string ac_match_string_;
   std::vector<std::string> ac_matches_;
 
+  // Argument completion for the server's !hint / !hint_location commands,
+  // driven off the datapackage for the selected slot's own game.
+  //
+  // Deliberately separate from the '@' completion above rather than folded
+  // into it: item and location names contain spaces, so the text being
+  // matched runs from the command's argument all the way to the caret instead
+  // of stopping at the first space. Tab and Up/Down are taken over while the
+  // popup is up, matching the '@' popup's keys.
+  enum class HintCompleteKind { None, Item, Location };
+  HintCompleteKind hc_kind_ = HintCompleteKind::None;
+  int hc_arg_pos_ = -1;   // buffer offset where the argument begins
+  int hc_selected_idx_ = 0;
+  int hc_total_ = 0;      // matches found before truncating to the popup size
+  bool hc_cycled_ = false;    // Tab has walked the list at least once
+  bool hc_navigated_ = false; // arrows picked a row, so Tab takes it as-is
+  std::string hc_stem_;   // text the current match list was built from
+  std::string hc_common_; // longest common prefix over all hc_total_ matches
+  std::string hc_applied_;// last text Tab wrote, so cycling doesn't re-match
+  std::string hc_slot_;   // slot the match list was built against
+  std::vector<std::string> hc_matches_;
+
+  void UpdateHintCompletion(ImGuiInputTextCallbackData *data);
+  void ApplyHintCompletion(ImGuiInputTextCallbackData *data,
+                           const std::string &text);
+  void ResetHintCompletion();
+
   int selection_anchor_idx_ = -1;
   int selection_active_idx_ = -1;
   bool wants_focus_url_ = false;

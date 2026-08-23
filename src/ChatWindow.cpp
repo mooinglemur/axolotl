@@ -1,6 +1,7 @@
 #include "ChatWindow.h"
 #include "Config.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -11,6 +12,54 @@
 #include <random>
 #include <set>
 #include <thread>
+
+namespace {
+
+// How many candidates the !hint popup lists. Everything listed is also
+// everything Tab cycles through, so the highlighted row is always visible.
+constexpr int kMaxHintRows = 10;
+
+std::string LowerCopy(const std::string &s) {
+  std::string out = s;
+  std::transform(out.begin(), out.end(), out.begin(),
+                 [](unsigned char c) { return (char)std::tolower(c); });
+  return out;
+}
+
+// Longest prefix every candidate agrees on, compared case-insensitively but
+// returned in the datapackage's own casing, so completing also fixes up case.
+std::string CommonPrefixCI(const std::vector<std::string> &v) {
+  if (v.empty())
+    return "";
+  std::string prefix = v.front();
+  for (size_t i = 1; i < v.size() && !prefix.empty(); ++i) {
+    const std::string &s = v[i];
+    size_t limit = std::min(prefix.size(), s.size());
+    size_t k = 0;
+    while (k < limit && std::tolower((unsigned char)prefix[k]) ==
+                            std::tolower((unsigned char)s[k]))
+      ++k;
+    prefix.resize(k);
+  }
+  return prefix;
+}
+
+// Matches the command word case-insensitively and requires the separating
+// space, so completion only engages once the argument has actually started.
+// Returns the buffer offset of the argument, or -1 if this isn't the command.
+int HintArgOffset(const char *buf, int len, const char *cmd) {
+  int n = (int)strlen(cmd);
+  if (len < n + 1)
+    return -1;
+  for (int i = 0; i < n; ++i)
+    if (std::tolower((unsigned char)buf[i]) != (unsigned char)cmd[i])
+      return -1;
+  if (buf[n] != ' ')
+    return -1;
+  return n + 1;
+}
+
+} // namespace
 
 ChatWindow::ChatWindow(ArchipelagoNetwork &ap_network,
                        ConnectionSettings &settings,
@@ -673,7 +722,10 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
       ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_EnterReturnsTrue |
                                         ImGuiInputTextFlags_CallbackHistory |
                                         ImGuiInputTextFlags_CallbackAlways;
-      if (ac_active_)
+      // Only claim Tab when there is something to complete, so it keeps its
+      // normal focus-navigation behavior the rest of the time.
+      if (ac_active_ ||
+          (hc_kind_ != HintCompleteKind::None && !hc_matches_.empty()))
         input_flags |= ImGuiInputTextFlags_CallbackCompletion;
 
       // Autocomplete logic remains mostly same but uses selected slot's
@@ -703,6 +755,47 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
         }
       }
 
+      if (hc_kind_ != HintCompleteKind::None && !hc_matches_.empty()) {
+        bool truncated = hc_total_ > (int)hc_matches_.size();
+        int rows = (int)hc_matches_.size() + (truncated ? 1 : 0);
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        pos.y -= (rows * ImGui::GetTextLineHeightWithSpacing()) +
+                 ImGui::GetStyle().WindowPadding.y * 2;
+        ImGui::SetNextWindowPos(pos);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(200, 0), ImVec2(600, 400));
+        if (ImGui::Begin("HintCompPopup", nullptr,
+                         ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoFocusOnAppearing)) {
+          for (int i = 0; i < (int)hc_matches_.size(); ++i) {
+            if (ImGui::Selectable(hc_matches_[i].c_str(),
+                                  i == hc_selected_idx_)) {
+              // The hint argument runs to end of line, so replacing from the
+              // argument offset onward is the whole of it.
+              std::string buf_str(input_buf_);
+              if ((int)buf_str.size() >= hc_arg_pos_) {
+                buf_str = buf_str.substr(0, hc_arg_pos_) + hc_matches_[i];
+                snprintf(input_buf_, sizeof(input_buf_), "%s",
+                         buf_str.c_str());
+                hc_applied_ = hc_matches_[i];
+                hc_selected_idx_ = i;
+                hc_cycled_ = true;
+                // Refocusing re-seeds InputText's edit state from the buffer
+                // we just rewrote behind its back.
+                focus_input_ = true;
+              }
+            }
+          }
+          if (truncated) {
+            ImGui::BeginDisabled();
+            ImGui::Text("... %d more, keep typing to narrow",
+                        hc_total_ - (int)hc_matches_.size());
+            ImGui::EndDisabled();
+          }
+          ImGui::End();
+        }
+      }
+
       float button_width = ImGui::CalcTextSize("Send").x +
                            ImGui::GetStyle().FramePadding.x * 2.0f;
       float input_width = ImGui::GetContentRegionAvail().x - button_width -
@@ -727,6 +820,7 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
           input_history_.push_back(input_buf_);
         history_pos_ = -1;
         ac_active_ = false;
+        ResetHintCompletion();
         input_buf_[0] = '\0';
         focus_input_ = true;
       }
@@ -735,12 +829,129 @@ void ChatWindow::Render(std::tm *current_tm, ImFont *custom_font,
   ImGui::End();
 }
 
+void ChatWindow::ResetHintCompletion() {
+  hc_kind_ = HintCompleteKind::None;
+  hc_arg_pos_ = -1;
+  hc_selected_idx_ = 0;
+  hc_total_ = 0;
+  hc_cycled_ = false;
+  hc_navigated_ = false;
+  hc_stem_.clear();
+  hc_slot_.clear();
+  hc_common_.clear();
+  hc_applied_.clear();
+  hc_matches_.clear();
+}
+
+void ChatWindow::ApplyHintCompletion(ImGuiInputTextCallbackData *data,
+                                     const std::string &text) {
+  data->DeleteChars(hc_arg_pos_, data->CursorPos - hc_arg_pos_);
+  data->InsertChars(data->CursorPos, text.c_str());
+  hc_applied_ = text;
+}
+
+void ChatWindow::UpdateHintCompletion(ImGuiInputTextCallbackData *data) {
+  // "!hint_location" has to be tested first -- "!hint" is a prefix of it.
+  HintCompleteKind kind = HintCompleteKind::Location;
+  int arg_pos = HintArgOffset(data->Buf, data->BufTextLen, "!hint_location");
+  if (arg_pos < 0) {
+    kind = HintCompleteKind::Item;
+    arg_pos = HintArgOffset(data->Buf, data->BufTextLen, "!hint");
+  }
+  // Caret behind the argument means the user is editing the command itself.
+  if (arg_pos < 0 || data->CursorPos < arg_pos) {
+    ResetHintCompletion();
+    return;
+  }
+
+  std::string stem(data->Buf + arg_pos, data->CursorPos - arg_pos);
+
+  // CallbackAlways fires every frame, not just on keystrokes, and the scan
+  // below walks every name in the game. Only redo it when the input actually
+  // changed, or a large game would burn a full pass per frame.
+  if (hc_kind_ == kind && hc_arg_pos_ == arg_pos &&
+      hc_slot_ == selected_send_slot_name_ &&
+      (stem == hc_stem_ ||
+       // Tab rewrites the argument in place while cycling. Recognize our own
+       // insertion and keep the list built from what the user actually typed,
+       // instead of collapsing it to the single candidate just inserted.
+       (!hc_applied_.empty() && stem == hc_applied_)))
+    return;
+
+  hc_kind_ = kind;
+  hc_arg_pos_ = arg_pos;
+  hc_slot_ = selected_send_slot_name_;
+  hc_stem_ = stem;
+  hc_applied_.clear();
+  hc_common_.clear();
+  hc_matches_.clear();
+  hc_selected_idx_ = 0;
+  hc_total_ = 0;
+  hc_cycled_ = false;
+  hc_navigated_ = false;
+
+  auto session = ap_network_.GetSession(selected_send_slot_name_);
+  if (!session || !session->IsDataPackageReceived())
+    return;
+
+  std::vector<std::string> prefix_hits, substring_hits;
+  {
+    // Metadata is refreshed on the network thread; GetStateMutex() is
+    // recursive, so taking it here is safe even under an outer hold.
+    std::lock_guard<std::recursive_mutex> lock(ap_network_.GetStateMutex());
+    auto meta = session->GetMetadata();
+    if (!meta)
+      return;
+    // Both commands resolve against the sending slot's own game.
+    const auto &table = (kind == HintCompleteKind::Item) ? meta->item_names
+                                                         : meta->location_names;
+    auto game_it = table.find(session->ResolvePlayerGame());
+    if (game_it == table.end())
+      return;
+
+    const std::string needle = LowerCopy(stem);
+    for (const auto &[id, name] : game_it->second) {
+      if (needle.empty()) {
+        prefix_hits.push_back(name);
+        continue;
+      }
+      std::string lname = LowerCopy(name);
+      if (lname.rfind(needle, 0) == 0)
+        prefix_hits.push_back(name);
+      else if (lname.find(needle) != std::string::npos)
+        substring_hits.push_back(name);
+    }
+  }
+
+  // Names that start with what was typed rank above ones that merely contain
+  // it, since that is what the typist was most likely reaching for.
+  std::sort(prefix_hits.begin(), prefix_hits.end());
+  std::sort(substring_hits.begin(), substring_hits.end());
+  hc_matches_ = std::move(prefix_hits);
+  hc_matches_.insert(hc_matches_.end(), substring_hits.begin(),
+                     substring_hits.end());
+
+  hc_total_ = (int)hc_matches_.size();
+  // Computed before truncating: completing to a prefix shared by only the
+  // visible slice would insert text the hidden candidates disagree with.
+  hc_common_ = CommonPrefixCI(hc_matches_);
+  if (hc_total_ > kMaxHintRows)
+    hc_matches_.resize(kMaxHintRows);
+}
+
 int ChatWindow::TextEditCallbackStub(ImGuiInputTextCallbackData *data) {
   return ((ChatWindow *)data->UserData)->TextEditCallback(data);
 }
 
 int ChatWindow::TextEditCallback(ImGuiInputTextCallbackData *data) {
   if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
+    UpdateHintCompletion(data);
+    if (hc_kind_ != HintCompleteKind::None) {
+      // One popup at a time: an '@' inside an item name shouldn't pull up the
+      // player list on top of the hint candidates.
+      ac_active_ = false;
+      return 0;
+    }
     if (!ac_active_) {
       // Check for trigger
       int cursor = data->CursorPos;
@@ -808,14 +1019,42 @@ int ChatWindow::TextEditCallback(ImGuiInputTextCallbackData *data) {
         ac_selected_idx_ = ac_matches_.size() - 1;
     }
   } else if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
-    if (ac_active_ && !ac_matches_.empty()) {
+    if (hc_kind_ != HintCompleteKind::None && !hc_matches_.empty()) {
+      // Shell-style: first fill in as much as every candidate agrees on, and
+      // only once that adds nothing do repeated Tabs cycle the candidates.
+      // Prefix extension is only ever the opening move: once something has
+      // been inserted, or the arrows have picked a row, Tab must not yank the
+      // argument back to a shared prefix.
+      if (hc_applied_.empty() && !hc_navigated_ &&
+          hc_common_.size() > hc_stem_.size()) {
+        ApplyHintCompletion(data, hc_common_);
+        hc_stem_ = hc_common_;
+        hc_cycled_ = false;
+      } else {
+        // Arrows select a row outright; Tab on its own walks to the next.
+        if (hc_cycled_ && !hc_navigated_)
+          hc_selected_idx_ = (hc_selected_idx_ + 1) % (int)hc_matches_.size();
+        hc_cycled_ = true;
+        hc_navigated_ = false;
+        ApplyHintCompletion(data, hc_matches_[hc_selected_idx_]);
+      }
+    } else if (ac_active_ && !ac_matches_.empty()) {
       data->DeleteChars(ac_cursor_pos_, data->CursorPos - ac_cursor_pos_);
       data->InsertChars(data->CursorPos, ac_matches_[ac_selected_idx_].c_str());
       data->InsertChars(data->CursorPos, " ");
       ac_active_ = false;
     }
   } else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
-    if (ac_active_) {
+    if (hc_kind_ != HintCompleteKind::None && !hc_matches_.empty()) {
+      if (data->EventKey == ImGuiKey_UpArrow) {
+        if (--hc_selected_idx_ < 0)
+          hc_selected_idx_ = (int)hc_matches_.size() - 1;
+      } else if (data->EventKey == ImGuiKey_DownArrow) {
+        if (++hc_selected_idx_ >= (int)hc_matches_.size())
+          hc_selected_idx_ = 0;
+      }
+      hc_navigated_ = true;
+    } else if (ac_active_) {
       if (data->EventKey == ImGuiKey_UpArrow) {
         ac_selected_idx_--;
         if (ac_selected_idx_ < 0)
