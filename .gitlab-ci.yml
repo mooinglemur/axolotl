@@ -20,6 +20,11 @@ linux-flatpak:
     KUBERNETES_MEMORY_REQUEST: "6Gi"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
+    # Pin build parallelism. ninja and flatpak-builder both size their job pool
+    # from the node's core count -- CFS quota is invisible to nproc and
+    # sched_getaffinity -- so an unpinned build fans out to one g++ per host
+    # core and OOMKills the pod regardless of the memory limit above.
+    PARALLEL_JOBS: "4"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
@@ -29,7 +34,7 @@ linux-flatpak:
       - curl -L -o /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
       - chmod +x /usr/local/bin/gitlab-runner
   script:
-    - flatpak-builder --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
+    - flatpak-builder --jobs="$PARALLEL_JOBS" --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
     - flatpak build-export repo build-dir
     - flatpak build-bundle repo axolotl-apclient.flatpak com.mooinglemur.axolotl
   artifacts:
@@ -49,6 +54,11 @@ linux-appimage:
     KUBERNETES_MEMORY_REQUEST: "6Gi"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
+    # Pin build parallelism. ninja and flatpak-builder both size their job pool
+    # from the node's core count -- CFS quota is invisible to nproc and
+    # sched_getaffinity -- so an unpinned build fans out to one g++ per host
+    # core and OOMKills the pod regardless of the memory limit above.
+    PARALLEL_JOBS: "4"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
@@ -79,8 +89,8 @@ linux-appimage:
       EOF
       python3 mbed_patch.py
       cd build
-      ninja
-      DESTDIR=appdir ninja install
+      ninja -j "$PARALLEL_JOBS"
+      DESTDIR=appdir ninja -j "$PARALLEL_JOBS" install
       mkdir -p appdir/usr/local/share/axolotl
       cp ../cacert.pem appdir/usr/local/share/axolotl/
       cd ..
@@ -198,6 +208,11 @@ windows-cross:
     KUBERNETES_MEMORY_REQUEST: "6Gi"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
+    # Pin build parallelism. ninja and flatpak-builder both size their job pool
+    # from the node's core count -- CFS quota is invisible to nproc and
+    # sched_getaffinity -- so an unpinned build fans out to one g++ per host
+    # core and OOMKills the pod regardless of the memory limit above.
+    PARALLEL_JOBS: "4"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
@@ -216,12 +231,12 @@ windows-cross:
     - git clone --depth 1 -b v1.3.1 https://github.com/madler/zlib.git
     - mkdir zlib/build && cd zlib/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
-    - ninja install
+    - ninja -j "$PARALLEL_JOBS" install
     # Build libzip for mingw
     - git clone --depth 1 -b v1.10.1 https://github.com/nih-at/libzip.git
     - mkdir libzip/build && cd libzip/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
-    - ninja install
+    - ninja -j "$PARALLEL_JOBS" install
     # -- Remove the dll and dll.a files so that the static library is used
     - rm -f /usr/x86_64-w64-mingw32/lib/libzlib.dll.a /usr/x86_64-w64-mingw32/bin/libzlib.dll
     - cd $ROOT_DIR
@@ -229,25 +244,25 @@ windows-cross:
     - git clone --depth 1 -b v3.11.3 https://github.com/nlohmann/json.git
     - mkdir json/build && cd json/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DJSON_BuildTests=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
-    - ninja install
+    - ninja -j "$PARALLEL_JOBS" install
     - cd $ROOT_DIR
     # Build mbedtls for mingw
     - git clone --depth 1 -b v3.5.2 https://github.com/ARMmbed/mbedtls.git
     - mkdir mbedtls/build && cd mbedtls/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
-    - ninja install
+    - ninja -j "$PARALLEL_JOBS" install
     - cd $ROOT_DIR
     # Build yaml-cpp for mingw
     - git clone --depth 1 -b yaml-cpp-0.9.0 https://github.com/jbeder/yaml-cpp.git
     - mkdir yaml-cpp/build && cd yaml-cpp/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
-    - ninja install
+    - ninja -j "$PARALLEL_JOBS" install
     - cd $ROOT_DIR
     # Build glfw for mingw
     - git clone --depth 1 -b 3.3.10 https://github.com/glfw/glfw.git
     - mkdir glfw/build && cd glfw/build
     - cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=$ROOT_DIR/Toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/x86_64-w64-mingw32 ..
-    - ninja install
+    - ninja -j "$PARALLEL_JOBS" install
     - cd $ROOT_DIR
 
     # -- AGGRESSIVE CLEANUP: Remove ANY and ALL dll and import library remnants to force absolute static linking
@@ -274,7 +289,7 @@ windows-cross:
       EOF
       python3 mbed_patch.py
       cd build-cross
-      ninja
+      ninja -j "$PARALLEL_JOBS"
     - echo "Generating MSI via wixl..."
     - |
       cat <<EOF > axolotl.wxs
