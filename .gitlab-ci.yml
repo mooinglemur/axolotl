@@ -35,7 +35,13 @@ linux-flatpak:
       - chmod +x /usr/local/bin/gitlab-runner
   script:
     - flatpak-builder --jobs="$PARALLEL_JOBS" --user --disable-rofiles-fuse --force-clean --ccache build-dir com.mooinglemur.axolotl.yml
-    - flatpak build-export repo build-dir
+    # --disable-sandbox skips the icon validator's OWN bwrap sandbox, not the build sandbox. That
+    # bwrap call creates ipc/pid/net namespaces WITHOUT --unshare-user, which requires
+    # CAP_SYS_ADMIN; these pods have no added capabilities by design, so it fails with
+    # "Creating new namespace failed". The validator still runs and still rejects a bad icon -- it
+    # just parses it inside the user namespace the whole job already runs in, instead of nesting
+    # another one.
+    - flatpak build-export --disable-sandbox repo build-dir
     - flatpak build-bundle repo axolotl-apclient.flatpak com.mooinglemur.axolotl
   artifacts:
     name: "axolotl-apclient-flatpak"
