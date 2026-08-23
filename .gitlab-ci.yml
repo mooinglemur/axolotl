@@ -17,9 +17,9 @@ linux-flatpak:
     GIT_SUBMODULE_STRATEGY: recursive
     FLATPAK_BUILDER_NO_USER_CHROOT: "1"
     KUBERNETES_CPU_REQUEST: "2"
-    KUBERNETES_MEMORY_REQUEST: "3Gi"
+    KUBERNETES_MEMORY_REQUEST: "6Gi"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_LIMIT: "6Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
@@ -45,6 +45,10 @@ linux-appimage:
     - k8s
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
+    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_MEMORY_REQUEST: "6Gi"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
@@ -190,6 +194,10 @@ windows-cross:
   image: ubuntu:22.04
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
+    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_MEMORY_REQUEST: "6Gi"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
