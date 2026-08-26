@@ -291,6 +291,17 @@ public:
   void ClearGlobalStats();
   void ClearSessionStats(int global_slot);
 
+  // Stats publishing is coalesced. Mutators call this instead of firing
+  // on_stats_updated inline; Update() emits at most one callback per network
+  // tick, outside state_mutex_.
+  //
+  // Firing per message cost O(slots) in the subscriber (a per-slot JSON
+  // snapshot), all of it under state_mutex_, so a mass release in a large
+  // room turned into thousands of full-room rebuilds that starved the UI
+  // thread of the lock. Also callable from outside when a new subscriber
+  // appears and needs a payload that was skipped while nobody was listening.
+  void MarkStatsDirty() { stats_dirty_.store(true, std::memory_order_relaxed); }
+
   void SetTrackerUrl(const std::string &url);
   const std::string &GetTrackerUrl() const { return live_tracker_url_; }
   // Set by ChatWindow when the user edits the server URL field. Used as
@@ -441,6 +452,11 @@ private:
   mutable bool aggregated_items_dirty_ = true;
   mutable bool aggregated_hints_dirty_ = true;
   uint64_t data_version_ = 0;
+
+  // Set by MarkStatsDirty() from the websocket, network and HTTP-poll
+  // threads; consumed by PublishStatsIfDirty() on the network thread.
+  std::atomic<bool> stats_dirty_{false};
+  void PublishStatsIfDirty();
 
   struct MessageHashEntry {
     std::string first_session_name;

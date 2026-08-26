@@ -118,19 +118,25 @@ EmbeddedWebServer::EmbeddedWebServer(const ConnectionSettings &settings)
             feed_clients_[&webSocket] = prefs;
           } else if (path == "/overview") {
             overview_clients_.insert(&webSocket);
+            // The cached payload may be stale, or missing entirely, because
+            // publishing is skipped while no one is subscribed. Send it for
+            // an immediate first paint and flag for a fresh rebuild.
             if (!last_overview_payload_.empty()) {
               webSocket.sendText(last_overview_payload_);
             }
+            subscriber_added_.store(true, std::memory_order_relaxed);
           } else if (path == "/graph") {
             graph_clients_.insert(&webSocket);
             // Defer history send until after we release clients_mutex_ — the
             // provider acquires its own (foreign) mutex and may be slow.
             send_graph_history = true;
+            subscriber_added_.store(true, std::memory_order_relaxed);
           } else if (path == "/stats") {
             stats_clients_.insert(&webSocket);
             if (!last_stats_payload_.empty()) {
               webSocket.sendText(last_stats_payload_);
             }
+            subscriber_added_.store(true, std::memory_order_relaxed);
           } else {
             webSocket.close(1008, "Invalid endpoint");
           }
@@ -234,6 +240,21 @@ void EmbeddedWebServer::BroadcastFeedEvent(const std::string &json_payload,
       ws->sendText(json_payload);
     }
   }
+}
+
+bool EmbeddedWebServer::HasOverviewClients() const {
+  std::lock_guard<std::mutex> lock(clients_mutex_);
+  return !overview_clients_.empty();
+}
+
+bool EmbeddedWebServer::HasGraphClients() const {
+  std::lock_guard<std::mutex> lock(clients_mutex_);
+  return !graph_clients_.empty();
+}
+
+bool EmbeddedWebServer::HasStatsClients() const {
+  std::lock_guard<std::mutex> lock(clients_mutex_);
+  return !stats_clients_.empty();
 }
 
 void EmbeddedWebServer::BroadcastOverviewEvent(

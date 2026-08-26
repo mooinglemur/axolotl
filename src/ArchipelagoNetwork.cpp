@@ -1318,8 +1318,7 @@ void ArchipelagoNetwork::RemoveSession(const std::string &name) {
         // Re-fire stats so /stats subscribers learn the slot is gone
         // immediately, instead of waiting for the next tracker poll or
         // item flow.
-        if (on_stats_updated)
-          on_stats_updated(*global_stats_, live_server_url_);
+        MarkStatsDirty();
         break;
       }
     }
@@ -1332,8 +1331,7 @@ void ArchipelagoNetwork::RemoveSession(const std::string &name) {
 void ArchipelagoNetwork::NotifyStateChanged() {
   std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   slots_dirty_ = true;
-  if (on_stats_updated)
-    on_stats_updated(*global_stats_, live_server_url_);
+  MarkStatsDirty();
 }
 
 void ArchipelagoNetwork::DisconnectAll() {
@@ -1418,8 +1416,7 @@ bool ArchipelagoNetwork::Update() {
         // Re-fire stats so /stats subscribers learn about the new
         // is_mine set immediately, instead of waiting for the first
         // tracker poll or item to flow through.
-        if (on_stats_updated)
-          on_stats_updated(*global_stats_, live_server_url_);
+        MarkStatsDirty();
         changed = true;
       }
     }
@@ -1440,7 +1437,33 @@ bool ArchipelagoNetwork::Update() {
     session->ProcessNetworkCommands();
   }
 
+  // After the packet drain above, not before: a mass release arrives as one
+  // batch of hundreds of ItemSends, and this collapses them into a single
+  // subscriber callback for the whole tick.
+  PublishStatsIfDirty();
+
   return changed;
+}
+
+void ArchipelagoNetwork::PublishStatsIfDirty() {
+  if (!stats_dirty_.exchange(false, std::memory_order_relaxed))
+    return;
+  if (!on_stats_updated)
+    return;
+
+  // Snapshot under the lock, fire outside it. The subscriber walks every
+  // slot and calls back into ResolvePlayerName()/GetSessions(), which take
+  // state_mutex_ themselves; holding it across the callback let a slow
+  // subscriber block every window's Render().
+  std::shared_ptr<const MultiworldStats> snap;
+  std::string url;
+  {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    snap = global_stats_;
+    url = live_server_url_;
+  }
+  if (snap)
+    on_stats_updated(*snap, url);
 }
 
 void ArchipelagoNetwork::ClearGlobalStats() {
@@ -1475,8 +1498,7 @@ void ArchipelagoNetwork::ClearGlobalStats() {
   last_tracker_sync_time_ = -1.0;
   last_successful_sync_activity_time_ = -1.0;
 
-  if (on_stats_updated)
-    on_stats_updated(*global_stats_, live_server_url_);
+  MarkStatsDirty();
 }
 
 void ArchipelagoNetwork::ClearSessionStats(int global_slot) {
@@ -1492,8 +1514,7 @@ void ArchipelagoNetwork::ClearSessionStats(int global_slot) {
     last_tracker_checked_count_ = new_stats->checked_locations;
     global_stats_ = new_stats;
 
-    if (on_stats_updated)
-      on_stats_updated(*global_stats_, live_server_url_);
+    MarkStatsDirty();
   }
 }
 
@@ -1606,8 +1627,7 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
         }
         global_stats_ = new_stats;
 
-        if (on_stats_updated)
-          on_stats_updated(*global_stats_, live_server_url_);
+        MarkStatsDirty();
       }
     }
   } else {
@@ -1645,8 +1665,7 @@ void ArchipelagoNetwork::OnGlobalMessage(ArchipelagoSession *session,
         }
         if (changed) {
           global_stats_ = new_stats;
-          if (on_stats_updated)
-            on_stats_updated(*global_stats_, live_server_url_);
+          MarkStatsDirty();
         }
       }
     }
@@ -2037,8 +2056,6 @@ void ArchipelagoNetwork::SyncTotalLocations() {
         if (j.contains("player_locations_total") &&
             j["player_locations_total"].is_array()) {
 
-          std::shared_ptr<MultiworldStats> snap;
-          std::string snap_url;
           {
             std::lock_guard<std::recursive_mutex> lock(state_mutex_);
             for (const auto &p : j["player_locations_total"]) {
@@ -2054,13 +2071,9 @@ void ArchipelagoNetwork::SyncTotalLocations() {
               }
             }
             global_stats_->total_locations = total_l;
-            snap = global_stats_;
-            snap_url = live_server_url_;
           }
 
-          if (on_stats_updated) {
-            on_stats_updated(*snap, snap_url);
-          }
+          MarkStatsDirty();
 
           if (debug_mode_) {
             std::cout << "[Overview] Static Tracker Stats: Total Locations "
@@ -2270,7 +2283,6 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
           // Brief lock: merge parsed data into live global_stats_ without
           // replacing fields that may have been updated by the live feed.
           std::shared_ptr<MultiworldStats> new_stats;
-          std::string snap_url;
           {
             std::lock_guard<std::recursive_mutex> lock(state_mutex_);
             new_stats = std::make_shared<MultiworldStats>(*global_stats_);
@@ -2320,11 +2332,9 @@ void ArchipelagoNetwork::UpdateTrackerStats() {
 
             global_stats_ = new_stats;
             last_successful_sync_activity_time_ = last_item_activity_time_;
-            snap_url = live_server_url_;
           }
 
-          if (on_stats_updated)
-            on_stats_updated(*new_stats, snap_url);
+          MarkStatsDirty();
 
           tracker_checked_status_ = TrackerPollStatus::Succeeded;
           if (debug_mode_) {

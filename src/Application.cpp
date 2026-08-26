@@ -463,28 +463,44 @@ bool Application::InitializeUI() {
     }
 
     if (web_server_) {
+      // Everything below exists only to feed the browser overlays, and the
+      // /stats snapshot costs O(slots) to build and dump — ~4 ms and ~280 KB
+      // per call in a 2000-slot room. Build nothing nobody is subscribed to.
+      // The GUI Overview window is not a consumer here: it reads
+      // GetGlobalStats() directly each frame and recomputes its own totals,
+      // so its visibility does not enter into this.
+      const bool want_overview = web_server_->HasOverviewClients();
+      const bool want_graph = web_server_->HasGraphClients();
+      const bool want_stats = web_server_->HasStatsClients();
+      if (!want_overview && !want_graph && !want_stats)
+        return;
+
       int fully_completed = 0;
-      for (const auto &[slot_id, s_stats] : stats.slot_info) {
-        bool is_goal = stats.completed_slots.count(slot_id) > 0;
-        bool is_100_percent =
-            (s_stats.total_locations > 0 &&
-             s_stats.checked_locations >= s_stats.total_locations);
-        if (is_goal && is_100_percent) {
-          fully_completed++;
+      if (want_overview || want_stats) {
+        for (const auto &[slot_id, s_stats] : stats.slot_info) {
+          bool is_goal = stats.completed_slots.count(slot_id) > 0;
+          bool is_100_percent =
+              (s_stats.total_locations > 0 &&
+               s_stats.checked_locations >= s_stats.total_locations);
+          if (is_goal && is_100_percent) {
+            fully_completed++;
+          }
         }
       }
 
-      nlohmann::json j;
-      j["type"] = "overview_update";
-      j["total_games"] = stats.total_games;
-      j["completed_games"] = fully_completed;
-      j["total_locations"] = stats.total_locations;
-      j["checked_locations"] = stats.checked_locations;
+      if (want_overview) {
+        nlohmann::json j;
+        j["type"] = "overview_update";
+        j["total_games"] = stats.total_games;
+        j["completed_games"] = fully_completed;
+        j["total_locations"] = stats.total_locations;
+        j["checked_locations"] = stats.checked_locations;
 
-      web_server_->BroadcastOverviewEvent(j.dump());
+        web_server_->BroadcastOverviewEvent(j.dump());
+      }
 
       // Broadcast graph update
-      {
+      if (want_graph) {
         nlohmann::json gj;
         gj["type"] = "graph_update";
         gj["timestamp"] = ArchipelagoNetwork::GetCurrentTimestamp();
@@ -494,7 +510,7 @@ bool Application::InitializeUI() {
       }
 
       // Broadcast per-slot stats snapshot for the /stats overlay.
-      {
+      if (want_stats) {
         nlohmann::json sj;
         sj["type"] = "stats_snapshot";
         sj["now"] = ArchipelagoNetwork::GetCurrentTimestamp();
@@ -1002,6 +1018,12 @@ void Application::Run() {
     double t_start = glfwGetTime();
     glfwWaitEventsTimeout(0.1); // Wait up to 100ms
     double t_after_poll = glfwGetTime();
+
+    // An overlay that just subscribed got whatever cached payload was left
+    // over from the last time someone was listening. Force one fresh publish
+    // so it isn't stuck on stale numbers until the next item arrives.
+    if (web_server_ && web_server_->ConsumeSubscriberAdded())
+      ap_network_.MarkStatsDirty();
 
     // Render if we received a real window event (not a timeout)
     // OR if we are in a settlement period
