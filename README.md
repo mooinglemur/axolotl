@@ -44,6 +44,14 @@ For Ubuntu/Debian-based systems, you can install the necessary dependencies with
 sudo apt-get install build-essential cmake libglfw3-dev libfontconfig1-dev libssl-dev
 ```
 
+### Prerequisites (macOS)
+
+With [Homebrew](https://brew.sh):
+
+```bash
+brew install cmake ninja glfw yaml-cpp nlohmann-json libzip
+```
+
 ### 1. Clone the Repository
 Ensure you initialize submodules to fetch ImGui and IXWebSocket.
 
@@ -68,6 +76,17 @@ mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
+
+### 3. Package (macOS)
+
+On macOS the build produces `Axolotl.app`. To create a drag-to-Applications DMG with the Homebrew libraries bundled inside the app:
+
+```bash
+cd build
+cpack -G DragNDrop
+```
+
+This writes `AxolotlAPTextClient-macOS.dmg`. The app is ad-hoc signed only, so on first launch of a downloaded copy, right-click it and choose **Open** (or allow it under **System Settings > Privacy & Security**).
 
 ## Usage
 

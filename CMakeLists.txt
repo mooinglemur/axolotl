@@ -166,7 +166,8 @@ if (APPLE)
 elseif (UNIX AND NOT APPLE)
     target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
 endif()
-target_include_directories(lua PUBLIC ${LUA_DIR})
+# sol2 prefers <lua/lua.h>, so expose the vendored copy under that name ahead of any system Lua (e.g. Homebrew 5.5).
+target_include_directories(lua PUBLIC ${LUA_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
 
 if (NOT WIN32)
     target_link_libraries(lua INTERFACE dl m)
@@ -279,7 +280,42 @@ add_custom_command(
 
 add_custom_target(GenerateStaticEmbedded ALL DEPENDS ${CMAKE_BINARY_DIR}/embedded_static.h)
 
-add_executable(axolotl-apclient WIN32 ${SRC_FILES})
+add_executable(axolotl-apclient WIN32 MACOSX_BUNDLE ${SRC_FILES})
+
+if (APPLE)
+    # Build the .icns from the shared PNG so the icon has a single source of truth across platforms.
+    set(ICON_PNG ${CMAKE_SOURCE_DIR}/com.mooinglemur.axolotl.png)
+    set(ICONSET_DIR ${CMAKE_BINARY_DIR}/Axolotl.iconset)
+    set(ICNS_FILE ${CMAKE_BINARY_DIR}/Axolotl.icns)
+    set(ICONSET_COMMANDS COMMAND ${CMAKE_COMMAND} -E rm -rf ${ICONSET_DIR} COMMAND ${CMAKE_COMMAND} -E make_directory ${ICONSET_DIR})
+    foreach(ICON_ENTRY 16:icon_16x16 32:icon_16x16@2x 32:icon_32x32 64:icon_32x32@2x 128:icon_128x128 256:icon_128x128@2x 256:icon_256x256)
+        string(REPLACE ":" ";" ICON_PARTS ${ICON_ENTRY})
+        list(GET ICON_PARTS 0 ICON_SIZE)
+        list(GET ICON_PARTS 1 ICON_NAME)
+        list(APPEND ICONSET_COMMANDS COMMAND sips -z ${ICON_SIZE} ${ICON_SIZE} ${ICON_PNG} --out ${ICONSET_DIR}/${ICON_NAME}.png)
+    endforeach()
+    add_custom_command(
+        OUTPUT ${ICNS_FILE}
+        ${ICONSET_COMMANDS}
+        COMMAND iconutil -c icns ${ICONSET_DIR} -o ${ICNS_FILE}
+        DEPENDS ${ICON_PNG}
+        COMMENT "Generating Axolotl.icns"
+    )
+    target_sources(axolotl-apclient PRIVATE ${ICNS_FILE})
+    set_source_files_properties(${ICNS_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+
+    set_target_properties(axolotl-apclient PROPERTIES
+        OUTPUT_NAME "Axolotl"
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/packaging/macos/Info.plist.in
+        MACOSX_BUNDLE_BUNDLE_NAME "Axolotl"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.mooinglemur.axolotl"
+        MACOSX_BUNDLE_ICON_FILE "Axolotl.icns"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+        MACOSX_BUNDLE_COPYRIGHT "Copyright (c) MooingLemur. MIT License."
+    )
+endif()
+
 add_dependencies(axolotl-apclient UpdateVersion GenerateStaticEmbedded)
 target_include_directories(axolotl-apclient PRIVATE
     src
@@ -352,7 +388,18 @@ target_link_libraries(axolotl-apclient PRIVATE ${ALL_LIBS})
 
 
 install(TARGETS axolotl-apclient
-        RUNTIME DESTINATION bin)
+        RUNTIME DESTINATION bin
+        BUNDLE DESTINATION .)
+
+if (APPLE)
+    # Copy Homebrew dylibs into the bundle so the app runs on machines without them, then re-sign since install_name_tool invalidates signatures.
+    install(CODE "
+        include(BundleUtilities)
+        set(APP_PATH \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/Axolotl.app\")
+        fixup_bundle(\"\${APP_PATH}\" \"\" \"\")
+        execute_process(COMMAND codesign --force --deep --sign - \"\${APP_PATH}\" COMMAND_ERROR_IS_FATAL ANY)
+    ")
+endif()
 
 # CPack configuration
 set(CPACK_PACKAGE_NAME "AxolotlAPTextClient")
@@ -368,6 +415,10 @@ endif()
 if (APPLE)
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_PACKAGE_FILE_NAME "AxolotlAPTextClient-macOS")
+    set(CPACK_DMG_VOLUME_NAME "Axolotl")
+    set(CPACK_DMG_FORMAT "UDZO")
+    # MIT needs no click-through agreement, and the SLA prompt blocks scripted mounts.
+    set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)
 elseif(WIN32)
     set(CPACK_GENERATOR "WIX;ZIP")
     set(CPACK_WIX_PRODUCT_GUID "*")
