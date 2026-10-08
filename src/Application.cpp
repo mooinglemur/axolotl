@@ -197,12 +197,9 @@ bool Application::InitializeBackend() {
   ix::initNetSystem();
 #endif
 
-#ifdef __APPLE__
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-#elif defined(_WIN32)
+#if defined(__APPLE__) || defined(_WIN32)
+  // Metal/DX11 render without GL. On macOS a GL context would also cover the
+  // Metal layer whenever the window resizes.
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 #else
   glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
@@ -236,12 +233,8 @@ bool Application::InitializeBackend() {
   }
   glfwShowWindow(window_);
 
-#ifdef __APPLE__
-  glfwMakeContextCurrent(window_);
-  glfwSwapInterval(1);
-  glsl_version_ = "#version 150";
-#elif defined(_WIN32)
-  // No GL context for Windows
+#if defined(__APPLE__) || defined(_WIN32)
+  // No GL context: rendering goes through Metal/DX11
 #else
   glfwMakeContextCurrent(window_);
   glfwSwapInterval(1);
@@ -314,6 +307,13 @@ bool Application::InitializeBackend() {
       glfwSetWindowShouldClose(w, GLFW_FALSE);
       app->show_exit_confirmation_ = true;
     }
+  });
+
+  // Resizes arrive as callbacks rather than queued input events, so Run()'s
+  // idle check alone would never redraw at the new size.
+  glfwSetFramebufferSizeCallback(window_, [](GLFWwindow *w, int, int) {
+    auto app = static_cast<Application *>(glfwGetWindowUserPointer(w));
+    app->frames_to_render_ = 3;
   });
 
   return true;
@@ -1077,6 +1077,11 @@ void Application::Run() {
 
     // Start ImGui frame
 #ifdef __APPLE__
+    // The layer doesn't follow window resizes or Retina scale on its own, and
+    // a stale size leaves ImGui rendering at the wrong scale.
+    int fb_width, fb_height;
+    glfwGetFramebufferSize(window_, &fb_width, &fb_height);
+    layer_.drawableSize = CGSizeMake(fb_width, fb_height);
     drawable = [layer_ nextDrawable];
     if (drawable == nil) {
       glfwPollEvents();
